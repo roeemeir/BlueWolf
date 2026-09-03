@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { toast } from "sonner";
 
-import { DEFAULT_WORKSPACE, type WorkspaceState } from "@/lib/bluewolf";
+import { DEFAULT_INFLUX_MAPPINGS, DEFAULT_WORKSPACE, type InfluxFieldMapping, type WorkspaceState } from "@/lib/bluewolf";
 
 type StorageMode = "cloud" | "local";
 
@@ -22,6 +22,10 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 function hydrateState(value: Partial<WorkspaceState> | null | undefined): WorkspaceState {
   if (!value) return structuredClone(DEFAULT_WORKSPACE);
+  const incomingMappings = value.influx?.mappings;
+  const mappings: InfluxFieldMapping[] = Array.isArray(incomingMappings)
+    ? DEFAULT_INFLUX_MAPPINGS.map((fallback) => ({ ...fallback, ...(incomingMappings.find((item) => item.systemKey === fallback.systemKey) ?? {}) }))
+    : DEFAULT_INFLUX_MAPPINGS;
   return {
     ...structuredClone(DEFAULT_WORKSPACE),
     ...value,
@@ -31,7 +35,12 @@ function hydrateState(value: Partial<WorkspaceState> | null | undefined): Worksp
       total: { ...DEFAULT_WORKSPACE.weights.total, ...value.weights?.total },
     },
     thresholds: { ...DEFAULT_WORKSPACE.thresholds, ...value.thresholds },
-    influx: { ...DEFAULT_WORKSPACE.influx, ...value.influx, mappings: { ...DEFAULT_WORKSPACE.influx.mappings, ...value.influx?.mappings } },
+    influx: { ...DEFAULT_WORKSPACE.influx, ...value.influx, mappings },
+    mapServers: value.mapServers?.length ? value.mapServers : structuredClone(DEFAULT_WORKSPACE.mapServers),
+    activeTemplateOverrides: { ...DEFAULT_WORKSPACE.activeTemplateOverrides, ...value.activeTemplateOverrides },
+    servers: value.servers?.map((server, index) => ({ ...DEFAULT_WORKSPACE.servers[index % DEFAULT_WORKSPACE.servers.length], ...server })) ?? structuredClone(DEFAULT_WORKSPACE.servers),
+    vehicleTypes: value.vehicleTypes?.map((type, index) => ({ ...DEFAULT_WORKSPACE.vehicleTypes[index % DEFAULT_WORKSPACE.vehicleTypes.length], ...type })) ?? structuredClone(DEFAULT_WORKSPACE.vehicleTypes),
+    gtSegments: value.gtSegments?.map((segment, index) => ({ ...DEFAULT_WORKSPACE.gtSegments[index % DEFAULT_WORKSPACE.gtSegments.length], ...segment })) ?? structuredClone(DEFAULT_WORKSPACE.gtSegments),
     settings: { ...DEFAULT_WORKSPACE.settings, ...value.settings },
   };
 }

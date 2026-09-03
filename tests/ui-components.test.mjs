@@ -82,3 +82,37 @@ test("renders sidebar skeletons deterministically", async () => {
   assert.equal(first, second);
   assert.match(first, /--skeleton-width:70%/);
 });
+
+test("keeps the live contract on a deterministic five-second tick", async () => {
+  const { DEFAULT_WORKSPACE, getServerScenario, scoreSeriesForServer } =
+    await vite.ssrLoadModule("/lib/bluewolf.ts");
+
+  assert.equal(DEFAULT_WORKSPACE.settings.uiRefreshSeconds, 5);
+  assert.equal(DEFAULT_WORKSPACE.influx.activePollSeconds, 5);
+  assert.notEqual(getServerScenario("1").groups.so.id, getServerScenario("2").groups.so.id);
+  assert.notDeepEqual(scoreSeriesForServer("1", 12), scoreSeriesForServer("2", 12));
+});
+
+test("generates legal SI constellations without rotational duplicates", async () => {
+  const { generateSiAngleSets } = await vite.ssrLoadModule("/lib/bluewolf.ts");
+  const constellations = generateSiAngleSets(5);
+  const keys = constellations.map((values) => values.join(","));
+
+  assert.ok(constellations.length > 10);
+  assert.equal(new Set(keys).size, keys.length);
+  assert.ok(constellations.every((values) => values.length === 5));
+  assert.ok(constellations.every((values) => values.every((value) => value % 30 === 0)));
+});
+
+test("defines a complete Influx field mapping contract", async () => {
+  const { DEFAULT_WORKSPACE } = await vite.ssrLoadModule("/lib/bluewolf.ts");
+  const mappings = DEFAULT_WORKSPACE.influx.mappings;
+  const vehicleId = mappings.find((item) => item.systemKey === "uniqueVehicleId");
+  const active = mappings.find((item) => item.systemKey === "active");
+
+  assert.ok(mappings.every((item) => item.bucket && item.measurement && item.key));
+  assert.equal(vehicleId.fillMode, "forward-fill");
+  assert.equal(active.valueMode, "special");
+  assert.equal(active.sourceValue, "green");
+  assert.equal(active.mappedValue, "true");
+});

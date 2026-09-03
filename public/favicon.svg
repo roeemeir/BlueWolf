@@ -1,7 +1,43 @@
-<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="32" height="32" rx="9" fill="#0B2132"/>
-<circle cx="16" cy="16" r="10" stroke="#32D5C4" stroke-width="2" opacity=".55"/>
-<circle cx="16" cy="16" r="5.5" stroke="#32D5C4" stroke-width="2" opacity=".8"/>
-<path d="M16 16L24 9" stroke="#63F0DF" stroke-width="2.5" stroke-linecap="round"/>
-<circle cx="16" cy="16" r="2.5" fill="#63F0DF"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title description">
+  <title id="title">זאב כחול</title>
+  <desc id="description">זאב כחול צבעוני משכבות זכוכית שקופות</desc>
+  <defs>
+    <linearGradient id="glassBackground" x1="16" y1="8" x2="112" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EAF9FF"/><stop offset="0.42" stop-color="#8DD8FF"/><stop offset="1" stop-color="#3578FF"/>
+    </linearGradient>
+    <linearGradient id="wolfGlass" x1="40" y1="20" x2="85" y2="106" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#47C8FF"/><stop offset="0.47" stop-color="#0878D7"/><stop offset="1" stop-color="#083A88"/>
+    </linearGradient>
+    <linearGradient id="wolfSheen" x1="35" y1="30" x2="90" y2="95" gradientUnits="userSpaceOnUse">
+      <stop stop-color="white" stop-opacity="0.56"/><stop offset="0.42" stop-color="white" stop-opacity="0.08"/><stop offset="1" stop-color="#61C9FF" stop-opacity="0.28"/>
+    </linearGradient>
+    <radialGradient id="aquaGlow" cx="0" cy="0" r="1" gradientTransform="translate(92 28) rotate(131) scale(66)">
+      <stop stop-color="#BFFFF8" stop-opacity="0.95"/><stop offset="1" stop-color="#3A8CFF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="170%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="8" stdDeviation="7" flood-color="#00336D" flood-opacity="0.34"/>
+    </filter>
+    <filter id="blurGlow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="12"/></filter>
+    <clipPath id="squircle"><rect x="4" y="4" width="120" height="120" rx="29"/></clipPath>
+  </defs>
+  <g clip-path="url(#squircle)">
+    <rect x="4" y="4" width="120" height="120" rx="29" fill="url(#glassBackground)"/>
+    <circle cx="96" cy="25" r="52" fill="url(#aquaGlow)"/>
+    <circle cx="20" cy="111" r="38" fill="#695CFF" fill-opacity="0.32" filter="url(#blurGlow)"/>
+    <path d="M3 79C30 58 54 70 72 54C89 39 101 16 130 19V132H3V79Z" fill="#0A4A9D" fill-opacity="0.15"/>
+    <g filter="url(#softShadow)">
+      <path d="M21 20L44 36L54 13L64 34L74 13L84 36L107 20L98 76C96 90 83 100 64 111C45 100 32 90 30 76L21 20Z" fill="url(#wolfGlass)"/>
+      <path d="M21 20L44 36L54 13L64 34L74 13L84 36L107 20L98 76C96 90 83 100 64 111C45 100 32 90 30 76L21 20Z" fill="url(#wolfSheen)"/>
+    </g>
+    <path d="M27 27L44 39L37 54L27 44V27ZM101 27L84 39L91 54L101 44V27Z" fill="#BCEEFF" fill-opacity="0.42"/>
+    <path d="M38 57C44 51 51 51 57 58C51 63 44 63 38 59V57ZM90 57C84 51 77 51 71 58C77 63 84 63 90 59V57Z" fill="#E9FBFF"/>
+    <path d="M43 57.5C47 55 51 55.5 54 58.5C50 59.7 47 59.7 43 58.2V57.5ZM85 57.5C81 55 77 55.5 74 58.5C78 59.7 81 59.7 85 58.2V57.5Z" fill="#073778"/>
+    <path d="M49 77C55 72 59 70 64 70C69 70 73 72 79 77L72 95L64 101L56 95L49 77Z" fill="#D9F7FF" fill-opacity="0.24"/>
+    <path d="M57 81C60 79 62 78 64 78C66 78 68 79 71 81L64 88L57 81Z" fill="#05285D"/>
+    <path d="M57 92C61 95 67 95 71 92" fill="none" stroke="#BDEEFF" stroke-width="2.4" stroke-linecap="round"/>
+    <path d="M31 36C42 27 54 25 66 27" fill="none" stroke="white" stroke-opacity="0.58" stroke-width="4" stroke-linecap="round"/>
+    <ellipse cx="39" cy="23" rx="15" ry="7" transform="rotate(-27 39 23)" fill="white" fill-opacity="0.27"/>
+  </g>
+  <rect x="4.75" y="4.75" width="118.5" height="118.5" rx="28.25" fill="none" stroke="white" stroke-opacity="0.72" stroke-width="1.5"/>
+  <path d="M20 106C46 120 83 119 108 98" fill="none" stroke="#BDEEFF" stroke-opacity="0.35" stroke-width="2" stroke-linecap="round"/>
 </svg>
