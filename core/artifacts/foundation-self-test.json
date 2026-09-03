@@ -1,0 +1,50 @@
+{
+  "scope": "foundation only: contracts, scoring, session, checkpoint and load envelope",
+  "overall_status": "passed",
+  "generated_at_utc": "2026-09-02T19:14:13.372106Z",
+  "algorithm_version": "0.1.0",
+  "checks": [
+    {
+      "name": "approved_scoring_contract",
+      "status": "passed",
+      "summary": "approved score weights and zero-error bands",
+      "metrics": {
+        "sync": 100.0,
+        "route": 100.0,
+        "total": 100.0
+      }
+    },
+    {
+      "name": "batch_increment_equivalence",
+      "status": "passed",
+      "summary": "one batch and 5-second increments are byte-equivalent",
+      "metrics": {
+        "samples": 183,
+        "increment_seconds": 5
+      }
+    },
+    {
+      "name": "checkpoint_restart_equivalence",
+      "status": "passed",
+      "summary": "restart continues without changing results",
+      "metrics": {
+        "checkpoint_interval_seconds": 300,
+        "split_at_seconds": 30
+      }
+    },
+    {
+      "name": "core_envelope_150_vehicles",
+      "status": "passed",
+      "summary": "state/session envelope only; route algorithms are measured in later milestones",
+      "metrics": {
+        "servers": 10,
+        "vehicles": 150,
+        "scenario_seconds": 300,
+        "samples": 45150,
+        "processing_seconds": 0.811624,
+        "real_time_ratio": 0.002705,
+        "peak_memory_mb": 6.779
+      }
+    }
+  ]
+}
