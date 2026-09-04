@@ -16,6 +16,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Apply verified v0.5 overlay
+        shell: bash
+        run: |
+          cat .preview/v05.part* | base64 -d > /tmp/bluewolf-v05-overlay.tar.gz
+          echo "7c6cea729ae5a4159e7386e19da4efd00555f12b08999017e5743e76f36ab567  /tmp/bluewolf-v05-overlay.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/bluewolf-v05-overlay.tar.gz -C .
+          test -f app/v05.css
+          grep -q 'v05-operator' app/v05.css
+          grep -q 'motionFrame' components/bluewolf/visuals.tsx
+          grep -q 'event-start' components/bluewolf/operator-view.tsx
+          grep -q 'idRanges' lib/bluewolf.ts
+          echo 'Verified Blue Wolf v0.5 overlay applied.'
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -23,6 +36,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Run v0.5 regression tests
+        run: npm test
 
       - name: Build production runtime
         run: npm run build
@@ -73,7 +89,7 @@ jobs:
 
           function loginPage(message = '') {
             const safeMessage = message ? '<p style="color:#f87171;margin:0 0 16px">סיסמה שגויה</p>' : '';
-            return `<!doctype html><html dir="rtl" lang="he"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Blue Wolf Preview</title><style>body{margin:0;background:#07111f;color:#fff;font-family:system-ui,-apple-system,sans-serif;display:grid;place-items:center;min-height:100vh}.card{width:min(88vw,380px);background:#0f1c2e;border:1px solid #29415f;border-radius:22px;padding:28px;box-shadow:0 18px 60px #0008}h1{margin:0 0 8px;font-size:28px}p{color:#a9bfd8;margin:0 0 22px}input{box-sizing:border-box;width:100%;font:inherit;background:#081525;color:#fff;border:1px solid #385778;border-radius:12px;padding:13px 14px;margin-bottom:12px}button{width:100%;font:inherit;font-weight:700;border:0;border-radius:12px;padding:13px;background:#3b82f6;color:white}</style></head><body><form class="card" method="post" action="/__bluewolf_login"><h1>זאב כחול</h1><p>סביבת בדיקה זמנית</p>${safeMessage}<input name="password" type="password" autocomplete="current-password" placeholder="סיסמה" autofocus><button type="submit">כניסה</button></form></body></html>`;
+            return `<!doctype html><html dir="rtl" lang="he"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Blue Wolf v0.5 Preview</title><style>body{margin:0;background:#07111f;color:#fff;font-family:system-ui,-apple-system,sans-serif;display:grid;place-items:center;min-height:100vh}.card{width:min(88vw,380px);background:#0f1c2e;border:1px solid #29415f;border-radius:22px;padding:28px;box-shadow:0 18px 60px #0008}h1{margin:0 0 8px;font-size:28px}p{color:#a9bfd8;margin:0 0 22px}input{box-sizing:border-box;width:100%;font:inherit;background:#081525;color:#fff;border:1px solid #385778;border-radius:12px;padding:13px 14px;margin-bottom:12px}button{width:100%;font:inherit;font-weight:700;border:0;border-radius:12px;padding:13px;background:#3b82f6;color:white}</style></head><body><form class="card" method="post" action="/__bluewolf_login"><h1>זאב כחול</h1><p>v0.5 · סביבת בדיקה זמנית</p>${safeMessage}<input name="password" type="password" autocomplete="current-password" placeholder="סיסמה" autofocus><button type="submit">כניסה</button></form></body></html>`;
           }
 
           function proxy(req, res) {
@@ -205,6 +221,8 @@ jobs:
             echo "URL=$URL"
             echo "PASSWORD=$PASSWORD"
             echo "LOGIN_PATH=/__bluewolf_login"
+            echo "VERSION=v0.5-overlay-verified"
+            echo "OVERLAY_SHA256=7c6cea729ae5a4159e7386e19da4efd00555f12b08999017e5743e76f36ab567"
             echo "ASSET_CHECK=passed:$ASSET_PATH"
             echo "EXPIRES_APPROXIMATELY=90 minutes after this workflow starts"
           } >/tmp/bluewolf-share-credentials.txt
@@ -219,5 +237,5 @@ jobs:
 
       - name: Keep preview alive
         run: |
-          echo 'Blue Wolf temporary share is active.'
+          echo 'Blue Wolf v0.5 temporary share is active.'
           sleep 5400
