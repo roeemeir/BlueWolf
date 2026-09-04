@@ -1,0 +1,25 @@
+name: Export cloudflared helper
+
+on:
+  push:
+    branches:
+      - local-preview-runtime
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download cloudflared
+        run: |
+          curl -L --fail --retry 3 https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+      - name: Upload helper
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflared-linux-amd64
+          path: cloudflared
+          retention-days: 1
+          compression-level: 0
