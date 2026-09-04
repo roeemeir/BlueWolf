@@ -34,7 +34,7 @@ _MIN_SAMPLES = 12
 
 @dataclass(frozen=True, slots=True)
 class RouteDetection:
-    """Observed/effective geometry pair returned by the route detector."""
+    """A confirmed route with both raw and robust geometry representations."""
 
     observed: ClosedRoute
     effective: ClosedRoute
@@ -81,10 +81,12 @@ def detect_closed_route(
 ) -> RouteDetection | None:
     """Detect a confirmed simple SI/SO route from one vehicle stream.
 
-    The returned ``observed`` geometry follows the raw trace, while
-    ``effective`` is fitted from an outlier-suppressed trace. This is the V1
-    separation used later by grouping/scoring: bumps remain visible without
-    being allowed to bend the effective route.
+    Confirmation intentionally obeys the V1 new-route lifecycle: enough usable
+    samples, the full observation window, one completed cycle, geometric
+    closure and the configured fit fraction are all required. ``observed``
+    follows the raw trace while ``effective`` is fitted after rejecting
+    transient single-sample bumps, so a bump stays visible without bending the
+    geometry used later for phase/grouping/scoring.
     """
 
     detection = config or DetectionConfig()
@@ -106,7 +108,15 @@ def detect_closed_route(
 
     stream_keys = {sample.stream_key for sample in ordered}
     if len(stream_keys) != 1:
-        raise ValueError("detect_closed_route expects samples from exactly one vehicle stream")
+        raise ValueError(
+            "detect_closed_route expects samples from exactly one vehicle stream"
+        )
+
+    observation_seconds = (
+        ordered[-1].sample_time_utc - ordered[0].sample_time_utc
+    ).total_seconds()
+    if observation_seconds + _EPSILON < detection.new_route_observation_seconds:
+        return None
 
     origin_lat = statistics.median(float(sample.latitude_deg) for sample in ordered)
     origin_lon = statistics.median(float(sample.longitude_deg) for sample in ordered)
@@ -131,23 +141,21 @@ def detect_closed_route(
         return None
 
     observed_shape = _fit_shape(
-        tuple(item.point for item in raw_points),
-        detection,
-        robust=False,
+        tuple(item.point for item in raw_points), detection, robust=False
     )
     effective_shape = _fit_shape(effective_points, detection, robust=True)
     if effective_shape.short_axis_m <= _EPSILON:
         return None
 
+    fit_tolerance_m = max(
+        effective_shape.short_axis_m * detection.closure_distance_short_axis_ratio,
+        1.0,
+    )
     fit_fraction = _fit_fraction(
         effective_points,
         effective_shape.canonical_points,
-        max(
-            effective_shape.short_axis_m * detection.closure_distance_short_axis_ratio,
-            1.0,
-        ),
+        fit_tolerance_m,
     )
-
     travelled_distance = _travelled_distance(effective_points)
     completed_cycles = travelled_distance / effective_shape.length_m
     closure_ok = _has_closed_cycle(
@@ -176,9 +184,9 @@ def detect_closed_route(
     if period_s <= 0:
         return None
 
+    raw_geometry = tuple(item.point for item in raw_points)
     observed_cycles = max(
-        _travelled_distance(tuple(item.point for item in raw_points))
-        / observed_shape.length_m,
+        _travelled_distance(raw_geometry) / observed_shape.length_m,
         _EPSILON,
     )
     observed_period_s = _estimate_period_seconds(
@@ -233,7 +241,9 @@ def detect_closed_route(
             "closure_ok": closure_ok,
             "sample_count": len(ordered),
             "effective_sample_count": sum(inlier_mask),
+            "observation_seconds": observation_seconds,
             "axis_ratio": effective_shape.long_axis_m / effective_shape.short_axis_m,
+            "fit_tolerance_m": fit_tolerance_m,
             "travelled_distance_m": travelled_distance,
         },
     )
@@ -253,6 +263,7 @@ def _fit_shape(
         if robust
         else statistics.fmean(point.y_m for point in points),
     )
+
     xx = statistics.fmean((point.x_m - center.x_m) ** 2 for point in points)
     yy = statistics.fmean((point.y_m - center.y_m) ** 2 for point in points)
     xy = statistics.fmean(
@@ -272,12 +283,14 @@ def _fit_shape(
     )
 
     low_q, high_q = (0.05, 0.95) if robust else (0.0, 1.0)
-    long_min = _quantile(projected_long, low_q)
-    long_max = _quantile(projected_long, high_q)
-    short_min = _quantile(projected_short, low_q)
-    short_max = _quantile(projected_short, high_q)
-    long_axis = max((long_max - long_min) / 2.0, _EPSILON)
-    short_axis = max((short_max - short_min) / 2.0, _EPSILON)
+    long_axis = max(
+        (_quantile(projected_long, high_q) - _quantile(projected_long, low_q)) / 2.0,
+        _EPSILON,
+    )
+    short_axis = max(
+        (_quantile(projected_short, high_q) - _quantile(projected_short, low_q)) / 2.0,
+        _EPSILON,
+    )
 
     if short_axis > long_axis:
         long_axis, short_axis = short_axis, long_axis
@@ -318,18 +331,15 @@ def _ellipse_points(
     short_axis_m: float,
     orientation_rad: float,
 ) -> tuple[CanonicalPoint, ...]:
-    output = []
-    for index in range(64):
-        angle = 2.0 * math.pi * index / 64.0
-        output.append(
-            _rotate_from_local(
-                center,
-                long_axis_m * math.cos(angle),
-                short_axis_m * math.sin(angle),
-                orientation_rad,
-            )
+    return tuple(
+        _rotate_from_local(
+            center,
+            long_axis_m * math.cos(angle),
+            short_axis_m * math.sin(angle),
+            orientation_rad,
         )
-    return tuple(output)
+        for angle in (2.0 * math.pi * index / 64.0 for index in range(64))
+    )
 
 
 def _stadium_points(
@@ -341,7 +351,6 @@ def _stadium_points(
     radius = short_axis_m
     half_straight = max(long_axis_m - radius, 0.0)
     output: list[CanonicalPoint] = []
-
     turn_points = 24
     straight_points = 8
 
@@ -421,7 +430,6 @@ def _to_closed_route(
         origin_latitude_deg,
         origin_longitude_deg,
     )
-    orientation_deg = math.degrees(shape.orientation_rad) % 180.0
     return ClosedRoute(
         route_id=route_id,
         family=shape.family,
@@ -433,7 +441,7 @@ def _to_closed_route(
         length_m=shape.length_m,
         long_axis_a_m=shape.long_axis_m,
         short_axis_b_m=shape.short_axis_m,
-        orientation_deg=orientation_deg,
+        orientation_deg=math.degrees(shape.orientation_rad) % 180.0,
         estimated_period_s=period_s,
         direction=direction,
         detection_quality=quality,
@@ -443,6 +451,7 @@ def _to_closed_route(
 def _transient_bump_mask(points: Sequence[CanonicalPoint]) -> tuple[bool, ...]:
     if len(points) < 3:
         return tuple(True for _ in points)
+
     steps = tuple(
         _distance(points[index - 1], points[index]) for index in range(1, len(points))
     )
@@ -489,6 +498,7 @@ def _has_closed_cycle(
 ) -> bool:
     if len(points) < 4:
         return False
+
     start = points[0]
     first_heading = _heading(points, 0)
     accumulated = 0.0
@@ -503,6 +513,7 @@ def _has_closed_cycle(
             continue
         if _distance(start, points[index]) > threshold:
             continue
+
         heading = _heading(points, index)
         if first_heading is None or heading is None:
             return True
@@ -520,8 +531,7 @@ def _has_closed_cycle(
 
 
 def _heading(
-    points: Sequence[CanonicalPoint],
-    index: int,
+    points: Sequence[CanonicalPoint], index: int
 ) -> tuple[float, float] | None:
     if len(points) < 2:
         return None
@@ -531,6 +541,7 @@ def _heading(
         first, second = points[-2], points[-1]
     else:
         first, second = points[index - 1], points[index + 1]
+
     east = second.x_m - first.x_m
     north = second.y_m - first.y_m
     if math.hypot(east, north) <= _EPSILON:
@@ -539,8 +550,7 @@ def _heading(
 
 
 def _direction(
-    points: Sequence[CanonicalPoint],
-    center: CanonicalPoint,
+    points: Sequence[CanonicalPoint], center: CanonicalPoint
 ) -> Direction:
     signed = 0.0
     for first, second in zip(points, points[1:]):
@@ -585,7 +595,9 @@ def _estimate_period_seconds(
         if not keep:
             continue
         if previous is not None:
-            dt = (item.sample.sample_time_utc - previous.sample.sample_time_utc).total_seconds()
+            dt = (
+                item.sample.sample_time_utc - previous.sample.sample_time_utc
+            ).total_seconds()
             if dt > 0:
                 speed = _distance(previous.point, item.point) / dt
                 if speed > _EPSILON:
@@ -597,7 +609,9 @@ def _estimate_period_seconds(
     duration = (
         samples[-1].sample.sample_time_utc - samples[0].sample.sample_time_utc
     ).total_seconds()
-    return duration / max(completed_cycles, _EPSILON) if duration > 0 else 0.0
+    if duration <= 0:
+        return 0.0
+    return duration / max(completed_cycles, _EPSILON)
 
 
 def _travelled_distance(points: Sequence[CanonicalPoint]) -> float:
@@ -613,6 +627,7 @@ def _quantile(values: Sequence[float], fraction: float) -> float:
         raise ValueError("quantile requires at least one value")
     if not 0.0 <= fraction <= 1.0:
         raise ValueError("fraction must be in [0, 1]")
+
     ordered = sorted(values)
     if len(ordered) == 1:
         return ordered[0]

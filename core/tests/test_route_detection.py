@@ -21,7 +21,7 @@ class RouteDetectionTests(unittest.TestCase):
         samples = list(
             generate_si_circle_samples(
                 start_time_utc=datetime(2026, 9, 1, tzinfo=UTC),
-                duration_seconds=240,
+                duration_seconds=360,
                 vehicles=(SimulatedVehicle(1, 101, 0),),
                 radius_m=100,
                 period_seconds=120,
@@ -63,6 +63,10 @@ class RouteDetectionTests(unittest.TestCase):
         self.assertAlmostEqual(detected.effective.short_axis_b_m, 100.0, delta=3.0)
         self.assertAlmostEqual(detected.effective.estimated_period_s, 120.0, delta=4.0)
         self.assertGreaterEqual(detected.fit_fraction, 0.95)
+        self.assertGreaterEqual(
+            float(detected.diagnostics["observation_seconds"]),
+            300.0,
+        )
 
     def test_rotated_hippodrome_is_detected_as_so(self) -> None:
         samples = _hippodrome_samples(
@@ -97,6 +101,17 @@ class RouteDetectionTests(unittest.TestCase):
             cycles=1,
             orientation_deg=0,
         )[:120]
+
+        self.assertIsNone(detect_closed_route(samples))
+
+    def test_full_cycle_before_five_minutes_is_not_confirmed(self) -> None:
+        samples = generate_si_circle_samples(
+            start_time_utc=datetime(2026, 9, 1, tzinfo=UTC),
+            duration_seconds=240,
+            vehicles=(SimulatedVehicle(1, 101, 0),),
+            radius_m=100,
+            period_seconds=120,
+        )
 
         self.assertIsNone(detect_closed_route(samples))
 
