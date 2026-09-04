@@ -1,0 +1,48 @@
+name: Local Preview Runtime Bundle
+
+on:
+  push:
+    branches:
+      - local-preview-runtime
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build production runtime
+        run: npm run build
+
+      - name: Show runtime layout
+        run: |
+          echo "Top-level directories:"
+          find . -maxdepth 2 -type d | sort | head -200
+          echo "Candidate build directories:"
+          du -sh .vinext dist .next node_modules 2>/dev/null || true
+
+      - name: Upload runnable local bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: bluewolf-local-runtime
+          retention-days: 1
+          include-hidden-files: true
+          compression-level: 6
+          path: |
+            .
+            !.git/**
+            !.sites-runtime/npm-cache/**
+            !.wrangler/**
+            !core/**
