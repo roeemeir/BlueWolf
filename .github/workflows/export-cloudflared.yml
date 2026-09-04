@@ -1,25 +1,10 @@
-name: Export cloudflared helper
+name: Archived temporary workflow
 
 on:
-  push:
-    branches:
-      - local-preview-runtime
-
-permissions:
-  contents: read
+  workflow_dispatch:
 
 jobs:
-  export:
-    runs-on: ubuntu-24.04
+  archived:
+    runs-on: ubuntu-latest
     steps:
-      - name: Download cloudflared
-        run: |
-          curl -L --fail --retry 3 https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
-          chmod +x cloudflared
-      - name: Upload helper
-        uses: actions/upload-artifact@v4
-        with:
-          name: cloudflared-linux-amd64
-          path: cloudflared
-          retention-days: 1
-          compression-level: 0
+      - run: echo 'Archived temporary workflow; use v07-preview.yml instead.'

@@ -2,7 +2,9 @@ name: Blue Wolf CI
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
 
 jobs:
   core:
