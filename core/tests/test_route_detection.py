@@ -28,7 +28,7 @@ class RouteDetectionTests(unittest.TestCase):
                 direction=Direction.CLOCKWISE,
             )
         )
-        bump_index = 180
+        bump_index = 120
         original = samples[bump_index]
         local = wgs84_to_local_m(
             float(original.latitude_deg),
