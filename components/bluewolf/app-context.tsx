@@ -24,7 +24,7 @@ function hydrateState(value: Partial<WorkspaceState> | null | undefined): Worksp
   if (!value) return structuredClone(DEFAULT_WORKSPACE);
   const incomingMappings = value.influx?.mappings;
   const mappings: InfluxFieldMapping[] = Array.isArray(incomingMappings)
-    ? DEFAULT_INFLUX_MAPPINGS.map((fallback) => ({ ...fallback, ...(incomingMappings.find((item) => item.systemKey === fallback.systemKey) ?? {}) }))
+    ? DEFAULT_INFLUX_MAPPINGS.map((fallback) => { const incoming = incomingMappings.find((item) => item.systemKey === fallback.systemKey); const merged = { ...fallback, ...(incoming ?? {}) }; return { ...merged, rules: incoming?.rules?.length ? incoming.rules : (merged.valueMode === "special" && merged.sourceValue ? [{ sourceValue: merged.sourceValue, mappedValue: merged.mappedValue }] : fallback.rules ?? []) }; })
     : DEFAULT_INFLUX_MAPPINGS;
   return {
     ...structuredClone(DEFAULT_WORKSPACE),
@@ -41,7 +41,7 @@ function hydrateState(value: Partial<WorkspaceState> | null | undefined): Worksp
     templateApplications: { ...DEFAULT_WORKSPACE.templateApplications, ...value.templateApplications },
     servers: value.servers?.map((server, index) => ({ ...DEFAULT_WORKSPACE.servers[index % DEFAULT_WORKSPACE.servers.length], ...server })) ?? structuredClone(DEFAULT_WORKSPACE.servers),
     arenas: value.arenas?.length ? value.arenas : structuredClone(DEFAULT_WORKSPACE.arenas),
-    vehicleTypes: value.vehicleTypes?.map((type, index) => ({ ...DEFAULT_WORKSPACE.vehicleTypes[index % DEFAULT_WORKSPACE.vehicleTypes.length], ...type })) ?? structuredClone(DEFAULT_WORKSPACE.vehicleTypes),
+    vehicleTypes: value.vehicleTypes?.map((type, index) => { const fallback = DEFAULT_WORKSPACE.vehicleTypes[index % DEFAULT_WORKSPACE.vehicleTypes.length]; const merged = { ...fallback, ...type }; return { ...merged, idRanges: type.idRanges?.length ? type.idRanges : [{ min: merged.minId, max: merged.maxId }] }; }) ?? structuredClone(DEFAULT_WORKSPACE.vehicleTypes),
     routes: value.routes?.map((route, index) => ({ ...DEFAULT_WORKSPACE.routes[index % DEFAULT_WORKSPACE.routes.length], ...route })) ?? structuredClone(DEFAULT_WORKSPACE.routes),
     templates: value.templates?.map((template) => ({ ...template })) ?? structuredClone(DEFAULT_WORKSPACE.templates),
     gtSegments: value.gtSegments?.map((segment, index) => ({ ...DEFAULT_WORKSPACE.gtSegments[index % DEFAULT_WORKSPACE.gtSegments.length], ...segment })) ?? structuredClone(DEFAULT_WORKSPACE.gtSegments),
