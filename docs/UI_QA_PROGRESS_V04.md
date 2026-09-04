@@ -1,0 +1,1 @@
+UI QA progress is tracked in UX_REDESIGN_V04_HE.md.
