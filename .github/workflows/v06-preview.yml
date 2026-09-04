@@ -1,0 +1,140 @@
+name: Blue Wolf v0.6 Feedback Preview
+
+on:
+  push:
+    branches:
+      - local-preview-runtime
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 110
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply verified v0.5 base
+        shell: bash
+        run: |
+          cat .preview/v05.part* | base64 -d > /tmp/bluewolf-v05.tar.gz
+          echo "7c6cea729ae5a4159e7386e19da4efd00555f12b08999017e5743e76f36ab567  /tmp/bluewolf-v05.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/bluewolf-v05.tar.gz -C .
+
+      - name: Apply full feedback pass
+        shell: bash
+        run: |
+          cat .preview/v06.part* | base64 -d > /tmp/bluewolf-v06.tar.gz
+          echo "53ef104cdc876e4bc3e8cd7e4111e509884abe9048bab927b87d24efe5d05450  /tmp/bluewolf-v06.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/bluewolf-v06.tar.gz -C .
+          grep -q 'score' components/bluewolf/visuals.tsx
+          grep -q 'event-start' components/bluewolf/operator-view.tsx
+          grep -q 'root' components/bluewolf/investigation-view.tsx
+          echo 'Verified full feedback overlay applied.'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run regression tests
+        run: npm test
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build production runtime
+        run: npm run build
+
+      - name: Prepare local D1
+        working-directory: dist/server
+        run: |
+          node ../../node_modules/wrangler/bin/wrangler.js d1 execute site-creator-d1 \
+            --local \
+            --config wrangler.json \
+            --file ../.openai/drizzle/0000_luxuriant_tarantula.sql
+
+      - name: Start Blue Wolf locally
+        working-directory: dist/server
+        run: |
+          nohup node ../../node_modules/wrangler/bin/wrangler.js dev --config wrangler.json --port 3000 \
+            >/tmp/bluewolf-wrangler.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/ >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          tail -120 /tmp/bluewolf-wrangler.log
+          exit 1
+
+      - name: Start password gate
+        shell: bash
+        run: |
+          SHARE_PASSWORD="$(openssl rand -hex 10)"
+          SHARE_TOKEN="$(openssl rand -hex 24)"
+          printf '%s' "$SHARE_PASSWORD" >/tmp/share-password
+          cat >/tmp/auth-proxy.mjs <<'EOF'
+          import http from 'node:http';
+          import { URLSearchParams } from 'node:url';
+          const password = process.env.SHARE_PASSWORD;
+          const token = process.env.SHARE_TOKEN;
+          const cookieName = 'bw_preview';
+          const authed = (req) => (req.headers.cookie ?? '').split(';').some((x) => x.trim() === `${cookieName}=${token}`);
+          const loginPage = (bad = false) => `<!doctype html><html dir="rtl" lang="he"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Blue Wolf Preview</title><style>body{margin:0;background:#07111f;color:#fff;font-family:system-ui,-apple-system,sans-serif;display:grid;place-items:center;min-height:100svh}.card{width:min(86vw,360px);background:rgba(17,31,49,.82);backdrop-filter:blur(24px);border:1px solid #ffffff22;border-radius:24px;padding:24px;box-shadow:0 24px 80px #0008}h1{margin:0 0 8px}p{color:#a9bfd8}input,button{box-sizing:border-box;width:100%;font:inherit;border-radius:13px;padding:13px 14px}input{background:#081525;color:#fff;border:1px solid #385778;margin:10px 0}button{border:0;background:#3b82f6;color:#fff;font-weight:800}${bad?'.bad{color:#fb7185}':''}</style></head><body><form class="card" method="post" action="/__bluewolf_login"><h1>זאב כחול</h1><p>סביבת בדיקה מעודכנת</p>${bad?'<p class="bad">סיסמה שגויה</p>':''}<input name="password" type="password" placeholder="סיסמה" autofocus><button type="submit">כניסה</button></form></body></html>`;
+          function proxy(req,res){const h={...req.headers};delete h.connection;delete h.authorization;h.host='127.0.0.1:3000';h['x-forwarded-proto']='https';const u=http.request({hostname:'127.0.0.1',port:3000,path:req.url,method:req.method,headers:h},r=>{const rh={...r.headers};delete rh.connection;res.writeHead(r.statusCode??502,rh);r.pipe(res)});u.on('error',e=>{res.writeHead(502);res.end(e.message)});req.pipe(u)}
+          http.createServer(async(req,res)=>{if(req.url?.startsWith('/__bluewolf_login')){if(req.method==='POST'){const c=[];for await(const x of req)c.push(x);const f=new URLSearchParams(Buffer.concat(c).toString());if(f.get('password')===password){res.writeHead(303,{location:'/','set-cookie':`${cookieName}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax`});res.end();return}res.writeHead(401,{'content-type':'text/html; charset=utf-8'});res.end(loginPage(true));return}res.writeHead(200,{'content-type':'text/html; charset=utf-8'});res.end(loginPage());return}if(!authed(req)){res.writeHead(303,{location:'/__bluewolf_login'});res.end();return}proxy(req,res)}).listen(3001,'127.0.0.1');
+          EOF
+          nohup env SHARE_PASSWORD="$SHARE_PASSWORD" SHARE_TOKEN="$SHARE_TOKEN" node /tmp/auth-proxy.mjs >/tmp/auth.log 2>&1 &
+          sleep 2
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/)" = "303"
+
+      - name: Start tunnel and verify mobile assets
+        shell: bash
+        run: |
+          curl -L --fail --retry 3 https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared
+          chmod +x /tmp/cloudflared
+          nohup /tmp/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:3001 >/tmp/cloudflared.log 2>&1 &
+          URL=""
+          for i in $(seq 1 45); do
+            URL="$(grep -Eo 'https://[-a-z0-9]+\.trycloudflare\.com' /tmp/cloudflared.log | head -1 || true)"
+            [ -n "$URL" ] && break
+            sleep 2
+          done
+          [ -n "$URL" ]
+          PASSWORD="$(cat /tmp/share-password)"
+          for i in $(seq 1 20); do
+            CODE="$(curl -sS -c /tmp/cookies.txt -d "password=$PASSWORD" -o /dev/null -w '%{http_code}' --max-time 15 "$URL/__bluewolf_login" || true)"
+            [ "$CODE" = "303" ] && break
+            sleep 3
+          done
+          test "$CODE" = "303"
+          curl -fsS -b /tmp/cookies.txt --max-time 20 "$URL/" -o /tmp/page.html
+          grep -q 'זאב כחול' /tmp/page.html
+          ASSET_PATH="$(grep -Eo '(src|href)="[^"]+\.(css|js)[^"]*"' /tmp/page.html | head -1 | sed -E 's/^(src|href)="([^"]+)"$/\2/')"
+          case "$ASSET_PATH" in http*) ASSET_URL="$ASSET_PATH";; /*) ASSET_URL="$URL$ASSET_PATH";; *) ASSET_URL="$URL/$ASSET_PATH";; esac
+          test "$(curl -sS -b /tmp/cookies.txt -o /tmp/asset.bin -w '%{http_code}' --max-time 20 "$ASSET_URL")" = "200"
+          {
+            echo "URL=$URL"
+            echo "PASSWORD=$PASSWORD"
+            echo "VERSION=v0.6-full-feedback-pass"
+            echo "ASSET_CHECK=passed:$ASSET_PATH"
+            echo "EXPIRES_APPROXIMATELY=90 minutes after workflow starts"
+          } >/tmp/bluewolf-v06-credentials.txt
+
+      - name: Upload preview credentials
+        uses: actions/upload-artifact@v4
+        with:
+          name: bluewolf-v06-preview-credentials
+          path: /tmp/bluewolf-v06-credentials.txt
+          retention-days: 1
+          compression-level: 0
+
+      - name: Keep preview alive
+        run: sleep 5400
