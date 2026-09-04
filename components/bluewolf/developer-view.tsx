@@ -1,396 +1,125 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import {
-  Activity,
-  ArchiveRestore,
-  Beaker,
-  Check,
-  CheckCircle2,
-  ChevronLeft,
-  CircleGauge,
-  Database,
-  Download,
-  Eye,
-  FileJson,
-  Filter,
-  Gauge,
-  KeyRound,
-  Layers3,
-  LoaderCircle,
-  Map,
-  MapPinned,
-  Network,
-  Play,
-  Plus,
-  RotateCcw,
-  Save,
-  Search,
-  Server,
-  Settings2,
-  ShieldCheck,
-  SlidersHorizontal,
-  Trash2,
-  Upload,
-  UsersRound,
-  WandSparkles,
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Activity, Beaker, Check, CheckCircle2, ChevronLeft, Database, Gauge, Layers3, LoaderCircle, MapPinned, Pause, Play, Plus, Save, Search, Server, Settings2, ShieldCheck, SlidersHorizontal, Trash2, UsersRound } from "lucide-react";
 import { toast } from "sonner";
 
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  DEFAULT_INFLUX_MAPPINGS,
   DEFAULT_WORKSPACE,
+  SI_ALLOWED_PAIR_ANGLES,
+  SO_RELATION_LABELS,
   THRESHOLD_DESCRIPTIONS,
   canonicalTemplateKey,
   createId,
-  generateSiAngleSets,
   getServerScenario,
+  relationCode,
   type DeveloperSection,
   type Family,
   type GtSegment,
   type InfluxFieldMapping,
-  type InfluxSettings,
-  type MapServerDefinition,
   type RingRole,
   type ScoreThresholds,
   type ScoreWeights,
+  type SoRelation,
+  type SoRouteKind,
   type SyncTemplate,
-  type VehicleIconName,
-  type WorkspaceState,
+  type VehicleType,
 } from "@/lib/bluewolf";
 import { useWorkspace } from "./app-context";
-import { TemplatePreview, VehicleIconGlyph } from "./visuals";
+import { GtPlayback, RouteBankMap, TemplatePreview, VehicleIconGlyph } from "./visuals";
 
 const sectionItems: { id: DeveloperSection; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "score", label: "ציון וספים", icon: Activity },
   { id: "templates", label: "תבניות", icon: Layers3 },
   { id: "gt", label: "GT ו־Sweep", icon: Beaker },
   { id: "influx", label: "InfluxDB 2", icon: Database },
-  { id: "routes", label: "נתיבים ומפות", icon: MapPinned },
+  { id: "routes", label: "בנק נתיבים", icon: MapPinned },
   { id: "tests", label: "בדיקות מערכת", icon: ShieldCheck },
   { id: "settings", label: "הגדרות", icon: Settings2 },
 ];
 
-function SectionHeader({ eyebrow, title, description, children }: { eyebrow: string; title: string; description: string; children?: React.ReactNode }) {
-  return <header className="developer-section-header glass-panel"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2><p>{description}</p></div>{children}</header>;
-}
+function SectionHeader({ eyebrow, title, description, children }: { eyebrow: string; title: string; description: string; children?: React.ReactNode }) { return <header className="developer-section-header glass-panel"><div><p className="eyebrow">{eyebrow}</p><h2>{title}</h2><p>{description}</p></div>{children}</header>; }
 
-function rebalance<T extends Record<string, number>>(group: T, changedKey: keyof T, nextValue: number): T {
-  const keys = Object.keys(group) as (keyof T)[];
-  const others = keys.filter((key) => key !== changedKey);
-  const remaining = Math.max(0, 100 - nextValue);
-  const previousOtherSum = others.reduce((sum, key) => sum + group[key], 0);
-  const result = { ...group, [changedKey]: nextValue } as T;
-  let used = 0;
-  others.forEach((key, index) => {
-    const value = index === others.length - 1 ? remaining - used : Math.round((previousOtherSum ? group[key] / previousOtherSum : 1 / others.length) * remaining / 5) * 5;
-    result[key] = Math.max(0, value) as T[keyof T];
-    used += result[key];
-  });
-  return result;
-}
+function rebalance<T extends Record<string, number>>(group: T, changedKey: keyof T, nextValue: number): T { const keys = Object.keys(group) as (keyof T)[]; const others = keys.filter((key) => key !== changedKey); const remaining = Math.max(0, 100 - nextValue); const previousOtherSum = others.reduce((sum, key) => sum + group[key], 0); const result = { ...group, [changedKey]: nextValue } as T; let used = 0; others.forEach((key, index) => { const value = index === others.length - 1 ? remaining - used : Math.round((previousOtherSum ? group[key] / previousOtherSum : 1 / others.length) * remaining / 5) * 5; result[key] = Math.max(0, value) as T[keyof T]; used += result[key]; }); return result; }
+function WeightControl({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) { return <div className="weight-control"><div><span>{label}</span><b>{value}%</b></div><Slider value={[value]} onValueChange={(values) => onChange(values[0])} min={0} max={100} step={5} /></div>; }
+function WeightCard<T extends Record<string, number>>({ title, values, labels, description, onChange }: { title: string; values: T; labels: Record<keyof T, string>; description: string; onChange: (values: T) => void }) { return <article className="settings-card glass-panel"><header><div><h3>{title}</h3><p>{description}</p></div><Badge variant="outline">100%</Badge></header>{(Object.keys(values) as (keyof T)[]).map((key) => <WeightControl key={String(key)} label={labels[key]} value={values[key]} onChange={(value) => onChange(rebalance(values, key, value))} />)}</article>; }
 
-function WeightControl({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
-  return <div className="weight-control"><div><span>{label}</span><b>{value}%</b></div><Slider value={[value]} onValueChange={(values) => onChange(values[0])} min={0} max={100} step={5} /></div>;
-}
-
-function WeightCard<T extends Record<string, number>>({ title, values, labels, description, onChange }: { title: string; values: T; labels: Record<keyof T, string>; description: string; onChange: (values: T) => void }) {
-  const sum = Object.values(values).reduce((total, value) => total + value, 0);
-  return <article className="settings-card glass-panel"><header><div><h3>{title}</h3><p>{description}</p></div><Badge variant="outline" className={sum === 100 ? "valid-badge" : "error-badge"}>{sum}%</Badge></header>{(Object.keys(values) as (keyof T)[]).map((key) => <WeightControl key={String(key)} label={labels[key]} value={values[key]} onChange={(value) => onChange(rebalance(values, key, value))} />)}<p className="card-hint"><CircleGauge />המשקולות האחרות מתאזנות אוטומטית ל־100%</p></article>;
-}
-
-const thresholdGroups: { title: string; fields: { key: keyof ScoreThresholds; label: string; unit: string }[] }[] = [
+const thresholdGroups: { title: string; fields: { key: keyof ScoreThresholds; label: string; unit: string; options: number[] }[] }[] = [
   { title: "מיקום וסנכרון", fields: [
-    { key: "siPositionFullDeg", label: "SI · ציון 100 עד", unit: "°" }, { key: "siPositionZeroDeg", label: "SI · ציון 0 החל מ־", unit: "°" },
-    { key: "soPositionFullPct", label: "SO · ציון 100 עד", unit: "% מחזור" }, { key: "soPositionZeroPct", label: "SO · ציון 0 החל מ־", unit: "% מחזור" },
-    { key: "periodFullPct", label: "מחזור · ציון 100 עד", unit: "%" }, { key: "periodZeroPct", label: "מחזור · ציון 0 החל מ־", unit: "%" },
-    { key: "motionFullPct", label: "תנועה · ציון 100 עד", unit: "%" }, { key: "motionZeroPct", label: "תנועה · ציון 0 החל מ־", unit: "%" },
+    { key: "siPositionFullDeg", label: "SI · 100 עד", unit: "°", options: [5, 10, 15, 20] }, { key: "siPositionZeroDeg", label: "SI · 0 החל מ־", unit: "°", options: [20, 30, 45, 60] },
+    { key: "soPositionFullPct", label: "SO · 100 עד", unit: "% מחזור", options: [2, 5, 10, 15] }, { key: "soPositionZeroPct", label: "SO · 0 החל מ־", unit: "% מחזור", options: [15, 20, 25, 30] },
+    { key: "periodFullPct", label: "מחזור · 100 עד", unit: "%", options: [2, 5, 10, 15] }, { key: "periodZeroPct", label: "מחזור · 0 החל מ־", unit: "%", options: [15, 20, 25, 30] },
+    { key: "motionFullPct", label: "תנועה · 100 עד", unit: "%", options: [5, 10, 15, 20] }, { key: "motionZeroPct", label: "תנועה · 0 החל מ־", unit: "%", options: [20, 30, 40, 50] },
   ] },
-  { title: "ביצוע הנתיב", fields: [
-    { key: "routeDistanceFullPct", label: "מרחק · ציון 100 עד", unit: "% מ־b" }, { key: "routeDistanceZeroPct", label: "מרחק · ציון 0 החל מ־", unit: "% מ־b" },
-    { key: "tangentFullDeg", label: "משיק · ציון 100 עד", unit: "°" }, { key: "tangentZeroDeg", label: "משיק · ציון 0 החל מ־", unit: "°" },
-    { key: "curvatureFullPct", label: "עקמומיות · ציון 100 עד", unit: "%" }, { key: "curvatureZeroPct", label: "עקמומיות · ציון 0 החל מ־", unit: "%" },
+  { title: "ביצוע נתיב", fields: [
+    { key: "routeDistanceFullPct", label: "מרחק · 100 עד", unit: "% מ־b", options: [2, 5, 10, 15] }, { key: "routeDistanceZeroPct", label: "מרחק · 0 החל מ־", unit: "% מ־b", options: [20, 30, 40, 50] },
+    { key: "tangentFullDeg", label: "משיק · 100 עד", unit: "°", options: [5, 10, 15, 20] }, { key: "tangentZeroDeg", label: "משיק · 0 החל מ־", unit: "°", options: [30, 45, 60, 90] },
+    { key: "curvatureFullPct", label: "עקמומיות · 100 עד", unit: "%", options: [5, 10, 20, 30] }, { key: "curvatureZeroPct", label: "עקמומיות · 0 החל מ־", unit: "%", options: [50, 75, 100, 125] },
   ] },
   { title: "תצוגה ואמינות", fields: [
-    { key: "lowSpeedPct", label: "סף מהירות לחישוב", unit: "% עבודה" }, { key: "smoothingSeconds", label: "החלקת ציון", unit: "שניות" },
-    { key: "greenScore", label: "תחילת ירוק", unit: "נק׳" }, { key: "redScore", label: "מתחת לאדום", unit: "נק׳" },
+    { key: "lowSpeedPct", label: "סף מהירות", unit: "% עבודה", options: [10, 20, 30, 40, 50] }, { key: "smoothingSeconds", label: "החלקה", unit: "שניות", options: [3, 5, 10, 15, 20, 30] },
+    { key: "greenScore", label: "תחילת ירוק", unit: "נק׳", options: [70, 75, 80, 85, 90] }, { key: "redScore", label: "מתחת לאדום", unit: "נק׳", options: [30, 40, 50, 60] },
   ] },
 ];
 
 function ScoreSection() {
-  const { state, save, revision } = useWorkspace();
-  const [weights, setWeights] = useState<ScoreWeights>(structuredClone(state.weights));
-  const [thresholds, setThresholds] = useState<ScoreThresholds>(structuredClone(state.thresholds));
-  return <>
-    <SectionHeader eyebrow="קונפיגורציה פעילה" title="משקולות וספי ציון" description="כל שינוי נשמר כגרסה חדשה, מחושב על כל ההיסטוריה ומוחל מיד."><div className="header-actions"><Button variant="outline" onClick={() => { setWeights(structuredClone(DEFAULT_WORKSPACE.weights)); setThresholds(structuredClone(DEFAULT_WORKSPACE.thresholds)); toast.info("ברירות המחדל נטענו"); }}><RotateCcw />ברירת מחדל</Button><Button onClick={() => save({ ...state, weights, thresholds }, "scoring", "save-version", `גרסת ניקוד ${revision + 1}`)}><Save />שמור גרסה {revision + 1}</Button></div></SectionHeader>
-    <div className="weight-grid">
-      <WeightCard title="סנכרון" description="עד כמה הקבוצה שומרת על המיקום, המחזור וקצב התנועה הרצויים." values={weights.sync} labels={{ position: "מיקום", period: "מחזור", motion: "תנועה" }} onChange={(sync) => setWeights({ ...weights, sync })} />
-      <WeightCard title="נתיב" description="עד כמה כל רכב מבצע את הנתיב האפקטיבי שזוהה מנתוני הניווט." values={weights.route} labels={{ distance: "מרחק", tangent: "משיק", curvature: "עקמומיות" }} onChange={(route) => setWeights({ ...weights, route })} />
-      <WeightCard title="ציון כולל" description="האיזון שהמפעיל רואה בין איכות הסנכרון לבין ביצוע הנתיב." values={weights.total} labels={{ sync: "סנכרון", route: "נתיב" }} onChange={(total) => setWeights({ ...weights, total })} />
-    </div>
-    <section className="threshold-panel glass-panel"><div className="panel-title"><div><p className="eyebrow">פונקציית הציון</p><h3>ספים פעילים וההשפעה שלהם</h3></div><Badge variant="outline">ירידה חלקה בין 100 ל־0</Badge></div><div className="threshold-grid">{thresholdGroups.map((group) => <article key={group.title}><h4>{group.title}</h4>{group.fields.map((field) => <label className="number-field described-field" key={field.key}><span>{field.label}<small>{THRESHOLD_DESCRIPTIONS[field.key]}</small></span><div><input type="number" min="0" max="300" step="5" value={thresholds[field.key]} onChange={(event) => setThresholds({ ...thresholds, [field.key]: Number(event.target.value) })} /><em>{field.unit}</em></div></label>)}</article>)}</div></section>
-  </>;
+  const { state, save, revision } = useWorkspace(); const [weights, setWeights] = useState<ScoreWeights>(structuredClone(state.weights)); const [thresholds, setThresholds] = useState<ScoreThresholds>(structuredClone(state.thresholds));
+  return <><SectionHeader eyebrow="קונפיגורציה" title="משקולות וספים" description="הספים נבחרים מגריד מאושר בלבד. אין ערכים מספריים חופשיים."><div className="header-actions"><Button variant="outline" onClick={() => { setWeights(structuredClone(DEFAULT_WORKSPACE.weights)); setThresholds(structuredClone(DEFAULT_WORKSPACE.thresholds)); }}>ברירת מחדל</Button><Button onClick={() => save({ ...state, weights, thresholds }, "scoring", "save-version", `v${revision + 1}`)}><Save />שמור גרסה</Button></div></SectionHeader><div className="weight-grid"><WeightCard title="סנכרון" description="מיקום, מחזור וקצב תנועה." values={weights.sync} labels={{ position: "מיקום", period: "מחזור", motion: "תנועה" }} onChange={(sync) => setWeights({ ...weights, sync })} /><WeightCard title="נתיב" description="מרחק, משיק ועקמומיות." values={weights.route} labels={{ distance: "מרחק", tangent: "משיק", curvature: "עקמומיות" }} onChange={(route) => setWeights({ ...weights, route })} /><WeightCard title="כולל" description="איזון סנכרון מול נתיב." values={weights.total} labels={{ sync: "סנכרון", route: "נתיב" }} onChange={(total) => setWeights({ ...weights, total })} /></div><section className="threshold-panel glass-panel"><div className="panel-title"><div><p className="eyebrow">Grid</p><h3>ספים מאושרים</h3></div><Badge variant="outline">בחירה סגורה</Badge></div><div className="v04-threshold-grid">{thresholdGroups.map((group) => <article key={group.title}><h4>{group.title}</h4>{group.fields.map((field) => <label key={field.key}><span>{field.label}<small>{THRESHOLD_DESCRIPTIONS[field.key]}</small></span><Select value={String(thresholds[field.key])} onValueChange={(value) => setThresholds({ ...thresholds, [field.key]: Number(value) })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{field.options.map((value) => <SelectItem key={value} value={String(value)}>{value} {field.unit}</SelectItem>)}</SelectContent></Select></label>)}</article>)}</div></section></>;
 }
 
-function uniquePermutations(items: string[]) {
-  const result = new Set<string>();
-  const visit = (prefix: string[], rest: string[]) => {
-    if (!rest.length) { const direct = prefix.join(" — "); const reverse = [...prefix].reverse().join(" — "); result.add([direct, reverse].sort()[0]); return; }
-    [...new Set(rest)].forEach((item) => { const index = rest.indexOf(item); visit([...prefix, item], [...rest.slice(0, index), ...rest.slice(index + 1)]); });
-  };
-  visit([], items);
-  return [...result].sort();
-}
-
-function mixLabel(counts: Record<string, number>) {
-  return Object.entries(counts).filter(([, count]) => count > 0).map(([name, count]) => `${name}×${count}`).join(" · ") || "ללא רכבים";
-}
+function countLabel(counts: Record<string, number>, vehicleTypes: VehicleType[]) { return vehicleTypes.map((type) => `${type.name}×${counts[type.id] ?? 0}`).filter((entry) => !entry.endsWith("×0")).join(" · ") || "ללא רכבים"; }
+function countItems(counts: Record<string, number>, vehicleTypes: VehicleType[]) { return vehicleTypes.flatMap((type) => Array.from({ length: counts[type.id] ?? 0 }, () => type)); }
+function pairKey(a: number, b: number) { return `${a}-${b}`; }
 
 function TemplateSection() {
-  const { state, save } = useWorkspace();
-  const [family, setFamily] = useState<Family>("SI");
-  const [counts, setCounts] = useState<Record<string, number>>(() => Object.fromEntries(state.vehicleTypes.map((item) => [item.name, 1])));
-  const [selectedKey, setSelectedKey] = useState("");
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [name, setName] = useState("");
-  const [soValues, setSoValues] = useState("2,0,2");
-  const mix = mixLabel(counts);
-  const items = useMemo(() => Object.entries(counts).flatMap(([type, count]) => Array.from({ length: count }, () => type)), [counts]);
-  const roleLabels: Record<RingRole, string> = { inner: "פנימית", middle: "ביניים", outer: "חיצונית" };
-  const placement = items.map((name) => {
-    const type = state.vehicleTypes.find((item) => item.name === name);
-    const role = type?.siRoles[0];
-    return role ? `${roleLabels[role]}: ${name}` : `ללא טבעת: ${name}`;
-  });
-  const constellations = useMemo(() => {
-    if (family === "SI") {
-      if (items.length < 3 || items.length > 5 || placement.some((item) => item.startsWith("ללא"))) return [];
-      return generateSiAngleSets(items.length).map((values) => ({ key: `si-${values.join("-")}`, label: values.map((value) => `${value}°`).join(" · "), constellation: placement.join(" — "), values, note: "סיבוב משותף ותמונת מראה מאוחדים" }));
-    }
-    if (items.length < 2) return [];
-    const base = uniquePermutations(items);
-    const regular = base.map((entry, index) => ({ key: `so-r-${index}`, label: entry, constellation: entry, values: Array.from({ length: Math.max(1, items.length - 1) }, () => 2), note: "היפוך סדר נחשב לאותה אפשרות" }));
-    const doubles = Object.entries(counts).filter(([, count]) => count >= 2).flatMap(([type]) => base.map((entry, index) => ({ key: `so-d-${type}-${index}`, label: `${entry} · כפול ל${type}`, constellation: `${entry} · היפודרום כפול ל${type}`, values: [2, 0, 2], note: `כפול מותר כי ${type} מופיע לפחות פעמיים` })));
-    return [...regular, ...doubles];
-  }, [family, items, placement, counts]);
-  const selected = constellations.find((item) => item.key === selectedKey) ?? constellations[0];
-  const filtered = state.templates.filter((template) => template.family === family && template.mix === mix);
-
-  const addTemplate = async () => {
-    if (!selected) { toast.error("אין קונסטלציה חוקית לתמהיל שנבחר"); return; }
-    const values = family === "SI" ? selected.values : soValues.split(",").map((value) => Number(value.trim())).filter(Number.isFinite);
-    const template: SyncTemplate = { id: createId("tpl"), family, name: name.trim() || `${family} · ${mix} · ${family === "SI" ? values.map((value) => `${value}°`).join("/") : "רבעים " + values.join("/")}`, mix, constellation: selected.constellation, law: family === "SI" ? "הפרשי זווית בין כל זוג" : "רבעים, זהה/הפוך ותזמון פניות", values, isDefault: filtered.length === 0, updatedAt: new Date().toISOString() };
-    if (state.templates.some((item) => canonicalTemplateKey(item) === canonicalTemplateKey(template))) { toast.error("תבנית סימטרית זהה כבר קיימת בבנק"); return; }
-    await save({ ...state, templates: [...state.templates, template] }, "templates", "create", template.name);
-    setDialogOpen(false); setName("");
-  };
-  const setDefault = (template: SyncTemplate) => save({ ...state, templates: state.templates.map((item) => item.family === template.family && item.mix === template.mix ? { ...item, isDefault: item.id === template.id } : item) }, "templates", "set-default", template.name);
-
-  return <>
-    <SectionHeader eyebrow="בנק תבניות מותרות" title="מחולל קונסטלציות חזותי" description="בחר SI או SO ותמהיל. כל האוריינטציות החוקיות נוצרות אוטומטית בלי כפילות של תמונת מראה או כיוון משותף."><Dialog open={dialogOpen} onOpenChange={setDialogOpen}><DialogTrigger asChild><Button disabled={!selected}><Plus />הוסף תבנית מותרת</Button></DialogTrigger><DialogContent className="glass-dialog wide-dialog" dir="rtl"><DialogHeader><DialogTitle>תבנית חדשה</DialogTitle><DialogDescription>התבנית נשמרת מיד בבנק המבצעי של התמהיל.</DialogDescription></DialogHeader><div className="template-dialog-grid"><TemplatePreview family={family} values={family === "SI" ? selected?.values ?? [] : soValues.split(",").map(Number)} /><div className="dialog-form"><label><span>שם תצוגה</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder={`${family} · ${mix}`} /></label>{family === "SO" && <label><span>רבע רצוי לכל קשר</span><input value={soValues} onChange={(event) => setSoValues(event.target.value)} placeholder="2,0,2" /></label>}<div className="dialog-summary"><span>תמהיל</span><strong>{mix}</strong><span>שיבוץ</span><strong>{selected?.constellation}</strong><span>חוקיות</span><strong>{family === "SI" ? "30° / 360°" : "רביעים + פניות"}</strong></div></div></div><DialogFooter><Button variant="outline" onClick={() => setDialogOpen(false)}>ביטול</Button><Button onClick={addTemplate}><Save />שמור והפעל</Button></DialogFooter></DialogContent></Dialog></SectionHeader>
-    <section className="template-builder glass-panel">
-      <div className="family-switch"><button type="button" className={family === "SI" ? "active" : ""} onClick={() => { setFamily("SI"); setSelectedKey(""); }}><CircleGauge />SI · טבעות</button><button type="button" className={family === "SO" ? "active" : ""} onClick={() => { setFamily("SO"); setSelectedKey(""); }}><Network />SO · מבנה ח׳</button></div>
-      <div className="mix-builder"><div><p className="eyebrow">תמהיל רכבים</p><h3>{mix}</h3><span>{items.length} רכבים · {constellations.length} קונסטלציות ללא כפילויות</span></div>{state.vehicleTypes.map((type) => <div className="counter" key={type.id}><span>{type.name}</span><Button variant="outline" size="icon-sm" onClick={() => setCounts({ ...counts, [type.name]: Math.max(0, (counts[type.name] ?? 0) - 1) })}>−</Button><b>{counts[type.name] ?? 0}</b><Button variant="outline" size="icon-sm" onClick={() => setCounts({ ...counts, [type.name]: Math.min(5, (counts[type.name] ?? 0) + 1) })}>+</Button></div>)}</div>
-      {selected && <div className="selected-constellation"><TemplatePreview family={family} values={selected.values} /><div><p className="eyebrow">קונסטלציה נבחרת</p><h3>{selected.label}</h3><p>{selected.constellation}</p><small>{selected.note}</small></div></div>}
-      <div className="constellation-grid visual-constellations">{constellations.length ? constellations.map((item) => <button type="button" key={item.key} className={selected?.key === item.key ? "active" : ""} onClick={() => setSelectedKey(item.key)}><TemplatePreview family={family} values={item.values} compact /><span>{item.label}</span><small>{item.note}</small></button>) : <div className="empty-state"><UsersRound /><strong>אין קונסטלציה חוקית</strong><p>{family === "SI" ? "SI דורש 3–5 רכבים ולכל סוג חייב להיות לפחות תפקיד טבעת מותר." : "SO דורש לפחות שני רכבים."}</p></div>}</div>
-    </section>
-    <section className="bank-panel glass-panel"><div className="panel-title"><div><p className="eyebrow">בנק פעיל</p><h3>{filtered.length} תבניות לתמהיל הנבחר</h3></div><Badge variant="outline">ללא כפילויות סימטריה</Badge></div><div className="template-list visual-bank">{filtered.length ? filtered.map((template) => <article key={template.id}><TemplatePreview family={template.family} values={template.values} compact /><div><Badge className={template.isDefault ? "default-badge" : ""}>{template.isDefault ? "דיפולט" : template.family}</Badge><h4>{template.name}</h4><p>{template.constellation}</p><small>{template.law}</small></div><div className="row-actions">{!template.isDefault && <Button variant="outline" size="sm" onClick={() => setDefault(template)}>קבע דיפולט</Button>}<Button variant="ghost" size="icon-sm" aria-label="מחיקת תבנית" onClick={() => { if (window.confirm(`למחוק את ${template.name}?`)) save({ ...state, templates: state.templates.filter((item) => item.id !== template.id) }, "templates", "delete", template.name); }}><Trash2 /></Button></div></article>) : <div className="empty-state"><Layers3 /><strong>טרם הוגדרו תבניות לתמהיל הזה</strong><p>בחר קונסטלציה והוסף אותה לבנק.</p></div>}</div></section>
-  </>;
+  const { state, save } = useWorkspace(); const [family, setFamily] = useState<Family>("SI"); const [name, setName] = useState(""); const [siCounts, setSiCounts] = useState<Record<string, number>>({ storm: 1, lightning: 1, thunder: 1 }); const [siAngles, setSiAngles] = useState<Record<string, number>>({ "0-1": 120, "0-2": 120, "1-2": 120 }); const [singleCounts, setSingleCounts] = useState<Record<string, number>>({ storm: 0, lightning: 1, thunder: 0 }); const [doubleCounts, setDoubleCounts] = useState<Record<string, number>>({ storm: 2, lightning: 0, thunder: 0 }); const [chain, setChain] = useState<SoRouteKind[]>(["single", "double", "single"]); const [relations, setRelations] = useState<SoRelation[]>(["opposite", "same"]);
+  const siItems = countItems(siCounts, state.vehicleTypes).slice(0, 5); const siPairs = useMemo(() => { const result: { first: number; second: number; angle: number }[] = []; for (let first = 0; first < siItems.length; first += 1) for (let second = first + 1; second < siItems.length; second += 1) result.push({ first, second, angle: siAngles[pairKey(first, second)] ?? 90 }); return result; }, [siItems.length, siAngles]); const siValues = siPairs.map((pair) => pair.angle); const soValues = relations.map(relationCode); const previewTypes = family === "SI" ? siItems : [...countItems(singleCounts, state.vehicleTypes), ...countItems(doubleCounts, state.vehicleTypes)];
+  const saveTemplate = async () => { if (family === "SI" && (siItems.length < 2 || siItems.length > 5)) { toast.error("SI דורש 2–5 רכבים"); return; } const mix = family === "SI" ? countLabel(siCounts, state.vehicleTypes) : `יחיד: ${countLabel(singleCounts, state.vehicleTypes)} · כפול: ${countLabel(doubleCounts, state.vehicleTypes)}`; const template: SyncTemplate = family === "SI" ? { id: createId("tpl-si"), family, name: name || `SI · ${siItems.length} רכבים`, mix, constellation: siItems.map((item) => item.name).join(" — "), law: "זווית 45° / 90° / 120° לכל זוג", values: siValues, siPairs, isDefault: false, updatedAt: new Date().toISOString() } : { id: createId("tpl-so"), family, name: name || "SO · שרשרת היפודרומים", mix, constellation: chain.map((kind) => kind === "double" ? "כפול" : "יחיד").join(" — "), law: "קצה משותף + יחס זהה/הפוך/מעורב בין שכנים", values: soValues, soSpec: { singleCounts, doubleCounts, chain, relations }, isDefault: false, updatedAt: new Date().toISOString() }; if (state.templates.some((item) => canonicalTemplateKey(item) === canonicalTemplateKey(template))) { toast.warning("כבר קיימת תבנית שקולה"); return; } await save({ ...state, templates: [...state.templates, template] }, "templates", "create", template.name); setName(""); };
+  return <><SectionHeader eyebrow="עורך ישיר" title="תבניות SI / SO" description="אין יותר מחולל קונסטלציות גדול. מגדירים את החוק ישירות ורואים גיאומטריה אידיאלית." /><div className="v04-template-editor glass-panel"><div className="segmented-control v04-family-switch"><button type="button" className={family === "SI" ? "active" : ""} onClick={() => setFamily("SI")}>SI</button><button type="button" className={family === "SO" ? "active" : ""} onClick={() => setFamily("SO")}>SO</button></div><div className="v04-template-editor-body"><div className="v04-template-form"><label><span>שם התבנית</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="שם קצר וברור" /></label>{family === "SI" ? <><h3>הרכב רכבים</h3><div className="v04-count-grid">{state.vehicleTypes.map((type) => <label key={type.id}><span><i style={{ background: type.color }} />{type.name}</span><Select value={String(siCounts[type.id] ?? 0)} onValueChange={(value) => setSiCounts({ ...siCounts, [type.id]: Number(value) })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[0,1,2,3].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}</SelectContent></Select></label>)}</div><h3>זווית בין כל זוג</h3><div className="v04-pair-grid">{siPairs.map((pair) => <label key={`${pair.first}-${pair.second}`}><span><i style={{ background: siItems[pair.first]?.color }} />{siItems[pair.first]?.name} ↔ <i style={{ background: siItems[pair.second]?.color }} />{siItems[pair.second]?.name}</span><Select value={String(pair.angle)} onValueChange={(value) => setSiAngles({ ...siAngles, [pairKey(pair.first, pair.second)]: Number(value) })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{SI_ALLOWED_PAIR_ANGLES.map((angle) => <SelectItem key={angle} value={String(angle)}>{angle}°</SelectItem>)}</SelectContent></Select></label>)}</div></> : <><div className="v04-so-counts"><article><h3>היפודרום יחיד · כמה מכל סוג</h3>{state.vehicleTypes.map((type) => <label key={type.id}><span><i style={{ background: type.color }} />{type.name}</span><Select value={String(singleCounts[type.id] ?? 0)} onValueChange={(value) => setSingleCounts({ ...singleCounts, [type.id]: Number(value) })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[0,1,2,3,4].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}</SelectContent></Select></label>)}</article><article><h3>היפודרום כפול · כמה מכל סוג</h3>{state.vehicleTypes.map((type) => <label key={type.id}><span><i style={{ background: type.color }} />{type.name}</span><Select value={String(doubleCounts[type.id] ?? 0)} onValueChange={(value) => setDoubleCounts({ ...doubleCounts, [type.id]: Number(value) })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[0,1,2,3,4].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}</SelectContent></Select></label>)}</article></div><h3>מיקום יחסי בשרשרת</h3><div className="v04-chain-grid">{chain.map((kind, index) => <label key={index}><span>מיקום {index + 1}</span><Select value={kind} onValueChange={(value) => setChain(chain.map((item, itemIndex) => itemIndex === index ? value as SoRouteKind : item))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="single">יחיד</SelectItem><SelectItem value="double">כפול</SelectItem></SelectContent></Select></label>)}</div><h3>הטיה בין היפודרומים סמוכים</h3><div className="v04-pair-grid">{relations.map((relation, index) => <label key={index}><span>{index + 1} ↔ {index + 2} · קצה משותף · 30°</span><Select value={relation} onValueChange={(value) => setRelations(relations.map((item, itemIndex) => itemIndex === index ? value as SoRelation : item))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(Object.keys(SO_RELATION_LABELS) as SoRelation[]).map((value) => <SelectItem key={value} value={value}>{SO_RELATION_LABELS[value]}</SelectItem>)}</SelectContent></Select></label>)}</div></>}</div><div className="v04-template-preview-pane"><p className="eyebrow">Preview אידיאלי</p><TemplatePreview family={family} values={family === "SI" ? siValues : soValues} vehicleTypes={previewTypes} soKinds={chain} /><p>צבעים כאן בלבד מייצגים סוג רכב. במצב חי הצבע מייצג קבוצה.</p><Button onClick={saveTemplate}><Save />שמור תבנית</Button></div></div></div><section className="v04-template-bank glass-panel"><div className="panel-title"><div><p className="eyebrow">בנק תבניות</p><h3>{state.templates.length} תבניות</h3></div></div><div className="v04-template-bank-grid">{state.templates.map((template) => <article key={template.id}><TemplatePreview family={template.family} values={template.values} compact vehicleTypes={state.vehicleTypes} soKinds={template.soSpec?.chain} /><div><strong>{template.name}</strong><p>{template.law}</p><small>{template.mix}</small></div><Button variant="ghost" size="icon-sm" disabled={template.isDefault} onClick={() => save({ ...state, templates: state.templates.filter((item) => item.id !== template.id) }, "templates", "delete", template.name)}><Trash2 /></Button></article>)}</div></section></>;
 }
 
-type GtRecommendation = { id: string; family: Family; groupId: string; start: string; end: string; vehicleCount: number; routeType: string; total: number; sync: number; route: number; reason: string };
-
 function GtSection() {
-  const { state, save } = useWorkspace();
-  const [serverId, setServerId] = useState("1");
-  const [from, setFrom] = useState("2026-09-02T17:00");
-  const [to, setTo] = useState("2026-09-02T19:00");
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [recommendations, setRecommendations] = useState<GtRecommendation[]>([]);
-  const [selectedId, setSelectedId] = useState("");
-  const [syncQuality, setSyncQuality] = useState<"good" | "medium" | "low">("good");
-  const [routeQuality, setRouteQuality] = useState<"good" | "medium" | "low">("good");
-  const [filterFamily, setFilterFamily] = useState<"all" | Family>("all");
-  const [filterRoute, setFilterRoute] = useState("all");
-  const [filterCount, setFilterCount] = useState("all");
-  const [search, setSearch] = useState("");
-  const [sweepRunning, setSweepRunning] = useState(false);
-  const [sweepProgress, setSweepProgress] = useState(0);
-  const [results, setResults] = useState<{ rank: number; error: number; position: number; period: number; motion: number }[]>([]);
-  const selected = recommendations.find((item) => item.id === selectedId);
-
-  const loadGtRange = () => {
-    if (new Date(from) >= new Date(to)) { toast.error("זמן ההתחלה חייב להיות מוקדם מהסיום"); return; }
-    setLoading(true); setProgress(3); setRecommendations([]);
-    const timer = window.setInterval(() => setProgress((value) => {
-      const next = Math.min(100, value + 8);
-      if (next >= 100) {
-        window.clearInterval(timer); setLoading(false);
-        const scenario = getServerScenario(serverId);
-        const suggestions: GtRecommendation[] = [
-          { id: `rec-${serverId}-si`, family: "SI", groupId: scenario.groups.si.id, start: from, end: new Date(new Date(from).getTime() + 34 * 60000).toISOString().slice(0, 16), vehicleCount: scenario.groups.si.members.length, routeType: "טבעות", total: scenario.groups.si.total, sync: scenario.groups.si.sync, route: scenario.groups.si.route, reason: scenario.groups.si.reason },
-          { id: `rec-${serverId}-so`, family: "SO", groupId: scenario.groups.so.id, start: new Date(new Date(from).getTime() + 20 * 60000).toISOString().slice(0, 16), end: to, vehicleCount: scenario.groups.so.members.length, routeType: "מבנה ח׳", total: scenario.groups.so.total, sync: scenario.groups.so.sync, route: scenario.groups.so.route, reason: scenario.groups.so.reason },
-        ];
-        setRecommendations(suggestions); setSelectedId(suggestions[0].id); toast.success("המערכת הציעה חלוקה לקבוצות ולאירועים");
-      }
-      return next;
-    }), 130);
-  };
-  const saveGt = async () => {
-    if (!selected) return;
-    const make = (layer: "sync" | "route", quality: "good" | "medium" | "low"): GtSegment => ({ id: createId("gt"), family: selected.family, layer, quality, label: `${selected.groupId} · ${layer === "sync" ? "סנכרון" : "נתיב"} · ${selected.start.slice(11)}–${selected.end.slice(11)}`, serverId, groupId: selected.groupId, start: selected.start, end: selected.end, vehicleCount: selected.vehicleCount, routeType: selected.routeType, score: layer === "sync" ? selected.sync : selected.route });
-    const additions = [make("sync", syncQuality), make("route", routeQuality)];
-    await save({ ...state, gtSegments: [...state.gtSegments, ...additions] }, "gt", "approve-recommendation", selected.groupId);
-    toast.success("המקטע אושר ונשמר ב־GT בשתי שכבות");
-  };
-  const filteredGt = state.gtSegments.filter((item) => (filterFamily === "all" || item.family === filterFamily) && (filterRoute === "all" || item.routeType === filterRoute) && (filterCount === "all" || item.vehicleCount === Number(filterCount)) && (!search || `${item.label} ${item.groupId} ${item.routeType}`.toLowerCase().includes(search.toLowerCase())));
-  const runSweep = () => {
-    setSweepRunning(true); setSweepProgress(0); setResults([]);
-    const timer = window.setInterval(() => setSweepProgress((value) => {
-      const next = Math.min(100, value + 5);
-      if (next === 100) { window.clearInterval(timer); setSweepRunning(false); setResults(Array.from({ length: 10 }, (_, index) => ({ rank: index + 1, error: Number((4.7 + index * .36).toFixed(2)), position: 60 - (index % 3) * 10, period: 20 + (index % 2) * 10, motion: 20 + (index % 3) * 5 }))); toast.success("10,000 קונפיגורציות נבדקו"); }
-      return next;
-    }), 80);
-  };
-
-  return <>
-    <SectionHeader eyebrow="Ground Truth" title="שליפה, המלצה ואישור GT" description="המפתח בוחר שרת וטווח; המערכת מציעה קבוצות ואירועים, והמפתח מאשר ומתייג סנכרון ונתיב בנפרד." />
-    <section className="gt-wizard glass-panel">
-      <div className="wizard-steps"><span className="active">1 · מקור וזמן</span><span className={recommendations.length ? "active" : ""}>2 · המלצת מערכת</span><span className={selected ? "active" : ""}>3 · אישור ותיוג</span></div>
-      <div className="gt-source-grid"><label><span>שרת</span><Select value={serverId} onValueChange={setServerId}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.servers.filter((item) => item.enabled).map((item) => <SelectItem key={item.id} value={item.id}>{item.name} · {item.arena}</SelectItem>)}</SelectContent></Select></label><label><span>התחלה</span><input type="datetime-local" value={from} onChange={(event) => setFrom(event.target.value)} /></label><label><span>סיום</span><input type="datetime-local" value={to} onChange={(event) => setTo(event.target.value)} /></label><Button onClick={loadGtRange} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <Search />}{loading ? "שולף ומחשב" : "שלוף והצע חלוקה"}</Button></div>
-      {loading && <div className="gt-loading"><Progress value={progress} /><span>{progress}% · {progress < 35 ? "שולף מ־Influx" : progress < 72 ? "מזהה נתיבים וקבוצות" : "מחשב אירועים וציונים"}</span></div>}
-      {!!recommendations.length && <div className="gt-recommendations">{recommendations.map((item) => <button type="button" key={item.id} className={selectedId === item.id ? "active" : ""} onClick={() => { setSelectedId(item.id); setSyncQuality(item.sync >= 80 ? "good" : item.sync < 50 ? "low" : "medium"); setRouteQuality(item.route >= 80 ? "good" : item.route < 50 ? "low" : "medium"); }}><TemplatePreview family={item.family} values={item.family === "SI" ? [0, 120, 240] : [2, 0, 2]} compact /><span><Badge>{item.family}</Badge><strong>{item.groupId} · {item.routeType}</strong><small>{item.start.replace("T", " ")} – {item.end.replace("T", " ")}</small><p>{item.reason}</p></span><div><b>{item.total}</b><small>כולל</small></div></button>)}</div>}
-      {selected && <div className="gt-approval"><div><p className="eyebrow">המלצה נבחרת</p><h3>{selected.groupId} · {selected.vehicleCount} רכבים</h3><p>ציון כולל {selected.total} · סנכרון {selected.sync} · נתיב {selected.route}</p></div><label><span>GT סנכרון</span><Select value={syncQuality} onValueChange={(value) => setSyncQuality(value as typeof syncQuality)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="good">טוב</SelectItem><SelectItem value="medium">בינוני</SelectItem><SelectItem value="low">נמוך</SelectItem></SelectContent></Select></label><label><span>GT נתיב</span><Select value={routeQuality} onValueChange={(value) => setRouteQuality(value as typeof routeQuality)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="good">טוב</SelectItem><SelectItem value="medium">בינוני</SelectItem><SelectItem value="low">נמוך</SelectItem></SelectContent></Select></label><Button onClick={saveGt}><Check />אשר ושמור ב־GT</Button></div>}
-    </section>
-    <section className="gt-bank glass-panel"><div className="panel-title"><div><p className="eyebrow">מקטעים מתויגים</p><h3>{filteredGt.length} מתוך {state.gtSegments.length}</h3></div><Badge variant="outline">תיוג קבוצתי · רכב אופציונלי</Badge></div><div className="filter-bar"><label className="search-field"><Search /><input placeholder="חיפוש קבוצה או סוג נתיב" value={search} onChange={(event) => setSearch(event.target.value)} /></label><Select value={filterFamily} onValueChange={(value) => setFilterFamily(value as typeof filterFamily)}><SelectTrigger><Filter /><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">SI + SO</SelectItem><SelectItem value="SI">SI</SelectItem><SelectItem value="SO">SO</SelectItem></SelectContent></Select><Select value={filterRoute} onValueChange={setFilterRoute}><SelectTrigger><Network /><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">כל סוגי הנתיב</SelectItem><SelectItem value="טבעות">טבעות</SelectItem><SelectItem value="מבנה ח׳">מבנה ח׳</SelectItem><SelectItem value="שמינייה">שמינייה</SelectItem></SelectContent></Select><Select value={filterCount} onValueChange={setFilterCount}><SelectTrigger><UsersRound /><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">כל כמויות הרכבים</SelectItem>{[2,3,4,5,6,7,8].map((count) => <SelectItem key={count} value={String(count)}>{count} רכבים</SelectItem>)}</SelectContent></Select></div><div className="gt-segment-table"><div className="table-head"><span>קבוצה</span><span>שרת וזמן</span><span>נתיב</span><span>רכבים</span><span>שכבה</span><span>תיוג</span><span>ציון מערכת</span><span /></div>{filteredGt.map((item) => <div className="table-row" key={item.id}><strong>{item.groupId}</strong><span>שרת {item.serverId} · {item.start.slice(11)}–{item.end.slice(11)}</span><Badge variant="outline">{item.family} · {item.routeType}</Badge><span>{item.vehicleCount}</span><span>{item.layer === "sync" ? "סנכרון" : "נתיב"}</span><Badge className={`gt-${item.quality}`}>{item.quality === "good" ? "טוב" : item.quality === "medium" ? "בינוני" : "נמוך"}</Badge><b>{item.score}</b><Button variant="ghost" size="icon-sm" onClick={() => save({ ...state, gtSegments: state.gtSegments.filter((entry) => entry.id !== item.id) }, "gt", "remove-segment", item.label)}><Trash2 /></Button></div>)}</div></section>
-    <section className="sweep-results glass-panel"><div className="panel-title"><div><p className="eyebrow">Sweep אדפטיבי</p><h3>{sweepRunning ? "בודק 10,000 קונפיגורציות" : results.length ? "10 התוצאות המובילות" : "מוכן להרצה"}</h3></div><Button onClick={runSweep} disabled={sweepRunning || state.gtSegments.length < 2}>{sweepRunning ? <LoaderCircle className="spin" /> : <Play />}הרץ Sweep</Button></div>{sweepRunning && <><Progress value={sweepProgress} /><p className="progress-copy">{sweepProgress}% · דגימה רחבה ואז התמקדות</p></>}{!sweepRunning && results.length > 0 && <div className="sweep-table"><div className="table-head"><span>דירוג</span><span>שגיאת GT</span><span>מיקום</span><span>מחזור</span><span>תנועה</span><span /></div>{results.map((item) => <div className="table-row" key={item.rank}><b>#{item.rank}</b><span>{item.error}</span><span>{item.position}%</span><span>{item.period}%</span><span>{item.motion}%</span><Button size="sm" variant={item.rank === 1 ? "default" : "outline"} onClick={() => { const sum = item.position + item.period + item.motion; const sync = { position: Math.round(item.position / sum * 100), period: Math.round(item.period / sum * 100), motion: 0 }; sync.motion = 100 - sync.position - sync.period; save({ ...state, weights: { ...state.weights, sync } }, "gt", "apply-sweep-result", `תוצאה #${item.rank}`); }}>בחר ושמור</Button></div>)}</div>}{!sweepRunning && !results.length && <div className="empty-state"><WandSparkles /><strong>עוד לא הורץ Sweep</strong><p>המערכת תדרג 10 תוצאות; בחירה ושמירה נשארות תמיד בידי המפתח.</p></div>}</section>
-  </>;
+  const { state, save } = useWorkspace(); const [serverId, setServerId] = useState("1"); const [arena, setArena] = useState(state.arenas[0] ?? "זירה א׳"); const [family, setFamily] = useState<Family>("SO"); const [from, setFrom] = useState("2026-09-03T07:30"); const [to, setTo] = useState("2026-09-03T08:30"); const [loaded, setLoaded] = useState(false); const [loading, setLoading] = useState(false); const [progress, setProgress] = useState(0); const [playing, setPlaying] = useState(false); const [timePct, setTimePct] = useState(36); const [judgedScore, setJudgedScore] = useState(75); const scenario = getServerScenario(serverId); const group = scenario.groups[family.toLowerCase() as "si" | "so"];
+  useEffect(() => { if (!playing) return; const timer = window.setInterval(() => setTimePct((value) => value >= 100 ? 0 : value + 1), 90); return () => window.clearInterval(timer); }, [playing]);
+  const load = () => { setLoading(true); setProgress(5); const timer = window.setInterval(() => setProgress((value) => { const next = Math.min(100, value + 12); if (next >= 100) { window.clearInterval(timer); setLoading(false); setLoaded(true); setPlaying(true); } return next; }), 100); };
+  const saveGt = async () => { const quality: GtSegment["quality"] = judgedScore >= 80 ? "good" : judgedScore < 50 ? "low" : "medium"; const base = { family, quality, serverId, groupId: group.id, start: from, end: to, vehicleCount: group.members.length, routeType: family === "SI" ? "טבעות" : "שרשרת היפודרומים" }; const additions: GtSegment[] = [{ ...base, id: createId("gt"), layer: "sync", label: `${group.id} · GT סנכרון`, score: group.sync }, { ...base, id: createId("gt"), layer: "route", label: `${group.id} · GT נתיב`, score: group.route }]; await save({ ...state, gtSegments: [...state.gtSegments, ...additions] }, "gt", "approve", `${group.id} · subjective ${judgedScore}`); toast.success("ה־GT נשמר אחרי צפייה דינמית בטווח"); };
+  return <><SectionHeader eyebrow="Ground Truth" title="צפייה, סליידר זמן ותיוג" description="לפני תיוג המפתח רואה את ההתקדמות לאורך כל האירוע, יכול לעצור בכל רגע ולהשוות את תחושת האיכות לציון המערכת." /><section className="v04-gt-source glass-panel"><div className="gt-source-grid"><label><span>שרת</span><Select value={serverId} onValueChange={setServerId}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.servers.filter((item) => item.enabled).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></label><label><span>זירה</span><Select value={arena} onValueChange={setArena}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.arenas.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></label><label><span>משפחה</span><Select value={family} onValueChange={(value) => setFamily(value as Family)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="SI">SI</SelectItem><SelectItem value="SO">SO</SelectItem></SelectContent></Select></label><label><span>התחלה</span><input type="datetime-local" value={from} onChange={(event) => setFrom(event.target.value)} /></label><label><span>סיום</span><input type="datetime-local" value={to} onChange={(event) => setTo(event.target.value)} /></label><Button onClick={load} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <Search />}{loading ? "טוען" : "שלוף טווח"}</Button></div>{loading && <Progress value={progress} />}{loaded && <div className="v04-gt-review"><div className="v04-gt-player"><GtPlayback family={family} progress={timePct / 100} vehicleTypes={state.vehicleTypes} /><div className="v04-player-controls"><Button variant="outline" size="icon" onClick={() => setPlaying((value) => !value)}>{playing ? <Pause /> : <Play />}</Button><Slider value={[timePct]} min={0} max={100} step={1} onValueChange={(values) => setTimePct(values[0])} /><b>{timePct}%</b></div></div><aside><p className="eyebrow">שיפוט מפתח</p><h3>כמה הביצוע טוב בעיניך?</h3><Slider value={[judgedScore]} min={0} max={100} step={5} onValueChange={(values) => setJudgedScore(values[0])} /><strong className="v04-judged-score">{judgedScore}</strong><dl><div><dt>ציון מערכת</dt><dd>{group.total}</dd></div><div><dt>סנכרון</dt><dd>{group.sync}</dd></div><div><dt>נתיב</dt><dd>{group.route}</dd></div></dl><Button onClick={saveGt}><Check />אשר ושמור GT</Button></aside></div>}</section><section className="gt-bank glass-panel"><div className="panel-title"><div><p className="eyebrow">בנק GT</p><h3>{state.gtSegments.length} תיוגים</h3></div><Badge variant="outline">מיועד למאות תרחישים</Badge></div><div className="v04-gt-table">{state.gtSegments.map((item) => <div key={item.id}><strong>{item.groupId}</strong><span>{item.family} · {item.routeType}</span><span>{item.start.slice(11)}–{item.end.slice(11)}</span><span>{item.layer === "sync" ? "סנכרון" : "נתיב"}</span><Badge>{item.quality}</Badge><b>{item.score}</b></div>)}</div></section></>;
 }
 
 function InfluxSection() {
-  const { state, save } = useWorkspace();
-  const [draft, setDraft] = useState<InfluxSettings>(structuredClone(state.influx));
-  const [showToken, setShowToken] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testState, setTestState] = useState<"idle" | "valid" | "invalid">("idle");
-  const updateMapping = (index: number, patch: Partial<InfluxFieldMapping>) => setDraft({ ...draft, mappings: draft.mappings.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) });
-  const testConfiguration = () => {
-    setTesting(true); setTestState("idle");
-    window.setTimeout(() => {
-      const valid = /^https?:\/\//.test(draft.url) && Boolean(draft.organization.trim()) && Boolean(draft.token.trim()) && draft.mappings.every((item) => item.bucket && item.measurement && item.key) && draft.mappings.some((item) => item.systemKey === "uniqueVehicleId");
-      setTesting(false); setTestState(valid ? "valid" : "invalid");
-      if (valid) toast.success("מבנה החיבור והמיפוי תקינים"); else toast.error("חסרים URL, ארגון, Token או פרטי שדה");
-    }, 900);
-  };
-  return <>
-    <SectionHeader eyebrow="מקור נתונים אמיתי" title="InfluxDB 2 · חיבור ומיפוי מלא" description="כל מטריקה נשלפת בנפרד ומצורפת לפי זמן Influx, מספר שרת ומספר רכב בחלון של 5 שניות."><div className="header-actions"><Button variant="outline" onClick={testConfiguration}>{testing ? <LoaderCircle className="spin" /> : <Gauge />}בדיקת תצורה</Button><Button onClick={() => save({ ...state, influx: draft }, "influx", "save-mapping", draft.url)}><Save />שמור מיפוי</Button></div></SectionHeader>
-    <div className="influx-grid">
-      <section className="connection-card glass-panel"><div className="panel-title"><div><p className="eyebrow">חיבור</p><h3>שרת Influx</h3></div><span className={`connection-indicator ${testState}`}>{testState === "valid" ? "תצורה תקינה" : testState === "invalid" ? "נדרש תיקון" : "טרם נבדק"}</span></div><label><span>URL</span><input dir="ltr" value={draft.url} onChange={(event) => setDraft({ ...draft, url: event.target.value })} /></label><label><span>Organization</span><input dir="ltr" value={draft.organization} onChange={(event) => setDraft({ ...draft, organization: event.target.value })} /></label><label><span>Token</span><div className="secret-input"><KeyRound /><input dir="ltr" type={showToken ? "text" : "password"} value={draft.token} onChange={(event) => setDraft({ ...draft, token: event.target.value })} placeholder="InfluxDB API token" /><button type="button" onClick={() => setShowToken((value) => !value)}><Eye /></button></div></label><p className="security-note">בפריסה מקומית או OpenShift הערך נשמר כ־Secret ומוזן למתאם Influx, לא לליבה האלגוריתמית.</p></section>
-      <section className="polling-card glass-panel"><div className="panel-title"><div><p className="eyebrow">תזמון</p><h3>Polling ו־join</h3></div><Badge>5 שנ׳ קשיח</Badge></div><label className="number-field"><span>בדיקת שרת רדום<small>שליפת מזהה רכב בלבד; בזיהוי חיות נשלפות 5 דקות אחורה.</small></span><div><input type="number" value={draft.idleProbeMinutes} onChange={(event) => setDraft({ ...draft, idleProbeMinutes: Number(event.target.value) })} /><em>דקות</em></div></label><label className="number-field"><span>שרת פעיל<small>תדירות שליפה ועיבוד מצטבר בזמן אמת.</small></span><div><input type="number" value={draft.activePollSeconds} onChange={(event) => setDraft({ ...draft, activePollSeconds: Number(event.target.value) })} /><em>שניות</em></div></label><label className="number-field"><span>סבילות join<small>הערך הקרוב ביותר בזמן תמיד מועדף על השלמה.</small></span><div><input type="number" value={draft.joinToleranceSeconds} onChange={(event) => setDraft({ ...draft, joinToleranceSeconds: Number(event.target.value) })} /><em>שניות</em></div></label></section>
-    </div>
-    <section className="mapping-panel glass-panel"><div className="panel-title"><div><p className="eyebrow">מטריקות</p><h3>Bucket, Measurement, Key ומיפוי ערך</h3></div><div className="header-actions"><Badge variant="outline">מקורית עדיפה · עד 5 שנ׳</Badge><Button variant="outline" size="sm" onClick={() => setDraft({ ...draft, mappings: structuredClone(DEFAULT_INFLUX_MAPPINGS) })}><RotateCcw />ברירת מחדל</Button></div></div><div className="mapping-table advanced"><div className="table-head"><span>שדה מערכת</span><span>Bucket</span><span>Measurement</span><span>Key</span><span>ערך</span><span>מקור מיוחד</span><span>מיפוי ל־</span><span>השלמה</span></div>{draft.mappings.map((item, index) => <div className="table-row" key={item.systemKey}><strong>{item.label}</strong><input dir="ltr" value={item.bucket} onChange={(event) => updateMapping(index, { bucket: event.target.value })} /><input dir="ltr" value={item.measurement} onChange={(event) => updateMapping(index, { measurement: event.target.value })} /><input dir="ltr" value={item.key} onChange={(event) => updateMapping(index, { key: event.target.value })} /><Select value={item.valueMode} onValueChange={(value) => updateMapping(index, { valueMode: value as InfluxFieldMapping["valueMode"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="as-is">As is</SelectItem><SelectItem value="special">מיוחד</SelectItem></SelectContent></Select><input dir="ltr" disabled={item.valueMode === "as-is"} value={item.sourceValue} onChange={(event) => updateMapping(index, { sourceValue: event.target.value })} placeholder="green" /><input dir="ltr" disabled={item.valueMode === "as-is"} value={item.mappedValue} onChange={(event) => updateMapping(index, { mappedValue: event.target.value })} placeholder="true" /><Select value={item.fillMode} onValueChange={(value) => updateMapping(index, { fillMode: value as InfluxFieldMapping["fillMode"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="forward-fill">Forward fill</SelectItem><SelectItem value="linear">ליניארי</SelectItem></SelectContent></Select></div>)}</div></section>
-  </>;
+  const { state, save } = useWorkspace(); const [url, setUrl] = useState(state.influx.url); const [organization, setOrganization] = useState(state.influx.organization); const [token, setToken] = useState(state.influx.token); const [mappings, setMappings] = useState<InfluxFieldMapping[]>(structuredClone(state.influx.mappings)); const update = (index: number, patch: Partial<InfluxFieldMapping>) => setMappings(mappings.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+  return <><SectionHeader eyebrow="נתונים" title="InfluxDB 2" description="חיבור ומיפוי נשמרים בנפרד מהשרתים ומהזירות."><Button onClick={() => save({ ...state, influx: { ...state.influx, url, organization, token, mappings } }, "influx", "save", url)}><Save />שמור</Button></SectionHeader><section className="v04-influx glass-panel"><div className="v04-connection-grid"><label><span>URL</span><input value={url} onChange={(event) => setUrl(event.target.value)} /></label><label><span>Organization</span><input value={organization} onChange={(event) => setOrganization(event.target.value)} /></label><label><span>Token</span><input type="password" value={token} onChange={(event) => setToken(event.target.value)} /></label></div><div className="v04-mapping-table"><div className="table-head"><span>שדה מערכת</span><span>Bucket</span><span>Measurement</span><span>Key</span><span>Fill</span></div>{mappings.map((item, index) => <div className="table-row" key={item.systemKey}><strong>{item.label}</strong><input value={item.bucket} onChange={(event) => update(index, { bucket: event.target.value })} /><input value={item.measurement} onChange={(event) => update(index, { measurement: event.target.value })} /><input value={item.key} onChange={(event) => update(index, { key: event.target.value })} /><Select value={item.fillMode} onValueChange={(value) => update(index, { fillMode: value as InfluxFieldMapping["fillMode"] })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="linear">linear</SelectItem><SelectItem value="forward-fill">forward-fill</SelectItem></SelectContent></Select></div>)}</div></section></>;
 }
 
 function RoutesSection() {
-  const { state, save } = useWorkspace();
-  const [routeOpen, setRouteOpen] = useState(false);
-  const [mapOpen, setMapOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const [arena, setArena] = useState("all");
-  const [vehicleType, setVehicleType] = useState("all");
-  const [family, setFamily] = useState<"all" | Family>("all");
-  const [form, setForm] = useState({ name: "", arena: "זירה א׳", vehicleType: state.vehicleTypes[0]?.name ?? "", family: "SI" as Family, geometry: "MULTIPOLYGON ((()))" });
-  const [mapForm, setMapForm] = useState({ name: "", urlTemplate: "", attribution: "" });
-  const importRef = useRef<HTMLInputElement>(null);
-  const arenas = [...new Set(state.routes.map((route) => route.arena))];
-  const filtered = state.routes.filter((route) => (!search || route.name.toLowerCase().includes(search.toLowerCase())) && (arena === "all" || route.arena === arena) && (vehicleType === "all" || route.vehicleType === vehicleType) && (family === "all" || route.family === family));
-  const addRoute = async () => {
-    if (!form.name.trim() || !/^MULTIPOLYGON\s*\(/i.test(form.geometry.trim())) { toast.error("נדרשים שם ו־WKT מסוג MULTIPOLYGON"); return; }
-    if (state.routes.some((route) => route.name.toLowerCase() === form.name.trim().toLowerCase())) { toast.error("שם הנתיב חייב להיות ייחודי בבנק הגלובלי"); return; }
-    const route = { id: createId("route"), ...form, name: form.name.trim(), updatedAt: new Date().toISOString() };
-    await save({ ...state, routes: [...state.routes, route] }, "routes", "create", route.name); setRouteOpen(false);
-  };
-  const addMapServer = async () => {
-    if (!mapForm.name || !mapForm.urlTemplate.includes("{z}") || !mapForm.urlTemplate.includes("{x}") || !mapForm.urlTemplate.includes("{y}")) { toast.error("נדרשים שם ו־URL עם {z}/{x}/{y}"); return; }
-    const item: MapServerDefinition = { id: createId("map"), ...mapForm, enabled: true, isDefault: state.mapServers.length === 0 };
-    await save({ ...state, mapServers: [...state.mapServers, item] }, "maps", "create-server", item.name); setMapOpen(false); setMapForm({ name: "", urlTemplate: "", attribution: "" });
-  };
-  return <>
-    <SectionHeader eyebrow="בנק גלובלי" title="נתיבים מוכרים ושרתי מפות" description="נתיב שמור נותן שם וזירה בלבד; הגיאומטריה לציון תמיד מזוהה מנתוני הניווט."><div className="header-actions"><input ref={importRef} hidden type="file" accept=".xlsx,.xls,.csv" onChange={(event) => { if (event.target.files?.[0]) toast.success(`נטענה תצוגה מקדימה של ${event.target.files[0].name}`); }} /><Button variant="outline" onClick={() => importRef.current?.click()}><Upload />Excel</Button><Dialog open={mapOpen} onOpenChange={setMapOpen}><DialogTrigger asChild><Button variant="outline"><Map />שרת מפות</Button></DialogTrigger><DialogContent className="glass-dialog" dir="rtl"><DialogHeader><DialogTitle>שרת מפות מאושר</DialogTitle><DialogDescription>המפעיל יוכל לבחור אותו במסך החי.</DialogDescription></DialogHeader><div className="dialog-form"><label><span>שם</span><input value={mapForm.name} onChange={(event) => setMapForm({ ...mapForm, name: event.target.value })} /></label><label><span>URL template</span><input dir="ltr" placeholder="https://…/{z}/{x}/{y}.png" value={mapForm.urlTemplate} onChange={(event) => setMapForm({ ...mapForm, urlTemplate: event.target.value })} /></label><label><span>ייחוס</span><input value={mapForm.attribution} onChange={(event) => setMapForm({ ...mapForm, attribution: event.target.value })} /></label></div><DialogFooter><Button variant="outline" onClick={() => setMapOpen(false)}>ביטול</Button><Button onClick={addMapServer}><Save />שמור שרת</Button></DialogFooter></DialogContent></Dialog><Dialog open={routeOpen} onOpenChange={setRouteOpen}><DialogTrigger asChild><Button><Plus />נתיב חדש</Button></DialogTrigger><DialogContent className="glass-dialog wide-dialog" dir="rtl"><DialogHeader><DialogTitle>שמירת נתיב</DialogTitle><DialogDescription>טבלת נ״צ, ציור במפה וייבוא מלא זמינים בפריסה; כאן ניתן להזין WKT ישירות.</DialogDescription></DialogHeader><div className="dialog-form two-columns"><label><span>שם ייחודי</span><input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} /></label><label><span>זירה</span><input value={form.arena} onChange={(event) => setForm({ ...form, arena: event.target.value })} /></label><label><span>סוג רכב מורשה</span><Select value={form.vehicleType} onValueChange={(value) => setForm({ ...form, vehicleType: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.vehicleTypes.map((type) => <SelectItem value={type.name} key={type.id}>{type.name}</SelectItem>)}</SelectContent></Select></label><label><span>משפחה</span><Select value={form.family} onValueChange={(value) => setForm({ ...form, family: value as Family })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="SI">SI</SelectItem><SelectItem value="SO">SO</SelectItem></SelectContent></Select></label><label className="span-two"><span>WKT · WGS84</span><Textarea dir="ltr" value={form.geometry} onChange={(event) => setForm({ ...form, geometry: event.target.value })} /></label></div><DialogFooter><Button variant="outline" onClick={() => setRouteOpen(false)}>ביטול</Button><Button onClick={addRoute}><Save />שמור נתיב</Button></DialogFooter></DialogContent></Dialog></div></SectionHeader>
-    <section className="route-filters glass-panel"><label className="search-field"><Search /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="חיפוש לפי שם נתיב" /></label><Select value={arena} onValueChange={setArena}><SelectTrigger><MapPinned /><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">כל הזירות</SelectItem>{arenas.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select><Select value={vehicleType} onValueChange={setVehicleType}><SelectTrigger><UsersRound /><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">כל סוגי הרכב</SelectItem>{state.vehicleTypes.map((item) => <SelectItem key={item.id} value={item.name}>{item.name}</SelectItem>)}</SelectContent></Select><Select value={family} onValueChange={(value) => setFamily(value as typeof family)}><SelectTrigger><Filter /><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">SI + SO</SelectItem><SelectItem value="SI">SI</SelectItem><SelectItem value="SO">SO</SelectItem></SelectContent></Select><Badge variant="outline">{filtered.length} תוצאות</Badge></section>
-    <div className="route-bank">{filtered.map((route) => <article className="route-card glass-panel" key={route.id}><div className={`route-preview ${route.family.toLowerCase()}`}><MapPinned /><TemplatePreview family={route.family} values={route.family === "SI" ? [0,120,240] : [2,0,2]} compact /></div><div className="route-content"><Badge>{route.family}</Badge><h3>{route.name}</h3><p>{route.arena} · {route.vehicleType}</p><small>התאמת שם אוטומטית עד 30% · WGS84</small></div><div className="row-actions"><Button variant="outline" size="sm" onClick={() => { navigator.clipboard.writeText(route.geometry); toast.success("ה־WKT הועתק"); }}><FileJson />WKT</Button><AlertDialog><AlertDialogTrigger asChild><Button variant="ghost" size="icon-sm"><Trash2 /></Button></AlertDialogTrigger><AlertDialogContent dir="rtl"><AlertDialogHeader><AlertDialogTitle>למחוק את {route.name}?</AlertDialogTitle><AlertDialogDescription>הנתיב יוסר מהבנק ומהתאמות עתידיות. תוויות עבר יישארו.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>ביטול</AlertDialogCancel><AlertDialogAction variant="destructive" onClick={() => save({ ...state, routes: state.routes.filter((item) => item.id !== route.id) }, "routes", "delete", route.name)}>מחק</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div></article>)}</div>
-    <section className="map-server-bank glass-panel"><div className="panel-title"><div><p className="eyebrow">מפות רקע</p><h3>{state.mapServers.length} שרתי מפות מאושרים</h3></div></div><div className="map-server-grid">{state.mapServers.map((item) => <article key={item.id}><div className="map-server-icon"><Map /></div><div><strong>{item.name}</strong><code dir="ltr">{item.urlTemplate}</code><small>{item.attribution || "ללא ייחוס"}</small></div><div><Badge>{item.isDefault ? "ברירת מחדל" : item.enabled ? "פעיל" : "מושבת"}</Badge>{!item.isDefault && <Button variant="outline" size="sm" onClick={() => save({ ...state, mapServers: state.mapServers.map((entry) => ({ ...entry, isDefault: entry.id === item.id })), settings: { ...state.settings, defaultMap: item.id } }, "maps", "set-default", item.name)}>קבע דיפולט</Button>}<Switch checked={item.enabled} onCheckedChange={(enabled) => save({ ...state, mapServers: state.mapServers.map((entry) => entry.id === item.id ? { ...entry, enabled } : entry) }, "maps", "toggle", item.name)} /><Button variant="ghost" size="icon-sm" onClick={() => save({ ...state, mapServers: state.mapServers.filter((entry) => entry.id !== item.id) }, "maps", "delete", item.name)}><Trash2 /></Button></div></article>)}</div></section>
-  </>;
+  const { state, save } = useWorkspace(); const [family, setFamily] = useState<"all" | Family>("all"); const [arena, setArena] = useState("all"); const [vehicleType, setVehicleType] = useState("all"); const [draftRoutes, setDraftRoutes] = useState(structuredClone(state.routes)); const [selectedId, setSelectedId] = useState<string | null>(draftRoutes[0]?.id ?? null); const selected = draftRoutes.find((item) => item.id === selectedId); const filtered = draftRoutes.filter((route) => (family === "all" || route.family === family) && (arena === "all" || route.arena === arena) && (vehicleType === "all" || route.vehicleType === vehicleType)); const patchSelected = (patch: Partial<NonNullable<typeof selected>>) => selected && setDraftRoutes(draftRoutes.map((item) => item.id === selected.id ? { ...item, ...patch, updatedAt: new Date().toISOString() } : item));
+  const addRoute = () => { const route = { id: createId("route"), name: "נתיב חדש", arena: state.arenas[0], vehicleType: state.vehicleTypes[0].name, family: "SO" as Family, geometry: "CLOSED_ROUTE", updatedAt: new Date().toISOString(), routeKind: "single" as SoRouteKind, mapX: 50, mapY: 50, rotationDeg: 0 }; setDraftRoutes([...draftRoutes, route]); setSelectedId(route.id); };
+  return <><SectionHeader eyebrow="נתיב ≠ קבוצה" title="בנק נתיבים" description="כל פריט הוא נתיב בודד. כל הנתיבים שמתאימים לסינון מוצגים יחד על מפה אחת, בצבע סוג הרכב."><div className="header-actions"><Button variant="outline" onClick={addRoute}><Plus />נתיב</Button><Button onClick={() => save({ ...state, routes: draftRoutes }, "routes", "save-bank", `${draftRoutes.length} routes`)}><Save />שמור בנק</Button></div></SectionHeader><section className="v04-route-bank glass-panel"><div className="filter-bar"><Select value={family} onValueChange={(value) => setFamily(value as "all" | Family)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">SI + SO</SelectItem><SelectItem value="SI">SI</SelectItem><SelectItem value="SO">SO</SelectItem></SelectContent></Select><Select value={arena} onValueChange={setArena}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">כל הזירות</SelectItem>{state.arenas.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select><Select value={vehicleType} onValueChange={setVehicleType}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">כל סוגי הרכב</SelectItem>{state.vehicleTypes.map((item) => <SelectItem key={item.id} value={item.name}>{item.name}</SelectItem>)}</SelectContent></Select><Badge variant="outline">{filtered.length} נתיבים</Badge></div><div className="v04-route-bank-layout"><RouteBankMap routes={filtered} vehicleTypes={state.vehicleTypes} selectedId={selectedId} onSelect={setSelectedId} onMove={(id, x, y) => setDraftRoutes(draftRoutes.map((route) => route.id === id ? { ...route, mapX: x, mapY: y } : route))} /><aside>{selected ? <><p className="eyebrow">עריכת נתיב</p><h3>{selected.name}</h3><label><span>שם</span><input value={selected.name} onChange={(event) => patchSelected({ name: event.target.value })} /></label><label><span>זירה</span><Select value={selected.arena} onValueChange={(value) => patchSelected({ arena: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.arenas.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></label><label><span>סוג רכב</span><Select value={selected.vehicleType} onValueChange={(value) => patchSelected({ vehicleType: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.vehicleTypes.map((item) => <SelectItem key={item.id} value={item.name}>{item.name}</SelectItem>)}</SelectContent></Select></label><label><span>משפחה</span><Select value={selected.family} onValueChange={(value) => patchSelected({ family: value as Family })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="SI">SI</SelectItem><SelectItem value="SO">SO</SelectItem></SelectContent></Select></label>{selected.family === "SO" && <label><span>סוג נתיב</span><Select value={selected.routeKind === "double" ? "double" : "single"} onValueChange={(value) => patchSelected({ routeKind: value as SoRouteKind })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="single">היפודרום יחיד</SelectItem><SelectItem value="double">היפודרום כפול</SelectItem></SelectContent></Select></label>}<label><span>סיבוב · {selected.rotationDeg ?? 0}°</span><Slider value={[selected.rotationDeg ?? 0]} min={-180} max={180} step={5} onValueChange={(values) => patchSelected({ rotationDeg: values[0] })} /></label><p className="card-hint">גרור את הנתיב עצמו על המפה כדי להזיז אותו.</p><Button variant="destructive" onClick={() => { setDraftRoutes(draftRoutes.filter((item) => item.id !== selected.id)); setSelectedId(null); }}><Trash2 />מחק</Button></> : <div className="empty-state"><MapPinned /><strong>בחר נתיב על המפה</strong></div>}</aside></div></section></>;
 }
 
-type TestResult = { name: string; area: string; state: "pass" | "border" | "fail"; latency: string; detail: string };
-const testResults: TestResult[] = [
-  { name: "SI · הפרשי זווית", area: "סנכרון", state: "pass", latency: "0.8s", detail: "כל הזוגות חושבו ללא תלות בזווית מוחלטת" },
-  { name: "SO · מבנה ח׳ ופניות", area: "סנכרון", state: "pass", latency: "1.2s", detail: "כפול במרכז, שכנות ותזמון פניות" },
-  { name: "פער תקשורת 2 דקות", area: "רציפות", state: "pass", latency: "2.1s", detail: "הקבוצה נשמרה והנתונים הושלמו" },
-  { name: "150 רכבים · 10 שרתים", area: "עומס", state: "border", latency: "8.7s", detail: "עבר, קרוב ליעד 10 שנ׳" },
-  { name: "PDF · מקטעים ורכבים", area: "דיווח", state: "pass", latency: "1.1s", detail: "כל הקבוצות, הציונים והסיבות הופקו" },
+const qaCategories = [
+  { id: "route", title: "זיהוי נתיב", scenarios: 128, passed: 123, metric: "96.1%", detail: "SI / SO / בליטות / סגירה / שינוי גיאומטריה" },
+  { id: "group", title: "שיוך קבוצות", scenarios: 94, passed: 91, metric: "96.8%", detail: "מרכז, מחזור, שכנות, יציבות group_id" },
+  { id: "sync", title: "ציון סנכרון", scenarios: 176, passed: 169, metric: "MAE 4.8", detail: "זוויות SI, פניות SO, אותו/הפוך/מעורב" },
+  { id: "route-score", title: "ציון נתיב", scenarios: 142, passed: 139, metric: "MAE 3.6", detail: "מרחק, משיק, עקמומיות, מהירות נמוכה" },
+  { id: "latency", title: "שיהוי ועומסים", scenarios: 68, passed: 65, metric: "p95 4.7s", detail: "5s tick, עומס רכבים, חלונות חסרים" },
+  { id: "recovery", title: "Replay / checkpoint", scenarios: 54, passed: 54, metric: "100%", detail: "Batch = live = restore" },
 ];
-
-function TestsSection() {
-  const [running, setRunning] = useState(false);
-  const [progress, setProgress] = useState(100);
-  const [lastRun, setLastRun] = useState("02.09.2026 · 19:12");
-  const run = () => { setRunning(true); setProgress(0); const timer = window.setInterval(() => setProgress((value) => { const next = Math.min(100, value + 5); if (next === 100) { window.clearInterval(timer); setRunning(false); setLastRun(new Intl.DateTimeFormat("he-IL", { dateStyle: "short", timeStyle: "short" }).format(new Date())); toast.success("בדיקות המערכת הסתיימו"); } return next; }), 75); };
-  const exportReport = () => { const blob = new Blob([JSON.stringify({ generatedAt: new Date().toISOString(), summary: { pass: 4, border: 1, fail: 0 }, results: testResults }, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = "bluewolf-system-report.json"; link.click(); URL.revokeObjectURL(url); };
-  return <><SectionHeader eyebrow="Self testing" title="בדיקות מערכת" description="סיכום ממוקד עבר/גבולי/לא עבר, עם עומס ושיהוי לכל תרחיש."><div className="header-actions"><Button variant="outline" onClick={exportReport}><Download />דוח מערכת</Button><Button onClick={run} disabled={running}>{running ? <LoaderCircle className="spin" /> : <Play />}{running ? "מריץ" : "הרץ הכול"}</Button></div></SectionHeader><section className="test-overview glass-panel"><div className="test-dial"><strong>{running ? progress : 100}%</strong><span>השלמה</span></div><div><p className="eyebrow">תוצאה מסכמת</p><h3>{running ? "הבדיקות רצות" : "המערכת עברה"}</h3><p>הרצה אחרונה: {lastRun}</p>{running && <Progress value={progress} />}</div><div className="test-summary"><span className="pass"><b>4</b>עבר</span><span className="border"><b>1</b>גבולי</span><span className="fail"><b>0</b>לא עבר</span></div></section><section className="test-list glass-panel"><div className="table-head"><span>מבחן</span><span>נושא</span><span>תוצאה</span><span>שיהוי</span><span>סיכום</span></div>{testResults.map((item) => <div className="table-row" key={item.name}><strong>{item.name}</strong><span>{item.area}</span><Badge className={`test-state ${item.state}`}>{item.state === "pass" ? "עבר" : item.state === "border" ? "גבולי" : "לא עבר"}</Badge><span dir="ltr">{item.latency}</span><span>{item.detail}</span></div>)}</section></>;
-}
-
-const iconOptions: { id: VehicleIconName; label: string }[] = [{ id: "rover", label: "רכב שטח" }, { id: "truck", label: "משאית" }, { id: "shield", label: "ממוגן" }, { id: "drone", label: "רחפן" }, { id: "boat", label: "כלי ימי" }];
-const roleLabels: Record<RingRole, string> = { inner: "פנימית", middle: "ביניים", outer: "חיצונית" };
+function TestsSection() { const total = qaCategories.reduce((sum, item) => sum + item.scenarios, 0); const passed = qaCategories.reduce((sum, item) => sum + item.passed, 0); return <><SectionHeader eyebrow="QA אגרגטיבי" title="בדיקות מערכת לפי פונקציונליות" description="המסקנה מתקבלת על עשרות ומאות תרחישי GT, לא מאירוע יחיד."><Badge variant="outline">{passed}/{total} תרחישים</Badge></SectionHeader><div className="v04-qa-grid">{qaCategories.map((item) => <article className="glass-panel" key={item.id}><header><ShieldCheck /><div><strong>{item.title}</strong><span>{item.scenarios} תרחישים</span></div><b>{item.metric}</b></header><Progress value={item.passed / item.scenarios * 100} /><p>{item.detail}</p><footer><span>עברו {item.passed}</span><span>נכשלו {item.scenarios - item.passed}</span></footer></article>)}</div><section className="v04-qa-summary glass-panel"><div><p className="eyebrow">מסקנת QA</p><h3>הצגה לפי פונקציה + מגמה</h3><p>כאשר בנק ה־GT יגדל, כל כרטיס יציג התפלגות שגיאה, p50/p95, regressions והבדל בין גרסאות.</p></div><Button onClick={() => toast.success("הרצת QA מלאה הוכנה לפי הקטגוריות") }><Play />הרץ QA מלא</Button></section></>; }
 
 function SettingsSection() {
-  const { state, save, storageMode, revision, lastSavedAt } = useWorkspace();
-  const [draft, setDraft] = useState<WorkspaceState>(structuredClone(state));
-  const fileRef = useRef<HTMLInputElement>(null);
-  const exportConfig = () => { const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = "bluewolf-configuration.json"; link.click(); URL.revokeObjectURL(url); };
-  const importConfig = async (file?: File) => { if (!file) return; try { const parsed = JSON.parse(await file.text()) as WorkspaceState; const merged = { ...DEFAULT_WORKSPACE, ...parsed, settings: { ...DEFAULT_WORKSPACE.settings, ...parsed.settings, uiRefreshSeconds: 5 } }; setDraft(merged); await save(merged, "system", "import", file.name); } catch { toast.error("קובץ הקונפיגורציה אינו תקין"); } };
-  const patchType = (index: number, patch: Partial<WorkspaceState["vehicleTypes"][number]>) => setDraft({ ...draft, vehicleTypes: draft.vehicleTypes.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) });
-  return <>
-    <SectionHeader eyebrow="מערכת" title="שרתים, סוגי רכב ותצורה" description="אייקון, צבע ותפקידי טבעת נשמרים לכל סוג ומופיעים מיד במפה החיה."><div className="header-actions"><input ref={fileRef} hidden type="file" accept="application/json" onChange={(event) => importConfig(event.target.files?.[0])} /><Button variant="outline" onClick={() => fileRef.current?.click()}><Upload />ייבוא</Button><Button variant="outline" onClick={exportConfig}><Download />ייצוא</Button><Button onClick={() => save({ ...draft, settings: { ...draft.settings, uiRefreshSeconds: 5 } }, "system", "save-settings", "global settings")}><Save />שמור</Button></div></SectionHeader>
-    <div className="settings-overview"><section className="settings-card glass-panel"><div className="panel-title"><div><p className="eyebrow">מצב</p><h3>אחסון וקונפיגורציה</h3></div><span className={`storage-state ${storageMode}`}>{storageMode === "cloud" ? "מרכזי" : "מקומי"}</span></div><dl><div><dt>גרסה פעילה</dt><dd>{revision || 1}</dd></div><div><dt>שמירה אחרונה</dt><dd>{lastSavedAt ? new Intl.DateTimeFormat("he-IL", { timeStyle: "short" }).format(new Date(lastSavedAt)) : "טרם נשמר"}</dd></div><div><dt>שמירת היסטוריה</dt><dd>{draft.settings.retentionDays} ימים</dd></div></dl></section><section className="settings-card glass-panel"><div className="panel-title"><div><p className="eyebrow">זמן וקצב</p><h3>תצוגת המפעיל</h3></div><Badge>5 שנ׳ קשיח</Badge></div><label><span>אזור זמן</span><Select value={draft.settings.timezone} onValueChange={(timezone) => setDraft({ ...draft, settings: { ...draft.settings, timezone } })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="Asia/Jerusalem">ישראל</SelectItem><SelectItem value="UTC">UTC</SelectItem></SelectContent></Select></label><label className="number-field"><span>קצב ריענון<small>נעול לערך שנקבע באפיון.</small></span><div><input disabled value="5" /><em>שניות</em></div></label><label className="number-field"><span>שמירת היסטוריה</span><div><input type="number" min="7" max="365" value={draft.settings.retentionDays} onChange={(event) => setDraft({ ...draft, settings: { ...draft.settings, retentionDays: Number(event.target.value) } })} /><em>ימים</em></div></label></section></div>
-    <section className="server-panel glass-panel"><div className="panel-title"><div><p className="eyebrow">מקורות</p><h3>מספרי שרתים</h3></div><Button variant="outline" size="sm" onClick={() => { if (draft.servers.length >= 10) { toast.error("ניתן להפעיל עד 10 שרתים"); return; } const id = String(draft.servers.length + 1); setDraft({ ...draft, servers: [...draft.servers, { id, name: `שרת ${id.padStart(2, "0")}`, enabled: true, arena: "זירה חדשה", influxTag: id }] }); }}><Plus />הוסף שרת</Button></div><div className="server-grid">{draft.servers.map((server, index) => <article key={server.id}><Server /><label><span>שם</span><input value={server.name} onChange={(event) => setDraft({ ...draft, servers: draft.servers.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item) })} /></label><label><span>זירה</span><input value={server.arena} onChange={(event) => setDraft({ ...draft, servers: draft.servers.map((item, itemIndex) => itemIndex === index ? { ...item, arena: event.target.value } : item) })} /></label><label><span>תג Influx</span><input dir="ltr" value={server.influxTag} onChange={(event) => setDraft({ ...draft, servers: draft.servers.map((item, itemIndex) => itemIndex === index ? { ...item, influxTag: event.target.value } : item) })} /></label><Switch checked={server.enabled} onCheckedChange={(enabled) => setDraft({ ...draft, servers: draft.servers.map((item, itemIndex) => itemIndex === index ? { ...item, enabled } : item) })} /></article>)}</div></section>
-    <section className="vehicle-types-panel glass-panel"><div className="panel-title"><div><p className="eyebrow">סיווג והמחשה</p><h3>סוגי רכבים, טווחים ואייקונים</h3></div><Badge variant="outline">מזהה → סוג → תפקיד טבעת</Badge></div><div className="vehicle-type-table advanced"><div className="table-head"><span>שם וסמל</span><span>טווח מזהים</span><span>מהירות עבודה</span><span>תפקידי SI מותרים</span><span>אייקון במפה</span><span>צבע</span></div>{draft.vehicleTypes.map((type, index) => <div className="table-row" key={type.id}><div className="type-name-cell"><svg viewBox="-15 -15 30 30"><VehicleIconGlyph icon={type.icon} color={type.color} /></svg><input value={type.name} onChange={(event) => patchType(index, { name: event.target.value })} /></div><div className="id-range"><input type="number" value={type.minId} onChange={(event) => patchType(index, { minId: Number(event.target.value) })} /><span>–</span><input type="number" value={type.maxId} onChange={(event) => patchType(index, { maxId: Number(event.target.value) })} /></div><div className="inline-number"><input type="number" value={type.workSpeedKmh} onChange={(event) => patchType(index, { workSpeedKmh: Number(event.target.value) })} /><span>קמ״ש</span></div><div className="role-picker">{(["inner", "middle", "outer"] as RingRole[]).map((role) => <button type="button" key={role} className={type.siRoles.includes(role) ? `active ${role}` : role} onClick={() => patchType(index, { siRoles: type.siRoles.includes(role) ? type.siRoles.filter((item) => item !== role) : [...type.siRoles, role] })}>{roleLabels[role]}</button>)}</div><Select value={type.icon} onValueChange={(value) => patchType(index, { icon: value as VehicleIconName })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{iconOptions.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}</SelectContent></Select><input className="color-input" type="color" value={type.color} onChange={(event) => patchType(index, { color: event.target.value })} /></div>)}</div></section>
-    <section className="danger-zone glass-panel"><div><ArchiveRestore /><div><h3>שחזור ברירת מחדל</h3><p>הפעולה יוצרת גרסה חדשה ואינה מוחקת את היסטוריית הגרסאות.</p></div></div><AlertDialog><AlertDialogTrigger asChild><Button variant="destructive"><RotateCcw />שחזר הכול</Button></AlertDialogTrigger><AlertDialogContent dir="rtl"><AlertDialogHeader><AlertDialogTitle>לשחזר את כל ההגדרות?</AlertDialogTitle><AlertDialogDescription>תבניות, נתיבים, GT, מיפויים וספים יוחלפו.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>ביטול</AlertDialogCancel><AlertDialogAction variant="destructive" onClick={() => { const defaults = structuredClone(DEFAULT_WORKSPACE); setDraft(defaults); save(defaults, "system", "restore-defaults", "full reset"); }}>שחזר</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></section>
-  </>;
+  const { state, save } = useWorkspace(); const [servers, setServers] = useState(structuredClone(state.servers)); const [arenas, setArenas] = useState([...state.arenas]); const [newArena, setNewArena] = useState(""); const [vehicleTypes, setVehicleTypes] = useState(structuredClone(state.vehicleTypes)); const roleLabels: Record<RingRole, string> = { inner: "פנימית", middle: "ביניים", outer: "חיצונית" };
+  return <><SectionHeader eyebrow="מערכת" title="שרתים, זירות וסוגי רכב" description="שרתים וזירות הם ישויות נפרדות. צבע סוג רכב משמש לעריכת תבנית/נתיב בלבד."><Button onClick={() => save({ ...state, servers, arenas, vehicleTypes }, "settings", "save", "server-arena-decoupled")}><Save />שמור</Button></SectionHeader><div className="v04-settings-grid"><section className="glass-panel"><h3><Server />שרתים</h3>{servers.map((server, index) => <div className="v04-setting-row" key={server.id}><Switch checked={server.enabled} onCheckedChange={(enabled) => setServers(servers.map((item, itemIndex) => itemIndex === index ? { ...item, enabled } : item))} /><input value={server.name} onChange={(event) => setServers(servers.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} /><small>Influx tag {server.influxTag}</small></div>)}</section><section className="glass-panel"><h3><MapPinned />זירות</h3>{arenas.map((arena, index) => <div className="v04-setting-row" key={`${arena}-${index}`}><input value={arena} onChange={(event) => setArenas(arenas.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} /><Button variant="ghost" size="icon-sm" onClick={() => setArenas(arenas.filter((_, itemIndex) => itemIndex !== index))}><Trash2 /></Button></div>)}<div className="v04-setting-row"><input value={newArena} onChange={(event) => setNewArena(event.target.value)} placeholder="זירה חדשה" /><Button variant="outline" onClick={() => { if (newArena.trim()) { setArenas([...arenas, newArena.trim()]); setNewArena(""); } }}><Plus /></Button></div></section><section className="glass-panel"><h3><UsersRound />סוגי רכב</h3>{vehicleTypes.map((type, index) => <div className="v04-vehicle-type-row" key={type.id}><span className="v04-type-swatch" style={{ background: type.color }} /><svg viewBox="-15 -15 30 30"><VehicleIconGlyph icon={type.icon} color={type.color} /></svg><input value={type.name} onChange={(event) => setVehicleTypes(vehicleTypes.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} /><small>{type.siRoles.map((role) => roleLabels[role]).join(", ")}</small></div>)}</section></div></>;
 }
 
 export function DeveloperView() {
-  const [section, setSection] = useState<DeveloperSection>("score");
-  const content: Record<DeveloperSection, React.ReactNode> = { score: <ScoreSection />, templates: <TemplateSection />, gt: <GtSection />, influx: <InfluxSection />, routes: <RoutesSection />, tests: <TestsSection />, settings: <SettingsSection /> };
-  return <div className="developer-workspace"><aside className="developer-nav glass-panel"><div className="developer-nav-title"><SlidersHorizontal /><div><strong>מצב מפתחים</strong><span>שינויים נשמרים מיד</span></div></div><nav>{sectionItems.map((item) => { const Icon = item.icon; return <button type="button" key={item.id} className={section === item.id ? "active" : ""} onClick={() => setSection(item.id)}><Icon /><span>{item.label}</span><ChevronLeft /></button>; })}</nav><div className="core-state"><CheckCircle2 /><div><strong>ליבה מבודדת ותקינה</strong><span>43/43 בדיקות בסיס</span></div></div></aside><main className="developer-content">{content[section]}</main></div>;
+  const [section, setSection] = useState<DeveloperSection>("score"); const content: Record<DeveloperSection, React.ReactNode> = { score: <ScoreSection />, templates: <TemplateSection />, gt: <GtSection />, influx: <InfluxSection />, routes: <RoutesSection />, tests: <TestsSection />, settings: <SettingsSection /> };
+  return <div className="developer-workspace v04-developer"><aside className="developer-nav glass-panel"><div className="developer-nav-title"><SlidersHorizontal /><div><strong>מצב מפתחים</strong><span>v0.4 · workflow QA</span></div></div><nav>{sectionItems.map((item) => { const Icon = item.icon; return <button type="button" key={item.id} className={section === item.id ? "active" : ""} onClick={() => setSection(item.id)}><Icon /><span>{item.label}</span><ChevronLeft /></button>; })}</nav><div className="core-state"><CheckCircle2 /><div><strong>QA לפי פונקציונליות</strong><span>662 תרחישים בדמו</span></div></div></aside><main className="developer-content">{content[section]}</main></div>;
 }
