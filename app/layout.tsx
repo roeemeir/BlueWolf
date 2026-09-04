@@ -3,6 +3,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 import "./v04.css";
+import "./v04-fixes.css";
 
 export const metadata: Metadata = {
   title: "זאב כחול | ניטור סנכרון רכבים",
