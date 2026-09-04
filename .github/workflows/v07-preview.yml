@@ -5,6 +5,10 @@ on:
     branches: [local-preview-runtime]
   workflow_dispatch:
 
+concurrency:
+  group: bluewolf-v07-preview
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -15,15 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply v0.5 base and v0.7 overlay
+      - name: Apply v0.5 base and verified v0.7 overlay
         shell: bash
         run: |
           cat .preview/v05.part* | base64 -d > /tmp/v05.tar.gz
           echo "7c6cea729ae5a4159e7386e19da4efd00555f12b08999017e5743e76f36ab567  /tmp/v05.tar.gz" | sha256sum -c -
           tar -xzf /tmp/v05.tar.gz -C .
-          base64 -d .preview/v07-overlay.b64 > /tmp/v07.tar.gz
-          echo "2bbc5cbf2418ddab56dd4880bd1a37bd67d0abfdec2c47ec4f88ecbdcde84877  /tmp/v07.tar.gz" | sha256sum -c -
-          tar -xzf /tmp/v07.tar.gz -C .
+          bash .preview/v07-reassembly.sh
           grep -q 'v0.7 · Apple Liquid Glass' components/bluewolf/developer-view.tsx
           grep -q 'hippodromePath' components/bluewolf/visuals.tsx
           grep -q 'showScoreTrace' components/bluewolf/visuals.tsx
@@ -38,6 +40,7 @@ jobs:
       - name: Validate v0.7
         run: |
           npm ci
+          npm test -- --run
           npx tsc --noEmit
           npm run lint
           npm run build
