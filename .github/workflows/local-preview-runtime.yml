@@ -1,4 +1,4 @@
-name: Local Preview Runtime Bundle
+name: Blue Wolf Temporary Share
 
 on:
   push:
@@ -10,8 +10,9 @@ permissions:
   contents: read
 
 jobs:
-  bundle:
+  share:
     runs-on: ubuntu-24.04
+    timeout-minutes: 110
     steps:
       - uses: actions/checkout@v4
 
@@ -26,23 +27,151 @@ jobs:
       - name: Build production runtime
         run: npm run build
 
-      - name: Show runtime layout
+      - name: Prepare local D1
+        working-directory: dist/server
         run: |
-          echo "Top-level directories:"
-          find . -maxdepth 2 -type d | sort | head -200
-          echo "Candidate build directories:"
-          du -sh .vinext dist .next node_modules 2>/dev/null || true
+          node ../../node_modules/wrangler/bin/wrangler.js d1 execute site-creator-d1 \
+            --local \
+            --config wrangler.json \
+            --file ../.openai/drizzle/0000_luxuriant_tarantula.sql
 
-      - name: Upload runnable local bundle
+      - name: Start Blue Wolf locally
+        working-directory: dist/server
+        run: |
+          nohup node ../../node_modules/wrangler/bin/wrangler.js dev --config wrangler.json --port 3000 \
+            >/tmp/bluewolf-wrangler.log 2>&1 &
+          echo $! >/tmp/bluewolf-wrangler.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/ >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          tail -120 /tmp/bluewolf-wrangler.log
+          exit 1
+
+      - name: Start password gate
+        shell: bash
+        run: |
+          SHARE_USER=bluewolf
+          SHARE_PASSWORD="$(openssl rand -hex 10)"
+          printf '%s' "$SHARE_USER" >/tmp/share-user
+          printf '%s' "$SHARE_PASSWORD" >/tmp/share-password
+          cat >/tmp/auth-proxy.mjs <<'EOF'
+          import http from 'node:http';
+          import { Buffer } from 'node:buffer';
+
+          const user = process.env.SHARE_USER;
+          const pass = process.env.SHARE_PASSWORD;
+          const expected = 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
+
+          const server = http.createServer(async (req, res) => {
+            if (req.headers.authorization !== expected) {
+              res.writeHead(401, {
+                'www-authenticate': 'Basic realm="Blue Wolf Preview"',
+                'content-type': 'text/plain; charset=utf-8',
+                'cache-control': 'no-store',
+              });
+              res.end('Authentication required');
+              return;
+            }
+
+            try {
+              const chunks = [];
+              for await (const chunk of req) chunks.push(chunk);
+              const body = chunks.length ? Buffer.concat(chunks) : undefined;
+              const headers = { ...req.headers };
+              delete headers.host;
+              delete headers.authorization;
+              delete headers['content-length'];
+
+              const upstream = await fetch(`http://127.0.0.1:3000${req.url}`, {
+                method: req.method,
+                headers,
+                body: ['GET', 'HEAD'].includes(req.method ?? 'GET') ? undefined : body,
+                redirect: 'manual',
+              });
+
+              const responseHeaders = {};
+              upstream.headers.forEach((value, key) => {
+                if (!['content-length', 'transfer-encoding', 'connection'].includes(key.toLowerCase())) {
+                  responseHeaders[key] = value;
+                }
+              });
+              res.writeHead(upstream.status, responseHeaders);
+              if (req.method === 'HEAD') {
+                res.end();
+              } else {
+                res.end(Buffer.from(await upstream.arrayBuffer()));
+              }
+            } catch (error) {
+              res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+              res.end(`Proxy error: ${error instanceof Error ? error.message : String(error)}`);
+            }
+          });
+
+          server.listen(3001, '127.0.0.1');
+          EOF
+          nohup env SHARE_USER="$SHARE_USER" SHARE_PASSWORD="$SHARE_PASSWORD" \
+            node /tmp/auth-proxy.mjs >/tmp/auth-proxy.log 2>&1 &
+          echo $! >/tmp/auth-proxy.pid
+          sleep 2
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/)" = "401"
+          test "$(curl -s -u "$SHARE_USER:$SHARE_PASSWORD" -o /dev/null -w '%{http_code}' http://127.0.0.1:3001/)" = "200"
+
+      - name: Start temporary tunnel
+        shell: bash
+        run: |
+          curl -L --fail --retry 3 \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o /tmp/cloudflared
+          chmod +x /tmp/cloudflared
+          nohup /tmp/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:3001 \
+            >/tmp/cloudflared.log 2>&1 &
+          echo $! >/tmp/cloudflared.pid
+
+          URL=""
+          for i in $(seq 1 45); do
+            URL="$(grep -Eo 'https://[-a-z0-9]+\.trycloudflare\.com' /tmp/cloudflared.log | head -1 || true)"
+            if [ -n "$URL" ]; then
+              break
+            fi
+            sleep 2
+          done
+          if [ -z "$URL" ]; then
+            echo 'Tunnel URL was not created.'
+            tail -120 /tmp/cloudflared.log
+            exit 1
+          fi
+
+          USER="$(cat /tmp/share-user)"
+          PASSWORD="$(cat /tmp/share-password)"
+
+          for i in $(seq 1 20); do
+            CODE="$(curl -sS -u "$USER:$PASSWORD" -o /tmp/tunnel-check.html -w '%{http_code}' --max-time 15 "$URL/" || true)"
+            if [ "$CODE" = "200" ]; then
+              break
+            fi
+            sleep 3
+          done
+          test "$CODE" = "200"
+
+          {
+            echo "URL=$URL"
+            echo "USERNAME=$USER"
+            echo "PASSWORD=$PASSWORD"
+            echo "EXPIRES_APPROXIMATELY=90 minutes after this workflow starts"
+          } >/tmp/bluewolf-share-credentials.txt
+
+      - name: Upload private share credentials
         uses: actions/upload-artifact@v4
         with:
-          name: bluewolf-local-runtime
+          name: bluewolf-share-credentials
+          path: /tmp/bluewolf-share-credentials.txt
           retention-days: 1
-          include-hidden-files: true
-          compression-level: 6
-          path: |
-            .
-            !.git/**
-            !.sites-runtime/npm-cache/**
-            !.wrangler/**
-            !core/**
+          compression-level: 0
+
+      - name: Keep preview alive
+        run: |
+          echo 'Blue Wolf temporary share is active.'
+          sleep 5400
