@@ -32,6 +32,7 @@ from .models import (
     VehicleSample,
     VehicleScores,
 )
+from .route_detection import RouteDetection, detect_closed_route
 from .scoring import aggregate_group_scores, score_error, score_vehicle
 from .session import CheckpointCompatibilityError, CoreSession
 from .templates import (
@@ -58,6 +59,7 @@ __all__ = [
     "ObservedMember",
     "PrimitiveMetrics",
     "PolylineProjection",
+    "RouteDetection",
     "RouteFamily",
     "RouteSubtype",
     "StateChange",
@@ -71,6 +73,7 @@ __all__ = [
     "circular_phase_distance",
     "closed_polyline_length",
     "curvature_at_phase",
+    "detect_closed_route",
     "fit_template",
     "normalized_curvature_error",
     "point_at_phase",
@@ -82,4 +85,4 @@ __all__ = [
     "tangent_error_deg",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
