@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
+import "./v04.css";
 
 export const metadata: Metadata = {
   title: "זאב כחול | ניטור סנכרון רכבים",
@@ -10,11 +11,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return (
-    <html lang="he" dir="rtl" suppressHydrationWarning>
-      <body>
-        <ThemeProvider>{children}<Toaster position="bottom-left" richColors /></ThemeProvider>
-      </body>
-    </html>
-  );
+  return <html lang="he" dir="rtl" suppressHydrationWarning><body><ThemeProvider>{children}<Toaster position="bottom-left" richColors /></ThemeProvider></body></html>;
 }
