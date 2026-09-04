@@ -24,6 +24,15 @@ jobs:
           cat .preview/v06.part* | base64 -d > /tmp/v06.tar.gz
           echo "53ef104cdc876e4bc3e8cd7e4111e509884abe9048bab927b87d24efe5d05450  /tmp/v06.tar.gz" | sha256sum -c -
           tar -xzf /tmp/v06.tar.gz -C .
+          python - <<'PYTS'
+          from pathlib import Path
+          p=Path('components/bluewolf/visuals.tsx')
+          s=p.read_text()
+          s=s.replace('const kinds: SoRouteKind[] = soKinds.length ? soKinds : ["single"];','const kinds: SoRouteKind[] = soKinds.length ? [...soKinds] : ["single"];')
+          s=s.replace('return <path key={index} d={hippodromePath(shape.entity.a, shape.entity.b, shape.entity.radius)} />;','if ("entity" in shape) return <path key={index} d={hippodromePath(shape.entity.a, shape.entity.b, shape.entity.radius)} />;\n        return null;')
+          s=s.replace('{kinds.map(kindLabel).join(" — ")}', '{kinds.map((kind: SoRouteKind) => kindLabel(kind)).join(" — ")}')
+          p.write_text(s)
+          PYTS
           python - <<'PYFIX'
           from pathlib import Path
           p=Path('tests/ui-components.test.mjs')
@@ -42,12 +51,13 @@ jobs:
           node-version: 24
           cache: npm
 
-      - name: Install and validate
+      - name: Install and validate build
         run: |
           npm ci
           npm test
           npx tsc --noEmit
           npm run lint
+          npm run build
 
       - name: Prepare local D1
         working-directory: dist/server
@@ -95,11 +105,11 @@ jobs:
           ASSET="$(grep -Eo '(src|href)="[^"]+\.(css|js)[^"]*"' /tmp/page.html | head -1 | sed -E 's/^(src|href)="([^"]+)"$/\2/')"
           case "$ASSET" in http*) AURL="$ASSET";; /*) AURL="$URL$ASSET";; *) AURL="$URL/$ASSET";; esac
           test "$(curl -sS -b /tmp/cookies -o /tmp/asset -w '%{http_code}' --max-time 20 "$AURL")" = 200
-          printf 'URL=%s\nPASSWORD=%s\nVERSION=v0.6-full-feedback-fixed\nASSET_CHECK=passed:%s\n' "$URL" "$PASSWORD" "$ASSET" >/tmp/credentials.txt
+          printf 'URL=%s\nPASSWORD=%s\nVERSION=v0.6-full-feedback-direct\nASSET_CHECK=passed:%s\n' "$URL" "$PASSWORD" "$ASSET" >/tmp/credentials.txt
 
       - uses: actions/upload-artifact@v4
         with:
-          name: bluewolf-v06-final-preview-credentials
+          name: bluewolf-v06-direct-preview-credentials
           path: /tmp/credentials.txt
           retention-days: 1
           compression-level: 0
