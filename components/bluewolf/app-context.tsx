@@ -38,10 +38,15 @@ function hydrateState(value: Partial<WorkspaceState> | null | undefined): Worksp
     influx: { ...DEFAULT_WORKSPACE.influx, ...value.influx, mappings },
     mapServers: value.mapServers?.length ? value.mapServers : structuredClone(DEFAULT_WORKSPACE.mapServers),
     activeTemplateOverrides: { ...DEFAULT_WORKSPACE.activeTemplateOverrides, ...value.activeTemplateOverrides },
+    templateApplications: { ...DEFAULT_WORKSPACE.templateApplications, ...value.templateApplications },
     servers: value.servers?.map((server, index) => ({ ...DEFAULT_WORKSPACE.servers[index % DEFAULT_WORKSPACE.servers.length], ...server })) ?? structuredClone(DEFAULT_WORKSPACE.servers),
+    arenas: value.arenas?.length ? value.arenas : structuredClone(DEFAULT_WORKSPACE.arenas),
     vehicleTypes: value.vehicleTypes?.map((type, index) => ({ ...DEFAULT_WORKSPACE.vehicleTypes[index % DEFAULT_WORKSPACE.vehicleTypes.length], ...type })) ?? structuredClone(DEFAULT_WORKSPACE.vehicleTypes),
+    routes: value.routes?.map((route, index) => ({ ...DEFAULT_WORKSPACE.routes[index % DEFAULT_WORKSPACE.routes.length], ...route })) ?? structuredClone(DEFAULT_WORKSPACE.routes),
+    templates: value.templates?.map((template) => ({ ...template })) ?? structuredClone(DEFAULT_WORKSPACE.templates),
     gtSegments: value.gtSegments?.map((segment, index) => ({ ...DEFAULT_WORKSPACE.gtSegments[index % DEFAULT_WORKSPACE.gtSegments.length], ...segment })) ?? structuredClone(DEFAULT_WORKSPACE.gtSegments),
     settings: { ...DEFAULT_WORKSPACE.settings, ...value.settings },
+    investigationEdits: { ...DEFAULT_WORKSPACE.investigationEdits, ...value.investigationEdits },
   };
 }
 
@@ -91,7 +96,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         window.clearInterval(progressTimer);
         if (!cancelled) {
           setLoadProgress(100);
-          window.setTimeout(() => setReady(true), 480);
+          window.setTimeout(() => setReady(true), 320);
         }
       }
     }
