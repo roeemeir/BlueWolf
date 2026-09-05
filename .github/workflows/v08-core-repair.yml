@@ -1,0 +1,55 @@
+name: Blue Wolf v0.8 core repair
+
+on:
+  push:
+    branches: [tmp-v08-repair-run-2]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-v08-repair-run-2
+          fetch-depth: 0
+      - name: Apply core fixes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path: str, old: str, new: str):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"expected snippet not found in {path}: {old[:100]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace(
+              'core/src/bluewolf_core/route_detection.py',
+              'from .v08_core import Point2D, RouteShape, classify_route as classify_topology',
+              'from .v08_core import Point2D, Rotation, RouteShape, classify_route as classify_topology'
+          )
+          replace(
+              'core/src/bluewolf_core/route_detection.py',
+              '        if descriptor.shape is RouteShape.FIGURE_EIGHT:\n            subtype = RouteSubtype.FIGURE_EIGHT',
+              '        if descriptor.shape is RouteShape.FIGURE_EIGHT or (descriptor.shape is RouteShape.DOUBLE_HIPPODROME and descriptor.rotation is Rotation.UNKNOWN):\n            # A mathematically sampled figure-eight can cross exactly at a sampled\n            # vertex. The strict segment-intersection test then sees no proper\n            # crossing, but its two lobes cancel signed area and rotation is\n            # UNKNOWN. A real non-self-crossing dog-bone retains non-zero area.\n            subtype = RouteSubtype.FIGURE_EIGHT'
+          )
+
+          replace(
+              'core/src/bluewolf_core/session.py',
+              '''        if route_state.pending_revision is None or _material_route_change(route_state.pending_revision, observed):\n            route_state.pending_revision = observed\n            route_state.pending_since_utc = sample.sample_time_utc\n            return [self._route_change(\n                sample,\n                ChangeKind.ROUTE_REVISION_CANDIDATE,\n                detection,\n                revision=route_state.revision + 1,\n                previous_route_id=route_state.confirmed.route_id,\n            )]\n\n        assert route_state.pending_since_utc is not None\n        stable_seconds = (sample.sample_time_utc - route_state.pending_since_utc).total_seconds()''',
+              '''        if route_state.pending_revision is None:\n            route_state.pending_revision = observed\n            route_state.pending_since_utc = sample.sample_time_utc\n            return [self._route_change(\n                sample,\n                ChangeKind.ROUTE_REVISION_CANDIDATE,\n                detection,\n                revision=route_state.revision + 1,\n                previous_route_id=route_state.confirmed.route_id,\n            )]\n\n        # Stability means the route continues to be materially different from\n        # the confirmed baseline. Do not restart the 120 s clock merely because\n        # the fitted geometry converges while the vehicle settles onto the new\n        # route. Always keep the newest stable candidate for the final revision.\n        route_state.pending_revision = observed\n        assert route_state.pending_since_utc is not None\n        stable_seconds = (sample.sample_time_utc - route_state.pending_since_utc).total_seconds()'''
+          )
+          PY
+      - name: Commit core fixes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add core/src/bluewolf_core/route_detection.py core/src/bluewolf_core/session.py
+          git commit -m "Fix Figure-8 topology and stable route revision timing"
+          git push origin HEAD:tmp-v08-repair-run-2
