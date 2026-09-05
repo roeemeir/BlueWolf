@@ -1,0 +1,56 @@
+name: Apply v0.9 source fixes
+
+on:
+  push:
+    branches: [bluewolf-v07-clean]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: contains(github.event.head_commit.message, '[apply-v09-patch]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply targeted type and lint fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('components/bluewolf/developer-view-v09.tsx')
+          s = p.read_text()
+          s = s.replace('import { Check, Database, Link2, Minus, Pause, Play, Plus, Save, ShieldCheck, Trash2 } from "lucide-react";', 'import { Database, Link2, Minus, Pause, Play, Plus, Save, ShieldCheck, Trash2 } from "lucide-react";')
+          s = s.replace('state.vehicleTypes.forEach((t,i)=>{m.single[t.id]=1;});', 'state.vehicleTypes.forEach((t)=>{m.single[t.id]=1;});')
+          s = s.replace('const relationAllowed=(index:number)=>{', 'const relationAllowed=(index:number): SoRelation[]=>{')
+          p.write_text(s)
+
+          p = Path('components/bluewolf/operator-view-v09.tsx')
+          s = p.read_text()
+          s = s.replace('const pairScores = previewRelations.map((relation, index) => {', 'const pairScores: number[] = previewRelations.map((relation, index) => {')
+          p.write_text(s)
+
+          p = Path('components/bluewolf/investigation-view-v091.tsx')
+          s = p.read_text()
+          s = s.replace('const scores = next.map((relation, index) => relation === (current[index] ?? relation) ? 100 : (relation === "mixed" || current[index] === "mixed") ? 35 : 0);', 'const scores: number[] = next.map((relation, index) => relation === (current[index] ?? relation) ? 100 : (relation === "mixed" || current[index] === "mixed") ? 35 : 0);')
+          p.write_text(s)
+
+          p = Path('components/bluewolf/visuals-v09.tsx')
+          s = p.read_text().replace('import { useMemo } from "react";\n\n', '')
+          p.write_text(s)
+
+          p = Path('components/bluewolf/route-bank-editor-v09.tsx')
+          s = p.read_text().replace('import { doubleHippodromeGeometry, hippodromeLoop } from "./visuals-v09";', 'import { hippodromeLoop } from "./visuals-v09";')
+          s = s.replace('const toOpen=(pts:Point[])=>pts.length?`M${pts.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" L")}`:"";\n', '')
+          p.write_text(s)
+          PY
+      - name: Commit source fixes
+        run: |
+          git config user.name "Blue Wolf Release Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add components/bluewolf
+          git diff --cached --check
+          git commit -m "Fix v0.9 TypeScript and cleanup warnings"
+          git push origin HEAD:bluewolf-v07-clean
