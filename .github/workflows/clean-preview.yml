@@ -1,0 +1,172 @@
+name: Blue Wolf clean protected preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [bluewolf-v07-clean]
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[preview]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Python core release gate
+        working-directory: core
+        run: PYTHONPATH=src python -m unittest discover -s tests -v
+
+      - name: Web static release gates
+        run: |
+          npm run lint
+          npx tsc --noEmit
+          npm run build
+          npm test
+
+      - name: Install Chromium browser QA runtime
+        run: |
+          npm install --no-save @playwright/test@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Start application runtime
+        run: |
+          npm run dev -- --host 127.0.0.1 --port 3000 > /tmp/bluewolf-app.log 2>&1 &
+          echo $! > /tmp/bluewolf-app.pid
+          for attempt in $(seq 1 75); do
+            if curl -fsS http://127.0.0.1:3000/ >/dev/null; then
+              exit 0
+            fi
+            if ! kill -0 $(cat /tmp/bluewolf-app.pid) 2>/dev/null; then
+              cat /tmp/bluewolf-app.log
+              exit 1
+            fi
+            sleep 1
+          done
+          cat /tmp/bluewolf-app.log
+          exit 1
+
+      - name: Desktop and mobile browser QA
+        env:
+          BLUEWOLF_BASE_URL: http://127.0.0.1:3000
+        run: npx playwright test tests/browser-v08.spec.mjs --reporter=line --workers=1
+
+      - name: Create protected preview credentials
+        run: |
+          echo "PREVIEW_PASSWORD=$(openssl rand -hex 4)" >> "$GITHUB_ENV"
+          echo "PREVIEW_TOKEN=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+
+      - name: Start cookie-protected preview gate
+        env:
+          PREVIEW_GATE_HOST: 127.0.0.1
+          PREVIEW_GATE_PORT: 4173
+          PREVIEW_UPSTREAM_HOST: 127.0.0.1
+          PREVIEW_UPSTREAM_PORT: 3000
+        run: |
+          node scripts/preview-gate.mjs > /tmp/bluewolf-gate.log 2>&1 &
+          echo $! > /tmp/bluewolf-gate.pid
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/ | grep -q "Protected validation preview"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/bluewolf-gate.log
+          exit 1
+
+      - name: Start Cloudflare Quick Tunnel
+        run: |
+          curl -L --fail --retry 4 --retry-delay 2 \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o /tmp/cloudflared
+          chmod +x /tmp/cloudflared
+          /tmp/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:4173 > /tmp/cloudflared.log 2>&1 &
+          echo $! > /tmp/cloudflared.pid
+          for attempt in $(seq 1 60); do
+            URL=$(grep -Eo 'https://[-a-z0-9]+\.trycloudflare\.com' /tmp/cloudflared.log | head -1 || true)
+            if [ -n "$URL" ]; then
+              echo "PREVIEW_URL=$URL" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            if ! kill -0 $(cat /tmp/cloudflared.pid) 2>/dev/null; then
+              cat /tmp/cloudflared.log
+              exit 1
+            fi
+            sleep 1
+          done
+          cat /tmp/cloudflared.log
+          exit 1
+
+      - name: Verify public login, authenticated app, API and assets
+        run: |
+          curl --retry 15 --retry-all-errors --retry-delay 2 -fsS "$PREVIEW_URL/" -o /tmp/public-login.html
+          grep -q "Protected validation preview" /tmp/public-login.html
+
+          curl --retry 10 --retry-all-errors --retry-delay 2 -fsS \
+            -c /tmp/bluewolf-preview.cookies \
+            -D /tmp/bluewolf-login.headers \
+            -o /dev/null \
+            -X POST --data-urlencode "password=$PREVIEW_PASSWORD" \
+            "$PREVIEW_URL/__bluewolf_login"
+          grep -q "303" /tmp/bluewolf-login.headers
+
+          curl --retry 10 --retry-all-errors --retry-delay 2 -fsS \
+            -b /tmp/bluewolf-preview.cookies "$PREVIEW_URL/" -o /tmp/bluewolf-home.html
+          grep -q "זאב כחול" /tmp/bluewolf-home.html
+
+          curl --retry 10 --retry-all-errors --retry-delay 2 -fsS \
+            -b /tmp/bluewolf-preview.cookies \
+            -H "x-bluewolf-workspace: bw-preview-verification" \
+            "$PREVIEW_URL/api/workspace" -o /tmp/bluewolf-workspace.json
+          grep -Eq '"available":(true|false)' /tmp/bluewolf-workspace.json
+
+          node - <<'NODE' > /tmp/bluewolf-assets.txt
+          const fs = require('node:fs');
+          const html = fs.readFileSync('/tmp/bluewolf-home.html', 'utf8');
+          const matches = [...html.matchAll(/(?:src|href)=["']([^"']+)["']/g)].map((m) => m[1]);
+          const assets = [...new Set(matches.filter((value) => value.startsWith('/') && !value.startsWith('//') && value !== '/'))];
+          for (const asset of assets.slice(0, 30)) console.log(asset);
+          NODE
+
+          while IFS= read -r asset; do
+            [ -z "$asset" ] && continue
+            curl --retry 5 --retry-all-errors --retry-delay 1 -fsS \
+              -b /tmp/bluewolf-preview.cookies "$PREVIEW_URL$asset" -o /dev/null
+          done < /tmp/bluewolf-assets.txt
+
+      - name: Publish verified preview details
+        run: |
+          echo "============================================================"
+          echo "BLUE WOLF VERIFIED CLEAN PREVIEW"
+          echo "PREVIEW_URL=$PREVIEW_URL"
+          echo "PREVIEW_PASSWORD=$PREVIEW_PASSWORD"
+          echo "COMMIT=$GITHUB_SHA"
+          echo "Core + lint + TypeScript + build + tests + desktop/mobile browser QA + public tunnel checks: PASS"
+          echo "============================================================"
+          echo "Preview remains available while this job is running."
+          sleep 4500
+
+      - name: Diagnostics
+        if: always()
+        run: |
+          echo "--- application ---"
+          tail -n 120 /tmp/bluewolf-app.log 2>/dev/null || true
+          echo "--- gate ---"
+          tail -n 120 /tmp/bluewolf-gate.log 2>/dev/null || true
+          echo "--- tunnel ---"
+          tail -n 120 /tmp/cloudflared.log 2>/dev/null || true
