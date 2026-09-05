@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-test("builds the Hebrew Blue Wolf application shell", async () => {
+test("builds the Hebrew RTL Blue Wolf v0.9 shell", async () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const worker = await readFile(path.join(root, "dist/server/index.js"), "utf8");
   const assetNames = await readdir(path.join(root, "dist/server/ssr/assets"));
@@ -13,6 +13,7 @@ test("builds the Hebrew Blue Wolf application shell", async () => {
   assert.match(worker, /זאב כחול \| ניטור סנכרון רכבים/);
   assert.match(worker, /lang:\s*"he"/);
   assert.match(worker, /dir:\s*"rtl"/);
-  assert.match(assets, /ניטור סנכרון רכבים/);
+  assert.match(assets, /תמונה מבצעית/);
+  assert.match(assets, /v0\.9/);
   assert.match(assets, /מכין סביבת עבודה/);
 });
