@@ -29,12 +29,10 @@ test("desktop operational, investigation and developer flows hydrate without run
   await page.getByRole("button", { name: /בנק נתיבים/ }).click();
   await expect(page.locator(".v08-route-bank-editor")).toBeVisible();
 
-  const firstHit = page.locator(".v08-editable-route .v08-route-hit").first();
-  await expect(firstHit).toBeVisible();
-  await firstHit.click({ position: { x: 4, y: 4 } });
+  // The first route is selected by default in the route bank. Verify the real
+  // control-point editor directly and exercise an actual drag interaction.
   const firstControl = page.locator(".v08-control-point").first();
   await expect(firstControl).toBeVisible();
-
   const before = await firstControl.boundingBox();
   if (!before) throw new Error("route control point has no bounding box");
   await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
@@ -68,7 +66,7 @@ test("mobile RTL shell fits the viewport and keeps primary navigation usable", a
   await expect(page.getByText("מצב מפתחים")).toBeVisible();
   await page.getByRole("button", { name: /בנק נתיבים/ }).click();
   await expect(page.locator(".v08-route-bank-editor")).toBeVisible();
-  await expect(page.locator(".v08-editable-route .v08-route-hit").first()).toBeVisible();
+  await expect(page.locator(".v08-control-point").first()).toBeVisible();
 
   expect(failures, failures.join("\n")).toEqual([]);
 });
