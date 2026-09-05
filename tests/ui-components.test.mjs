@@ -149,11 +149,17 @@ test("developer SO builder has no fixed-angle smile law", async () => {
   assert.match(developer, /mixed רק ליד Double/);
 });
 
-test("developer flow keeps GT, route bank, Influx mapping and system-test surfaces", async () => {
+test("developer flow keeps GT, editable route bank, Influx mapping and system-test surfaces", async () => {
   const developer = await source("components/bluewolf/developer-view.tsx");
+  const routeEditor = await source("components/bluewolf/route-bank-editor-v08.tsx");
   assert.match(developer, /GtPlayback/);
   assert.match(developer, /v04-player-controls/);
-  assert.match(developer, /RouteBankMap/);
+  assert.match(developer, /RouteBankEditorV08/);
+  assert.match(developer, /onControlPoints/);
+  assert.match(routeEditor, /v08-control-point/);
+  assert.match(routeEditor, /defaultControlPoints/);
+  assert.match(routeEditor, /onPointerMove/);
+  assert.match(routeEditor, /onControlPoints\(route\.id/);
   assert.match(developer, /InfluxDB 2/);
   assert.match(developer, /בדיקות מערכת לפי פונקציונליות/);
 });
