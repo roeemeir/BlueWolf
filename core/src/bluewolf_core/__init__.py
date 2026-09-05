@@ -1,7 +1,7 @@
 """Public contract for the Blue Wolf algorithmic core.
 
 Only symbols imported here are considered part of the stable envelope used by
-the surrounding application.  The package intentionally has no knowledge of
+the surrounding application. The package intentionally has no knowledge of
 InfluxDB, SQLite, HTTP, maps, reports, or display time zones.
 """
 
@@ -44,6 +44,28 @@ from .templates import (
     TemplateSlot,
     fit_template,
 )
+from .v08 import (
+    LifecycleEvent,
+    Point2D,
+    Rotation,
+    RouteDescriptor,
+    RouteKind,
+    RouteLifecycleV08,
+    RouteShape,
+    SoEntity,
+    SoEntityKind,
+    SoLayout,
+    SoRelation,
+    angle_delta_deg,
+    canonical_so_layout_key,
+    classify_route,
+    grouping_compatible,
+    material_change,
+    relative_period_error,
+    si_group_compatible,
+    so_group_compatible,
+    validate_so_layout,
+)
 
 __all__ = [
     "ChangeKind",
@@ -54,14 +76,25 @@ __all__ = [
     "CoreSession",
     "Direction",
     "FieldQuality",
+    "LifecycleEvent",
     "MemberTemplateFit",
     "NoLegalTemplateAssignment",
     "ObservedMember",
+    "Point2D",
     "PrimitiveMetrics",
     "PolylineProjection",
+    "Rotation",
+    "RouteDescriptor",
     "RouteDetection",
     "RouteFamily",
+    "RouteKind",
+    "RouteLifecycleV08",
+    "RouteShape",
     "RouteSubtype",
+    "SoEntity",
+    "SoEntityKind",
+    "SoLayout",
+    "SoRelation",
     "StateChange",
     "SynchronizationTemplate",
     "TemplateFit",
@@ -70,19 +103,28 @@ __all__ = [
     "VehicleSample",
     "VehicleScores",
     "aggregate_group_scores",
+    "angle_delta_deg",
+    "canonical_so_layout_key",
     "circular_phase_distance",
+    "classify_route",
     "closed_polyline_length",
     "curvature_at_phase",
     "detect_closed_route",
     "fit_template",
+    "grouping_compatible",
+    "material_change",
     "normalized_curvature_error",
     "point_at_phase",
     "project_onto_closed_polyline",
     "project_wgs84",
+    "relative_period_error",
     "resample_closed_polyline",
     "score_error",
     "score_vehicle",
+    "si_group_compatible",
+    "so_group_compatible",
     "tangent_error_deg",
+    "validate_so_layout",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.8.0"
