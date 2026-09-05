@@ -6,6 +6,7 @@ export type VehicleIconName = "rover" | "truck" | "shield" | "drone" | "boat";
 export type RingRole = "inner" | "middle" | "outer";
 export type SoRelation = "same" | "opposite" | "mixed";
 export type SoRouteKind = "single" | "double" | "figure8" | "double-figure8";
+export type MapSourceKind = "engineering" | "wms" | "wmts" | "xyz";
 
 export const SI_ALLOWED_PAIR_ANGLES = [45, 90, 120] as const;
 export const SO_RELATION_LABELS: Record<SoRelation, string> = { same: "זהה", opposite: "הפוך", mixed: "מעורב" };
@@ -38,11 +39,15 @@ export type ScoreThresholds = {
 };
 
 export type SiPairRule = { first: number; second: number; angle: number };
+export type SoTemplateEntity = { kind: Exclude<SoRouteKind, "double-figure8">; vehicleTypes: string[] };
 export type SoTemplateSpec = {
   singleCounts: Record<string, number>;
   doubleCounts: Record<string, number>;
+  figure8Counts: Record<string, number>;
   chain: SoRouteKind[];
   relations: SoRelation[];
+  /** Explicit ordered placement. Optional only for migration of pre-v0.8 records. */
+  entities?: SoTemplateEntity[];
 };
 
 export type SyncTemplate = {
@@ -55,15 +60,16 @@ export type SyncTemplate = {
   values: number[];
   isDefault: boolean;
   updatedAt: string;
-  arena?: string;
   vehicleCount?: number;
   siPairs?: SiPairRule[];
   soSpec?: SoTemplateSpec;
 };
 
+export type RouteControlPoint = { x: number; y: number };
 export type SavedRoute = {
   id: string;
   name: string;
+  /** Arena is reporting/library metadata only; never a live grouping input. */
   arena: string;
   vehicleType: string;
   family: Family;
@@ -74,17 +80,30 @@ export type SavedRoute = {
   mapY?: number;
   rotationDeg?: number;
   scalePct?: number;
+  mapServerId?: string;
+  controlPoints?: RouteControlPoint[];
 };
-export type MapServerDefinition = { id: string; name: string; urlTemplate: string; attribution: string; enabled: boolean; isDefault: boolean };
+
+export type MapServerDefinition = {
+  id: string;
+  name: string;
+  kind: MapSourceKind;
+  urlTemplate: string;
+  attribution: string;
+  enabled: boolean;
+  isDefault: boolean;
+  tokenRef?: string;
+  cacheMode?: "online" | "day-offline";
+};
 export type InfluxValueMode = "as-is" | "special";
 export type InfluxFillMode = "forward-fill" | "linear";
 export type InfluxValueRule = { sourceValue: string; mappedValue: string };
 export type InfluxFieldMapping = { systemKey: string; label: string; bucket: string; measurement: string; key: string; valueMode: InfluxValueMode; sourceValue: string; mappedValue: string; rules?: InfluxValueRule[]; fallbackValue?: string; fillMode: InfluxFillMode };
 export type InfluxSettings = { url: string; organization: string; token: string; idleProbeMinutes: number; activePollSeconds: number; joinToleranceSeconds: number; mappings: InfluxFieldMapping[] };
-export type ServerDefinition = { id: string; name: string; enabled: boolean; arena?: string; influxTag: string };
+export type ServerDefinition = { id: string; name: string; enabled: boolean; influxTag: string };
 export type VehicleIdRange = { min: number; max: number };
 export type VehicleType = { id: string; name: string; minId: number; maxId: number; idRanges?: VehicleIdRange[]; workSpeedKmh: number; siRoles: RingRole[]; icon: VehicleIconName; color: string };
-export type GtSegment = { id: string; family: Family; layer: "sync" | "route"; quality: "good" | "medium" | "low"; label: string; serverId: string; groupId: string; start: string; end: string; vehicleCount: number; routeType: string; score: number };
+export type GtSegment = { id: string; family: Family; layer: "sync" | "route"; quality: "good" | "medium" | "low"; label: string; serverId: string; groupId: string; start: string; end: string; vehicleCount: number; routeType: string; score: number; participants?: number[]; clipStartPct?: number; clipEndPct?: number; arena?: string; routeCorrected?: boolean };
 export type TemplateApplication = { templateId: string; mode: "now" | "event-start"; appliedAt: string };
 
 export type WorkspaceState = {
@@ -101,15 +120,15 @@ export type WorkspaceState = {
   activeTemplateOverrides: Record<string, string>;
   templateApplications: Record<string, TemplateApplication>;
   settings: { timezone: string; retentionDays: number; maxSoVehicles: number; uiRefreshSeconds: number; defaultMap: string };
-  investigationEdits: Record<string, { note: string; templateId: string }>;
+  investigationEdits: Record<string, { note: string; templateId: string; arena?: string }>;
 };
 
 export type DemoGroupKey = "si" | "so";
 export type DemoVehicle = { id: number; typeId: string; score: number; sync: number; route: number; confidence: number; phase: number; ring?: RingRole };
 export type DemoGroup = { key: DemoGroupKey; id: string; name: string; family: Family; subtitle: string; total: number; sync: number; route: number; confidence: number; color: string; members: DemoVehicle[]; templateId: string; reason: string; success: string; alert?: { title: string; detail: string; severity: "warning" | "critical" } };
-export type ServerScenario = { id: string; arena: string; status: string; groups: Record<DemoGroupKey, DemoGroup> };
+export type ServerScenario = { id: string; status: string; groups: Record<DemoGroupKey, DemoGroup> };
 
-const now = "2026-09-04T05:00:00.000Z";
+const now = "2026-09-05T18:00:00.000Z";
 
 export const DEFAULT_INFLUX_MAPPINGS: InfluxFieldMapping[] = [
   { systemKey: "vehicleNumber", label: "מספר רכב", bucket: "navigation", measurement: "vehicle_number", key: "value", valueMode: "as-is", sourceValue: "", mappedValue: "", fillMode: "linear" },
@@ -144,41 +163,47 @@ export const THRESHOLD_DESCRIPTIONS: Record<keyof ScoreThresholds, string> = {
 };
 
 const defaultSoSpec: SoTemplateSpec = {
-  singleCounts: { storm: 0, lightning: 1, thunder: 0 },
-  doubleCounts: { storm: 2, lightning: 0, thunder: 0 },
+  singleCounts: { storm: 1, lightning: 0, thunder: 1 },
+  doubleCounts: { storm: 0, lightning: 2, thunder: 0 },
+  figure8Counts: { storm: 0, lightning: 0, thunder: 0 },
   chain: ["single", "double", "single"],
   relations: ["opposite", "same"],
+  entities: [
+    { kind: "single", vehicleTypes: ["storm"] },
+    { kind: "double", vehicleTypes: ["lightning", "lightning"] },
+    { kind: "single", vehicleTypes: ["thunder"] },
+  ],
 };
 
 export const DEFAULT_WORKSPACE: WorkspaceState = {
   weights: { sync: { position: 60, period: 20, motion: 20 }, route: { distance: 15, tangent: 70, curvature: 15 }, total: { sync: 75, route: 25 } },
   thresholds: { siPositionFullDeg: 10, siPositionZeroDeg: 30, soPositionFullPct: 5, soPositionZeroPct: 25, periodFullPct: 5, periodZeroPct: 20, motionFullPct: 10, motionZeroPct: 30, routeDistanceFullPct: 5, routeDistanceZeroPct: 30, tangentFullDeg: 10, tangentZeroDeg: 60, curvatureFullPct: 10, curvatureZeroPct: 100, lowSpeedPct: 30, smoothingSeconds: 10, greenScore: 80, redScore: 50 },
   templates: [
-    { id: "tpl-si-120", family: "SI", name: "SI · שלושה רכבים · 120°", mix: "סער×1 · ברק×1 · רעם×1", constellation: "סער — ברק — רעם", law: "שרשרת יחסים מינימלית · n−1 זוויות", values: [120, 120], siPairs: [{ first: 0, second: 1, angle: 120 }, { first: 1, second: 2, angle: 120 }], isDefault: true, updatedAt: now },
-    { id: "tpl-si-90", family: "SI", name: "SI · שרשרת 90°", mix: "סער×1 · ברק×1 · רעם×1", constellation: "סער — ברק — רעם", law: "שרשרת יחסים מינימלית · n−1 זוויות", values: [90, 90], siPairs: [{ first: 0, second: 1, angle: 90 }, { first: 1, second: 2, angle: 90 }], isDefault: false, updatedAt: now },
-    { id: "tpl-so-h", family: "SO", name: "SO · חיוך · כפול במרכז", mix: "סער×2 · ברק×2", constellation: "יחיד — כפול — יחיד", law: "קצה משותף + יחס בין היפודרומים סמוכים", values: [2, 0], soSpec: defaultSoSpec, isDefault: true, updatedAt: now },
-    { id: "tpl-so-mixed", family: "SO", name: "SO · חיוך · יחס מעורב", mix: "סער×2 · ברק×2", constellation: "יחיד — כפול — יחיד", law: "קצה משותף + יחס בין היפודרומים סמוכים", values: [1, 1], soSpec: { ...defaultSoSpec, relations: ["mixed", "mixed"] }, isDefault: false, updatedAt: now },
+    { id: "tpl-si-120", family: "SI", name: "SI · שלושה רכבים · 120°", mix: "סער×1 · ברק×1 · רעם×1", constellation: "סער — ברק — רעם", law: "n−1 יחסים עוקבים; common phase חופשי", values: [120, 120], siPairs: [{ first: 0, second: 1, angle: 120 }, { first: 1, second: 2, angle: 120 }], vehicleCount: 3, isDefault: true, updatedAt: now },
+    { id: "tpl-si-90", family: "SI", name: "SI · שרשרת 90°", mix: "סער×1 · ברק×1 · רעם×1", constellation: "סער — ברק — רעם", law: "n−1 יחסים עוקבים; common phase חופשי", values: [90, 90], siPairs: [{ first: 0, second: 1, angle: 90 }, { first: 1, second: 2, angle: 90 }], vehicleCount: 3, isDefault: false, updatedAt: now },
+    { id: "tpl-so-chain", family: "SO", name: "SO · יחיד — כפול רציף — יחיד", mix: "סער×1 · ברק×2 · רעם×1", constellation: "יחיד — כפול — יחיד", law: "קשר גיאומטרי + same/opposite/mixed בין ישויות סמוכות; ללא זווית קשיחה", values: [2, 0], soSpec: defaultSoSpec, isDefault: true, updatedAt: now },
+    { id: "tpl-so-mixed", family: "SO", name: "SO · כפול עם יחס מעורב", mix: "סער×1 · ברק×2 · רעם×1", constellation: "יחיד — כפול — יחיד", law: "mixed חוקי רק בזוג סמוך הכולל Double", values: [1, 0], soSpec: { ...defaultSoSpec, relations: ["mixed", "same"] }, isDefault: false, updatedAt: now },
   ],
   routes: [
-    { id: "route-arena-a", name: "טבעת צפונית", arena: "זירה א׳", vehicleType: "סער", family: "SI", geometry: "CLOSED_ROUTE", updatedAt: now, routeKind: "compact", mapX: 22, mapY: 34, rotationDeg: 0 },
-    { id: "route-arena-b", name: "היפודרום מזרחי", arena: "זירה א׳", vehicleType: "ברק", family: "SO", geometry: "CLOSED_ROUTE", updatedAt: now, routeKind: "single", mapX: 55, mapY: 34, rotationDeg: -20 },
-    { id: "route-arena-c", name: "היפודרום כפול מערבי", arena: "זירה ב׳", vehicleType: "רעם", family: "SO", geometry: "CLOSED_ROUTE", updatedAt: now, routeKind: "double", mapX: 72, mapY: 62, rotationDeg: 15 },
+    { id: "route-si-north", name: "טבעת צפונית", arena: "זירה א׳", vehicleType: "סער", family: "SI", geometry: "CLOSED_ROUTE", updatedAt: now, routeKind: "compact", mapX: 22, mapY: 34, rotationDeg: 0, scalePct: 100, mapServerId: "engineering" },
+    { id: "route-so-east", name: "SO מזרחי", arena: "זירה א׳", vehicleType: "ברק", family: "SO", geometry: "CLOSED_ROUTE", updatedAt: now, routeKind: "single", mapX: 55, mapY: 34, rotationDeg: -20, scalePct: 100, mapServerId: "engineering" },
+    { id: "route-so-double-west", name: "SO כפול מערבי", arena: "זירה ב׳", vehicleType: "רעם", family: "SO", geometry: "CLOSED_ROUTE", updatedAt: now, routeKind: "double", mapX: 72, mapY: 62, rotationDeg: 15, scalePct: 100, mapServerId: "engineering", controlPoints: [{ x: -1, y: 0 }, { x: -0.5, y: -0.7 }, { x: 0, y: -0.1 }, { x: 0.5, y: -0.7 }, { x: 1, y: 0 }, { x: 0.5, y: 0.7 }, { x: 0, y: 0.1 }, { x: -0.5, y: 0.7 }] },
   ],
   mapServers: [
-    { id: "engineering", name: "מפת הנדסה", urlTemplate: "https://maps.internal/engineering/{z}/{x}/{y}.png", attribution: "BlueWolf GIS", enabled: true, isDefault: true },
-    { id: "orthophoto", name: "אורתופוטו מאושר", urlTemplate: "https://maps.internal/ortho/{z}/{x}/{y}.jpg", attribution: "מאגר תצלומים ארגוני", enabled: true, isDefault: false },
+    { id: "engineering", name: "מפת הנדסה", kind: "engineering", urlTemplate: "https://maps.internal/engineering/{z}/{x}/{y}.png", attribution: "BlueWolf GIS", enabled: true, isDefault: true, cacheMode: "day-offline" },
+    { id: "wmts", name: "WMTS ארגוני", kind: "wmts", urlTemplate: "https://maps.internal/wmts/{z}/{x}/{y}.png", attribution: "BlueWolf GIS", enabled: true, isDefault: false, tokenRef: "MAP_WMTS_TOKEN", cacheMode: "day-offline" },
   ],
   influx: { url: "http://influx.internal:8086", organization: "blue-wolf", token: "", idleProbeMinutes: 5, activePollSeconds: 5, joinToleranceSeconds: 5, mappings: DEFAULT_INFLUX_MAPPINGS },
-  servers: Array.from({ length: 3 }, (_, index) => ({ id: String(index + 1), name: `שרת ${String(index + 1).padStart(2, "0")}`, enabled: true, influxTag: String(index + 1) })),
+  servers: Array.from({ length: 3 }, (_, index) => ({ id: String(index + 1), name: `שרת ${String(index + 1).padStart(2, "0")}`, enabled: true, influxTag: `ttag-${index + 1}` })),
   arenas: ["זירה א׳", "זירה ב׳", "זירה ג׳"],
   vehicleTypes: [
-    { id: "storm", name: "סער", minId: 100, maxId: 199, idRanges: [{ min: 100, max: 199 }], workSpeedKmh: 45, siRoles: ["inner"], icon: "rover", color: "#ff9f43" },
+    { id: "storm", name: "סער", minId: 100, maxId: 199, idRanges: [{ min: 100, max: 199 }, { min: 500, max: 549 }], workSpeedKmh: 45, siRoles: ["inner"], icon: "rover", color: "#ff9f43" },
     { id: "lightning", name: "ברק", minId: 200, maxId: 299, idRanges: [{ min: 200, max: 299 }], workSpeedKmh: 55, siRoles: ["middle"], icon: "truck", color: "#34b7eb" },
     { id: "thunder", name: "רעם", minId: 300, maxId: 399, idRanges: [{ min: 300, max: 399 }], workSpeedKmh: 65, siRoles: ["outer"], icon: "shield", color: "#9068ff" },
   ],
   gtSegments: [
-    { id: "gt-1", family: "SI", layer: "sync", quality: "good", label: "SI-01 · סנכרון טוב · 18:12–18:47", serverId: "1", groupId: "SI-01", start: "2026-09-02T18:12", end: "2026-09-02T18:47", vehicleCount: 3, routeType: "טבעות", score: 91 },
-    { id: "gt-2", family: "SO", layer: "route", quality: "medium", label: "SO-02 · נתיב בינוני · 18:21–18:39", serverId: "1", groupId: "SO-02", start: "2026-09-02T18:21", end: "2026-09-02T18:39", vehicleCount: 4, routeType: "שרשרת היפודרומים", score: 67 },
+    { id: "gt-1", family: "SI", layer: "sync", quality: "good", label: "SI-01 · סנכרון טוב · 18:12–18:47", serverId: "1", groupId: "SI-01", start: "2026-09-02T18:12", end: "2026-09-02T18:47", vehicleCount: 3, routeType: "compact", score: 91, participants: [101, 201, 301], clipStartPct: 0, clipEndPct: 100, arena: "זירה א׳" },
+    { id: "gt-2", family: "SO", layer: "route", quality: "medium", label: "SO-02 · נתיב בינוני · 18:21–18:39", serverId: "1", groupId: "SO-02", start: "2026-09-02T18:21", end: "2026-09-02T18:39", vehicleCount: 4, routeType: "double", score: 67, participants: [111, 112, 211, 212], clipStartPct: 8, clipEndPct: 92, arena: "זירה א׳" },
   ],
   activeTemplateOverrides: {},
   templateApplications: {},
@@ -187,7 +212,7 @@ export const DEFAULT_WORKSPACE: WorkspaceState = {
 };
 
 const makeSi = (server: number, offset: number, total: number): DemoGroup => ({
-  key: "si", id: `SI-${String(server * 2 - 1).padStart(2, "0")}`, name: `קבוצה SI-${String(server * 2 - 1).padStart(2, "0")}`, family: "SI", subtitle: "שלוש טבעות · כיוון אחיד", total, sync: Math.min(96, total + 4), route: Math.max(54, total - 7), confidence: 94 - server, color: "#20b9a8", templateId: "tpl-si-120", reason: server === 2 ? "סטיית זווית מתמשכת בין שני רכבים" : "הפרשי הזווית יציבים", success: "מרכז משותף וזמן מחזור תואם",
+  key: "si", id: `SI-${String(server * 2 - 1).padStart(2, "0")}`, name: `קבוצה SI-${String(server * 2 - 1).padStart(2, "0")}`, family: "SI", subtitle: "מסלול compact · כיוון אחיד", total, sync: Math.min(96, total + 4), route: Math.max(54, total - 7), confidence: 94 - server, color: "#20b9a8", templateId: "tpl-si-120", reason: server === 2 ? "סטיית זווית מתמשכת בין שני רכבים" : "הפרשי הזווית יציבים", success: "מרכז משותף וזמן מחזור תואם",
   members: [
     { id: 101 + offset, typeId: "storm", score: total + 2, sync: total + 5, route: total - 4, confidence: 95, phase: 0, ring: "inner" },
     { id: 201 + offset, typeId: "lightning", score: total - 1, sync: total + 2, route: total - 8, confidence: 93, phase: 1 / 3, ring: "middle" },
@@ -196,7 +221,7 @@ const makeSi = (server: number, offset: number, total: number): DemoGroup => ({
 });
 
 const makeSo = (server: number, offset: number, total: number): DemoGroup => ({
-  key: "so", id: `SO-${String(server * 2).padStart(2, "0")}`, name: `קבוצה SO-${String(server * 2).padStart(2, "0")}`, family: "SO", subtitle: "שרשרת היפודרומים · כפול במרכז", total, sync: Math.max(35, total - 7), route: Math.min(94, total + 17), confidence: 91 - server, color: "#4378e8", templateId: "tpl-so-h", reason: total < 70 ? `רכב ${212 + offset} מאחר בפנייה` : "הפניות מתוזמנות והפאזות יציבות", success: "המרחק מהנתיב והכיוון המשיק נשמרים", alert: total < 70 ? { title: "תזמון פנייה מחוץ לסף", detail: `רכב ${212 + offset} מאחר בכניסה לפנייה; זהו גורם חי בלבד ולא אירוע תחקור.`, severity: total < 55 ? "critical" : "warning" } : undefined,
+  key: "so", id: `SO-${String(server * 2).padStart(2, "0")}`, name: `קבוצה SO-${String(server * 2).padStart(2, "0")}`, family: "SO", subtitle: "יחיד — Double רציף — יחיד", total, sync: Math.max(35, total - 7), route: Math.min(94, total + 17), confidence: 91 - server, color: "#5577e8", templateId: "tpl-so-chain", reason: total < 70 ? `רכב ${212 + offset} מאחר בפנייה` : "הפניות מתוזמנות והפאזות יציבות", success: "המרחק מהנתיב והכיוון המשיק נשמרים", alert: total < 70 ? { title: "תזמון פנייה מחוץ לסף", detail: `רכב ${212 + offset} מאחר בכניסה לפנייה; זה Alert חי בלבד ולא Event.`, severity: total < 55 ? "critical" : "warning" } : undefined,
   members: [
     { id: 111 + offset, typeId: "storm", score: total + 4, sync: total - 1, route: total + 14, confidence: 92, phase: .06 },
     { id: 112 + offset, typeId: "storm", score: total - 7, sync: total - 15, route: total + 10, confidence: 89, phase: .56 },
@@ -206,9 +231,9 @@ const makeSo = (server: number, offset: number, total: number): DemoGroup => ({
 });
 
 export const SERVER_SCENARIOS: Record<string, ServerScenario> = {
-  "1": { id: "1", arena: "זירה א׳", status: "2 קבוצות · 7 רכבים", groups: { si: makeSi(1, 0, 86), so: makeSo(1, 0, 63) } },
-  "2": { id: "2", arena: "זירה א׳", status: "2 קבוצות · 7 רכבים", groups: { si: makeSi(2, 20, 72), so: makeSo(2, 20, 84) } },
-  "3": { id: "3", arena: "זירה א׳", status: "2 קבוצות · 7 רכבים", groups: { si: makeSi(3, 40, 91), so: makeSo(3, 40, 76) } },
+  "1": { id: "1", status: "2 קבוצות · 7 רכבים", groups: { si: makeSi(1, 0, 86), so: makeSo(1, 0, 63) } },
+  "2": { id: "2", status: "2 קבוצות · 7 רכבים", groups: { si: makeSi(2, 20, 72), so: makeSo(2, 20, 84) } },
+  "3": { id: "3", status: "2 קבוצות · 7 רכבים", groups: { si: makeSi(3, 40, 91), so: makeSo(3, 40, 76) } },
 };
 
 export const getServerScenario = (serverId: string) => SERVER_SCENARIOS[serverId] ?? SERVER_SCENARIOS["1"];
@@ -223,8 +248,8 @@ export const scoreSeriesForServer = (serverId: string, points = 120) => {
     const soSync = scenario.groups.so.sync + Math.sin(index / 9 + seed * .8) * 5 - (seed === 1 && incident ? 18 : 0) + (recovery ? 5 : 0);
     const siRoute = scenario.groups.si.route + Math.sin(index / 11 + 1) * 4;
     const soRoute = scenario.groups.so.route + Math.sin(index / 13) * 3 - (incident ? 4 : 0);
-    const clamp = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
-    return { index, si: { sync: clamp(siSync), route: clamp(siRoute), total: clamp(siSync * .75 + siRoute * .25) }, so: { sync: clamp(soSync), route: clamp(soRoute), total: clamp(soSync * .75 + soRoute * .25) } };
+    const clampScore = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
+    return { index, si: { sync: clampScore(siSync), route: clampScore(siRoute), total: clampScore(siSync * .75 + siRoute * .25) }, so: { sync: clampScore(soSync), route: clampScore(soRoute), total: clampScore(soSync * .75 + soRoute * .25) } };
   });
 };
 
@@ -246,11 +271,16 @@ export const generateSiAngleSets = (vehicleCount: number) => {
 export const relationCode = (relation: SoRelation) => relation === "same" ? 0 : relation === "mixed" ? 1 : 2;
 export const relationFromCode = (value: number): SoRelation => value === 0 ? "same" : value === 1 ? "mixed" : "opposite";
 
-export const canonicalTemplateKey = (template: Pick<SyncTemplate, "family" | "mix" | "constellation" | "values">) => {
-  const normalizedValues = template.family === "SI" ? template.values.join(",") : [template.values.join(","), [...template.values].reverse().join(",")].sort()[0];
-  const direct = template.constellation;
-  const mirrored = template.constellation.split(" — ").reverse().join(" — ");
-  return `${template.family}|${template.mix}|${[direct, mirrored].sort()[0]}|${normalizedValues}`;
+const stableCounts = (counts: Record<string, number> | undefined) => Object.entries(counts ?? {}).filter(([, value]) => value > 0).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}:${value}`).join(",");
+
+export const canonicalTemplateKey = (template: Pick<SyncTemplate, "family" | "mix" | "constellation" | "values" | "soSpec">) => {
+  if (template.family === "SI") return `SI|${template.mix}|${template.values.join(",")}`;
+  const spec = template.soSpec;
+  const chain = spec?.entities?.length ? spec.entities.map((entity) => `${entity.kind}:${[...entity.vehicleTypes].sort().join("+")}`) : (spec?.chain ?? template.constellation.split(" — ")).map(String);
+  const relations = spec?.relations ?? template.values.map(relationFromCode);
+  const forward = `${chain.join("|")}#${relations.join("|")}`;
+  const reverse = `${[...chain].reverse().join("|")}#${[...relations].reverse().join("|")}`;
+  return `SO|${stableCounts(spec?.singleCounts)}|${stableCounts(spec?.doubleCounts)}|${stableCounts(spec?.figure8Counts)}|${forward < reverse ? forward : reverse}`;
 };
 
 export const createId = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
