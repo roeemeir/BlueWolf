@@ -52,15 +52,19 @@ jobs:
         run: |
           npm install --no-save @playwright/test@1.55.0
           npx playwright install --with-deps chromium
-      - name: Build production application
+      - name: Verify production build
         run: npm run build
-      - name: Start production server
+      - name: Start Cloudflare-aware application runtime
         run: |
-          PORT=3000 npm start > /tmp/bluewolf-server.log 2>&1 &
+          npm run dev -- --host 127.0.0.1 --port 3000 > /tmp/bluewolf-server.log 2>&1 &
           echo $! > /tmp/bluewolf-server.pid
           for attempt in $(seq 1 75); do
             if curl -fsS http://127.0.0.1:3000/ >/dev/null; then
               exit 0
+            fi
+            if ! kill -0 $(cat /tmp/bluewolf-server.pid) 2>/dev/null; then
+              cat /tmp/bluewolf-server.log
+              exit 1
             fi
             sleep 1
           done
@@ -70,6 +74,6 @@ jobs:
         env:
           BLUEWOLF_BASE_URL: http://127.0.0.1:3000
         run: npx playwright test tests/browser-v08.spec.mjs --reporter=line --workers=1
-      - name: Production server log
+      - name: Application runtime log
         if: always()
         run: tail -n 250 /tmp/bluewolf-server.log || true
