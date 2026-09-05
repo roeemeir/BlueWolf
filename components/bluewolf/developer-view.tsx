@@ -212,6 +212,7 @@ function TemplateSection() {
   const [doubleCounts, setDoubleCounts] = useState<Record<string, number>>({ storm: 0, lightning: 2, thunder: 0 });
   const [figureCounts, setFigureCounts] = useState<Record<string, number>>({ storm: 0, lightning: 0, thunder: 0 });
   const [selectedLayoutKey, setSelectedLayoutKey] = useState<string>("");
+  const [relationOverrides, setRelationOverrides] = useState<Record<string, SoRelation[]>>({});
 
   const siItems = countItems(siCounts, state.vehicleTypes).slice(0, 6);
   const sequentialValues = Array.from({ length: Math.max(0, siItems.length - 1) }, (_, index) => siAngles[index] ?? 120);
@@ -220,9 +221,10 @@ function TemplateSection() {
   const figureTotal = Object.values(figureCounts).reduce((sum, value) => sum + value, 0);
   const layouts = useMemo(() => legalSoLayouts(singleTotal, doubleTotal, figureTotal), [singleTotal, doubleTotal, figureTotal]);
   const selectedLayout = layouts.find((item) => item.key === selectedLayoutKey) ?? layouts[0];
+  const selectedRelations = selectedLayout ? (relationOverrides[selectedLayout.key] ?? selectedLayout.relations) : [];
   const previewTypes = family === "SI" ? siItems : [...countItems(singleCounts, state.vehicleTypes), ...countItems(doubleCounts, state.vehicleTypes), ...countItems(figureCounts, state.vehicleTypes)];
   const previewKinds: SoRouteKind[] = selectedLayout?.entities.map((entity) => entity.kind === "figure8" ? "figure8" : entity.kind) ?? [];
-  const previewValues = selectedLayout?.relations.map(relationCode) ?? [];
+  const previewValues = selectedRelations.map(relationCode);
 
   const setSiCount = (typeId: string, count: number) => {
     setSiCounts({ ...siCounts, [typeId]: count });
@@ -252,11 +254,11 @@ function TemplateSection() {
       constellation: selectedLayout.entities.map((entity) => `${entity.kind === "double" ? "כפול" : entity.kind === "figure8" ? "8" : "יחיד"}×${entity.vehicles}`).join(" — "),
       law: "קשר גיאומטרי + same/opposite/mixed בין ישויות סמוכות; mixed רק ליד Double",
       values: previewValues,
-      soSpec: ({ singleCounts, doubleCounts, figure8Counts: figureCounts, chain: previewKinds, relations: selectedLayout.relations } as unknown) as SyncTemplate["soSpec"],
+      soSpec: ({ singleCounts, doubleCounts, figure8Counts: figureCounts, chain: previewKinds, relations: selectedRelations } as unknown) as SyncTemplate["soSpec"],
       isDefault: false, updatedAt: new Date().toISOString(),
     };
-    const signature = `${template.family}:${selectedLayout.key}:${template.mix}`;
-    const duplicate = state.templates.some((item) => `${item.family}:${item.constellation}:${item.mix}` === `${template.family}:${template.constellation}:${template.mix}`);
+    const signature = `${template.family}:${canonicalSoKey(selectedLayout.entities, selectedRelations)}:${template.mix}`;
+    const duplicate = state.templates.some((item) => canonicalTemplateKey(item) === canonicalTemplateKey(template));
     if (duplicate) { toast.warning("כבר קיימת תבנית שקולה"); return; }
     await save({ ...state, templates: [...state.templates, template] }, "templates", "create", signature);
     setName("");
@@ -271,14 +273,8 @@ function TemplateSection() {
 
   const updateRelation = (index: number, relation: SoRelation) => {
     if (!selectedLayout) return;
-    const relations = selectedLayout.relations.map((item, itemIndex) => itemIndex === index ? relation : item);
-    const key = canonicalSoKey(selectedLayout.entities, relations);
-    const updated: SoLayoutOption = { ...selectedLayout, relations, key };
-    const layoutIndex = layouts.findIndex((item) => item.key === selectedLayout.key);
-    if (layoutIndex >= 0) {
-      // local selection key is sufficient; layout generation stays deterministic.
-      setSelectedLayoutKey(updated.key);
-    }
+    const relations = selectedRelations.map((item, itemIndex) => itemIndex === index ? relation : item);
+    setRelationOverrides((current) => ({ ...current, [selectedLayout.key]: relations }));
   };
 
   return <>
@@ -287,7 +283,7 @@ function TemplateSection() {
       {family === "SI" ? <><h3>הרכב רכבים</h3><div className="v04-count-grid">{state.vehicleTypes.map((type) => <label key={type.id}><span><i style={{ background: type.color }} />{type.name}</span><Select value={String(siCounts[type.id] ?? 0)} onValueChange={(value) => setSiCount(type.id, Number(value))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[0,1,2,3].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}</SelectContent></Select></label>)}</div><h3>יחסים עוקבים · n−1</h3><div className="v04-pair-grid">{sequentialValues.map((angle, index) => <label key={index}><span>{siItems[index]?.name ?? `R${index + 1}`} → {siItems[index + 1]?.name ?? `R${index + 2}`}</span><Select value={String(angle)} onValueChange={(value) => setSiAngles(sequentialValues.map((item, itemIndex) => itemIndex === index ? Number(value) : item))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{SI_ALLOWED_PAIR_ANGLES.map((value) => <SelectItem key={value} value={String(value)}>{value}°</SelectItem>)}</SelectContent></Select></label>)}</div></> : <>
         <div className="v04-so-counts"><article><h3>Single · סה״כ לפי סוג</h3>{state.vehicleTypes.map((type) => <label key={type.id}><span><i style={{ background: type.color }} />{type.name}</span><Select value={String(singleCounts[type.id] ?? 0)} onValueChange={(value) => setSingleCounts({ ...singleCounts, [type.id]: Number(value) })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[0,1,2,3,4,5,6].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}</SelectContent></Select></label>)}</article><article><h3>Double · סה״כ לפי סוג</h3>{state.vehicleTypes.map((type) => <label key={type.id}><span><i style={{ background: type.color }} />{type.name}</span><Select value={String(doubleCounts[type.id] ?? 0)} onValueChange={(value) => setDoubleCounts({ ...doubleCounts, [type.id]: Number(value) })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[0,1,2,3,4,5,6,7,8].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}</SelectContent></Select></label>)}</article><article><h3>Figure‑8 · סה״כ לפי סוג</h3>{state.vehicleTypes.map((type) => <label key={type.id}><span><i style={{ background: type.color }} />{type.name}</span><Select value={String(figureCounts[type.id] ?? 0)} onValueChange={(value) => setFigureCounts({ ...figureCounts, [type.id]: Number(value) })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[0,1,2,3,4].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}</SelectContent></Select></label>)}</article></div>
         <h3>Layouts חוקיים · סימטריות כפולות מוסרות</h3><div className="v04-route-option-list">{layouts.length ? layouts.map((layout) => <button type="button" key={layout.key} className={(selectedLayout?.key === layout.key) ? "active" : ""} onClick={() => setSelectedLayoutKey(layout.key)}>{layout.entities.map((entity) => `${entity.kind === "double" ? "כפול" : entity.kind === "figure8" ? "8" : "יחיד"}×${entity.vehicles}`).join(" — ")}<small>{layout.relations.map((relation) => SO_RELATION_LABELS[relation]).join(" · ") || "ישות אחת"}</small></button>) : <p className="card-hint">בחר לפחות 2 רכבים. לכל Single עד 2, לכל Double עד 4, לכל Figure‑8 עד 2; הכמויות נארזות אוטומטית לישויות חוקיות.</p>}</div>
-        {selectedLayout && <><h3>יחס בין ישויות סמוכות</h3><div className="v04-pair-grid">{selectedLayout.relations.map((relation, index) => <label key={index}><span>{index + 1} ↔ {index + 2}</span><Select value={relation} onValueChange={(value) => updateRelation(index, value as SoRelation)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{relationOptions(index).map((value) => <SelectItem key={value} value={value}>{SO_RELATION_LABELS[value]}</SelectItem>)}</SelectContent></Select></label>)}</div></>}
+        {selectedLayout && <><h3>יחס בין ישויות סמוכות</h3><div className="v04-pair-grid">{selectedRelations.map((relation, index) => <label key={index}><span>{index + 1} ↔ {index + 2}</span><Select value={relation} onValueChange={(value) => updateRelation(index, value as SoRelation)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{relationOptions(index).map((value) => <SelectItem key={value} value={value}>{SO_RELATION_LABELS[value]}</SelectItem>)}</SelectContent></Select></label>)}</div></>}
       </>}
     </div><div className="v04-template-preview-pane"><p className="eyebrow">Preview אידיאלי</p><TemplatePreview family={family} values={family === "SI" ? sequentialValues : previewValues} vehicleTypes={previewTypes} soKinds={previewKinds} /><p>Template Preview: צבע = סוג רכב. Live: צבע = קבוצה. Double הוא נתיב רציף אחד.</p><Button onClick={saveTemplate}><Save />שמור תבנית</Button></div></div></div>
     <section className="v04-template-bank glass-panel"><div className="panel-title"><div><p className="eyebrow">בנק תבניות</p><h3>{state.templates.length} תבניות</h3></div><Badge variant="outline">ללא Arena</Badge></div><div className="v04-template-bank-grid">{state.templates.map((template) => <article key={template.id}><TemplatePreview family={template.family} values={template.values} compact vehicleTypes={state.vehicleTypes} soKinds={template.soSpec?.chain} /><div><strong>{template.name.replaceAll("חיוך", "שרשרת")}</strong><p>{template.law}</p><small>{template.mix}</small></div><Button variant="ghost" size="icon-sm" disabled={template.isDefault} onClick={() => save({ ...state, templates: state.templates.filter((item) => item.id !== template.id) }, "templates", "delete", template.name)}><Trash2 /></Button></article>)}</div></section>
