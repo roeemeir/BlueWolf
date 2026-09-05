@@ -6,7 +6,7 @@ function collectRuntimeFailures(page) {
   const failures = [];
   page.on("pageerror", (error) => failures.push(`pageerror: ${error.message}`));
   page.on("console", (message) => {
-    if (message.type() === "error") failures.push(`console: ${message.text()}`));
+    if (message.type() === "error") failures.push(`console: ${message.text()}`);
   });
   return failures;
 }
