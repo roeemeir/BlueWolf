@@ -149,16 +149,27 @@ jobs:
               -b /tmp/bluewolf-preview.cookies "$PREVIEW_URL$asset" -o /dev/null
           done < /tmp/bluewolf-assets.txt
 
-      - name: Publish verified preview details
+      - name: Prepare verified preview details
         run: |
-          echo "============================================================"
-          echo "BLUE WOLF VERIFIED CLEAN PREVIEW"
-          echo "PREVIEW_URL=$PREVIEW_URL"
-          echo "PREVIEW_PASSWORD=$PREVIEW_PASSWORD"
-          echo "COMMIT=$GITHUB_SHA"
-          echo "Core + lint + TypeScript + build + tests + desktop/mobile browser QA + public tunnel checks: PASS"
-          echo "============================================================"
-          echo "Preview remains available while this job is running."
+          {
+            echo "PREVIEW_URL=$PREVIEW_URL"
+            echo "PREVIEW_PASSWORD=$PREVIEW_PASSWORD"
+            echo "COMMIT=$GITHUB_SHA"
+            echo "VERIFICATION=Core + lint + TypeScript + build + tests + desktop/mobile browser QA + public tunnel checks: PASS"
+          } > /tmp/bluewolf-preview.txt
+          echo "Verified preview details prepared."
+
+      - name: Upload preview details
+        uses: actions/upload-artifact@v4
+        with:
+          name: bluewolf-verified-preview
+          path: /tmp/bluewolf-preview.txt
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Keep verified preview alive
+        run: |
+          echo "Preview verified and available while this job remains active."
           sleep 4500
 
       - name: Diagnostics
