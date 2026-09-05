@@ -137,6 +137,7 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
   const [mutedUntil, setMutedUntil] = useState<number>(0);
   const [mapProfile, setMapProfile] = useState(state.settings.defaultMap);
   const mapRef = useRef<HTMLDivElement>(null);
+  const muteTimerRef = useRef<number | null>(null);
   const influxConfigured = Boolean(state.influx.url.trim() && state.influx.token.trim());
 
   useEffect(() => {
@@ -156,11 +157,10 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
     const id = state.activeTemplateOverrides[`${serverId}:${group.id}`] ?? group.templateId;
     return state.templates.find((item) => item.id === id) ?? state.templates.find((item) => item.family === group.family);
   };
-  const activeTemplate = state.templates.find((item) => item.id === activeTemplateId) ?? state.templates.find((item) => item.family === selected.family);
   const templateValues = { si: templateFor("si")?.values ?? [120, 120], so: templateFor("so")?.values ?? [2, 0] };
   const activeAlertGroup = Object.values(scenario.groups).find((group) => group.alert);
   const activeAlert = activeAlertGroup?.alert;
-  const muted = mutedUntil === Number.POSITIVE_INFINITY || mutedUntil > Date.now();
+  const muted = mutedUntil !== 0;
 
   const chooseTemplate = async (id: string, mode: "now" | "event-start") => {
     const next = {
@@ -176,9 +176,14 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
   const enterFullscreen = async () => { try { await mapRef.current?.requestFullscreen(); } catch { toast.info("הדפדפן חסם מסך מלא"); } };
   const toggleLayer = (layer: ScoreLayer) => setLayers((current) => current.includes(layer) ? (current.length === 1 ? current : current.filter((item) => item !== layer)) : [...current, layer]);
   const muteFor = (value: "restart" | "5" | "15" | "30" | "off") => {
+    if (muteTimerRef.current !== null) { window.clearTimeout(muteTimerRef.current); muteTimerRef.current = null; }
     if (value === "off") setMutedUntil(0);
     else if (value === "restart") setMutedUntil(Number.POSITIVE_INFINITY);
-    else setMutedUntil(Date.now() + Number(value) * 60_000);
+    else {
+      const minutes = Number(value);
+      setMutedUntil(minutes);
+      muteTimerRef.current = window.setTimeout(() => { setMutedUntil(0); muteTimerRef.current = null; }, minutes * 60_000);
+    }
     toast.success(value === "off" ? "הצליל הופעל" : `ההתראות הקוליות הושתקו ${value === "restart" ? "עד הפעלה מחדש" : `ל־${value} דקות`}`);
   };
 

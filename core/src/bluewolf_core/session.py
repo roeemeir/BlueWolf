@@ -125,11 +125,16 @@ def _material_route_change(
     if _relative_error(first.estimated_period_s, second.estimated_period_s) > period_ratio:
         return True
     scale = max((first.short_axis_b_m + second.short_axis_b_m) / 2.0, 1.0)
+    orientation_change = (
+        0.0
+        if first.family is RouteFamily.SI
+        else _orientation_error_ratio(first.orientation_deg, second.orientation_deg)
+    )
     geometry = max(
         _center_distance_m(first, second) / scale,
         _relative_error(first.long_axis_a_m, second.long_axis_a_m),
         _relative_error(first.short_axis_b_m, second.short_axis_b_m),
-        _orientation_error_ratio(first.orientation_deg, second.orientation_deg),
+        orientation_change,
     )
     return geometry > geometry_ratio
 
@@ -296,29 +301,36 @@ class CoreSession:
             new_route_observation_seconds=self.config.detection.known_route_candidate_seconds,
         )
         candidate_detection = detect_closed_route(route_state.history, candidate_config)
-        if candidate_detection is not None:
-            candidate = candidate_detection.effective
-            if route_state.candidate is None or _material_route_change(route_state.candidate, candidate):
-                route_state.candidate = candidate
-                route_state.candidate_since_utc = sample.sample_time_utc
-                changes.append(self._route_change(sample, ChangeKind.ROUTE_CANDIDATE, candidate_detection, revision=route_state.revision))
-            elif route_state.candidate_since_utc is None:
-                route_state.candidate_since_utc = sample.sample_time_utc
+        if candidate_detection is not None and route_state.candidate is None:
+            route_state.candidate = candidate_detection.effective
+            route_state.candidate_since_utc = sample.sample_time_utc
+            changes.append(
+                self._route_change(
+                    sample,
+                    ChangeKind.ROUTE_CANDIDATE,
+                    candidate_detection,
+                    revision=route_state.revision,
+                )
+            )
 
         confirmed_detection = detect_closed_route(route_state.history, self.config.detection)
         if confirmed_detection is None:
             return changes
-        confirmed = confirmed_detection.effective
-        if route_state.candidate is not None and _material_route_change(route_state.candidate, confirmed):
-            route_state.candidate = confirmed
-            route_state.candidate_since_utc = sample.sample_time_utc
-            return changes
 
+        confirmed = confirmed_detection.effective
         route_state.candidate = confirmed
         route_state.confirmed = replace(confirmed, route_id=f"{confirmed.route_id}:r0")
         route_state.pending_revision = None
         route_state.pending_since_utc = None
-        changes.append(self._route_change(sample, ChangeKind.ROUTE_CONFIRMED, confirmed_detection, route_override=route_state.confirmed, revision=0))
+        changes.append(
+            self._route_change(
+                sample,
+                ChangeKind.ROUTE_CONFIRMED,
+                confirmed_detection,
+                route_override=route_state.confirmed,
+                revision=0,
+            )
+        )
         return changes
 
     def _update_confirmed_route(self, sample: VehicleSample, route_state: _RouteRuntimeState) -> list[StateChange]:
