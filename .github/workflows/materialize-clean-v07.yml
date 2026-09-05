@@ -1,0 +1,40 @@
+name: Materialize Blue Wolf clean source
+on:
+  push:
+    branches: [local-preview-runtime]
+    paths: [.github/workflows/materialize-clean-v07.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  materialize:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reconstruct verified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/bw
+          cat .preview/v05.part* | base64 -d > /tmp/v05.tar.gz
+          echo '7c6cea729ae5a4159e7386e19da4efd00555f12b08999017e5743e76f36ab567  /tmp/v05.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/v05.tar.gz -C /tmp/bw
+          cat .preview/v06.part* | base64 -d > /tmp/v06.tar.gz
+          echo '53ef104cdc876e4bc3e8cd7e4111e509884abe9048bab927b87d24efe5d05450  /tmp/v06.tar.gz' | sha256sum -c -
+          tar -xzf /tmp/v06.tar.gz -C /tmp/bw
+          test -f /tmp/bw/package.json
+          test -f /tmp/bw/components/bluewolf/operator-view.tsx
+      - name: Publish reconstructed source to clean branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'bluewolf-build-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git fetch origin main bluewolf-v07-clean
+          git switch -C bluewolf-v07-clean origin/main
+          rsync -a --delete --exclude='.git' --exclude='.github' /tmp/bw/ ./
+          git add -A
+          git commit -m 'Materialize verified Blue Wolf source for clean rebuild' || true
+          git push --force-with-lease origin bluewolf-v07-clean
