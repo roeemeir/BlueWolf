@@ -12,7 +12,7 @@ function getWorkspaceId(request: Request) {
 
 function errorMessage(error: unknown) {
   const message = error instanceof Error ? error.message : "Unexpected error";
-  if (message.includes("no such table") || message.includes("D1 binding")) {
+  if (message.includes("no such table") || message.includes("D1 binding") || message.includes("database")) {
     return "מסד הנתונים עדיין אינו זמין בפריסה זו.";
   }
   return message;
@@ -26,9 +26,13 @@ export async function GET(request: Request) {
     const db = getDb();
     const [row] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
     const logs = await db.select().from(auditEntries).where(eq(auditEntries.workspaceId, workspaceId)).orderBy(desc(auditEntries.id)).limit(20);
-    return Response.json({ state: row ? JSON.parse(row.state) : null, revision: row?.revision ?? 0, updatedAt: row?.updatedAt ?? null, logs });
+    return Response.json({ available: true, state: row ? JSON.parse(row.state) : null, revision: row?.revision ?? 0, updatedAt: row?.updatedAt ?? null, logs });
   } catch (error) {
-    return Response.json({ error: errorMessage(error) }, { status: 500 });
+    // Blue Wolf is intentionally offline-capable. A missing/unreachable central
+    // store is a degraded storage mode, not an application failure. Returning
+    // an explicit availability flag avoids noisy 5xx responses while the client
+    // continues from its local workspace copy.
+    return Response.json({ available: false, state: null, revision: 0, updatedAt: null, logs: [], error: errorMessage(error) });
   }
 }
 
@@ -56,8 +60,8 @@ export async function PUT(request: Request) {
         detail: (body.detail ?? "").slice(0, 500),
       }),
     ]);
-    return Response.json({ ok: true, revision: nextRevision });
+    return Response.json({ ok: true, available: true, revision: nextRevision });
   } catch (error) {
-    return Response.json({ error: errorMessage(error) }, { status: 500 });
+    return Response.json({ ok: false, available: false, error: errorMessage(error) });
   }
 }
