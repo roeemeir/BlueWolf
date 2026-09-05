@@ -252,3 +252,6 @@ textarea,
   .v08-global-time label { grid-template-columns: 1fr auto; }
   .v08-global-time input { grid-column: 1 / -1; }
 }
+
+
+.v08-route-bank-editor{touch-action:none;user-select:none}.v08-route-map-bg{fill:color-mix(in srgb,var(--background) 95%,#d6e7eb 5%)}.v08-route-map-grid path{stroke:color-mix(in srgb,var(--foreground) 7%,transparent);fill:none}.v08-route-map-context path{stroke:color-mix(in srgb,var(--foreground) 14%,transparent);stroke-width:2}.v08-route-map-context path:nth-child(-n+3){stroke-width:4}.v08-route-map-label rect,.v08-route-name rect{fill:color-mix(in srgb,var(--card) 90%,transparent);stroke:var(--v08-border)}.v08-route-map-label text,.v08-route-name text{fill:var(--foreground);font-size:12px;font-weight:800}.v08-editable-route{cursor:grab;touch-action:none}.v08-editable-route:active{cursor:grabbing}.v08-editable-route path{fill:none;stroke-width:3.5;vector-effect:non-scaling-stroke}.v08-editable-route.selected path{stroke-width:5}.v08-control-point{fill:var(--card);stroke-width:2.4;vector-effect:non-scaling-stroke;cursor:grab;touch-action:none}.v08-control-point:active{cursor:grabbing}.v08-continuous-double{stroke-linejoin:round}
