@@ -90,12 +90,14 @@ test("renders authoritative SO geometry as a continuous double route and never a
   assert.doesNotMatch(visuals, /Exact axes|30° מדויק|· 30°|doublePoint|open smile/);
 });
 
-test("live vehicle markers preserve physical heading and group color", async () => {
+test("live vehicle markers preserve physical heading, group color and five-second trace dots", async () => {
   const visuals = await source("components/bluewolf/visuals.tsx");
   assert.match(visuals, /heading=\{point\.heading\}/);
   assert.match(visuals, /color=\{groupLineColor\.si\}/);
   assert.match(visuals, /color=\{groupLineColor\.so\}/);
-  assert.match(visuals, /עקבה/);
+  assert.match(visuals, /traceDots/);
+  assert.match(visuals, /\* 5 \/ 74/);
+  assert.match(visuals, /v08-trace-dots/);
   assert.doesNotMatch(visuals, /vehicle-radar/);
 });
 
@@ -139,10 +141,12 @@ test("uses discrete threshold grids instead of free numeric threshold inputs", a
   assert.match(developer, /SI_ALLOWED_PAIR_ANGLES/);
 });
 
-test("developer SO builder must not encode fixed 30-degree smile semantics", async () => {
+test("developer SO builder has no fixed-angle smile law", async () => {
   const developer = await source("components/bluewolf/developer-view.tsx");
-  assert.doesNotMatch(developer, /קצה משותף · 30°|חיוך/);
+  assert.doesNotMatch(developer, /קצה משותף · 30°|30° מדויק|SO · חיוך/);
+  assert.match(developer, /ללא זווית גיאומטרית קשיחה/);
   assert.match(developer, /SO_RELATION_LABELS/);
+  assert.match(developer, /mixed רק ליד Double/);
 });
 
 test("developer flow keeps GT, route bank, Influx mapping and system-test surfaces", async () => {
@@ -166,14 +170,16 @@ test("defines a complete Influx field mapping contract", async () => {
   assert.equal(active.mappedValue, "true");
 });
 
-test("investigation keeps Events separate from Alerts and never hardcodes SO 30 degrees", async () => {
+test("investigation keeps Events separate from Alerts and uses saved-position retrospective map", async () => {
   const investigation = await source("components/bluewolf/investigation-view.tsx");
   assert.match(investigation, /sharePct/);
   assert.match(investigation, /impactPoints/);
   assert.match(investigation, /contribution/);
-  assert.match(investigation, /EventOverviewMap/);
+  assert.match(investigation, /RetrospectiveMap/);
+  assert.match(investigation, /route\.mapX/);
+  assert.match(investigation, /route\.mapY/);
   assert.match(investigation, /draftEdits/);
-  assert.doesNotMatch(investigation, /SO · 30°/);
+  assert.doesNotMatch(investigation, /SO · 30°|alertHistory|activeAlert/);
 });
 
 test("the checked-in SRS carries the no-regression release doctrine", async () => {
