@@ -36,6 +36,7 @@ import {
   SI_ALLOWED_PAIR_ANGLES,
   SO_RELATION_LABELS,
   THRESHOLD_DESCRIPTIONS,
+  canonicalTemplateKey,
   createId,
   getServerScenario,
   relationCode,
