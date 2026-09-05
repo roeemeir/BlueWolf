@@ -79,13 +79,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       try {
         const response = await fetch("/api/workspace", { headers: { "x-bluewolf-workspace": id } });
         if (!response.ok) throw new Error("cloud unavailable");
-        const payload = await response.json() as { state?: Partial<WorkspaceState> | null; revision?: number; updatedAt?: string | null };
+        const payload = await response.json() as { available?: boolean; state?: Partial<WorkspaceState> | null; revision?: number; updatedAt?: string | null };
         if (cancelled) return;
         const next = hydrateState(payload.state ?? (fallback ? JSON.parse(fallback) : null));
         setState(next);
         setRevision(payload.revision ?? 0);
         setLastSavedAt(payload.updatedAt ?? null);
-        setStorageMode("cloud");
+        setStorageMode(payload.available === false ? "local" : "cloud");
       } catch {
         if (cancelled) return;
         if (fallback) {
@@ -116,7 +116,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ state: next, category, action, detail }),
       });
       if (!response.ok) throw new Error("save failed");
-      const payload = await response.json() as { revision?: number };
+      const payload = await response.json() as { ok?: boolean; available?: boolean; revision?: number };
+      if (payload.ok === false || payload.available === false) {
+        setStorageMode("local");
+        toast.warning("נשמר במכשיר; האחסון המרכזי אינו זמין כרגע", { id: saveToast });
+        return false;
+      }
       setRevision(payload.revision ?? revision + 1);
       setLastSavedAt(new Date().toISOString());
       setStorageMode("cloud");
