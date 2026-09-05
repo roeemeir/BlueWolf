@@ -15,7 +15,7 @@ test("retrospective models stable group events rather than alert chapters", asyn
   assert.match(source, /rootCauses/);
   assert.match(source, /groupWeighted/);
   assert.match(source, /best\.start/);
-  assert.doesNotMatch(source, /activeAlert|alertHistory|התראות.*map\(/);
+  assert.doesNotMatch(source, /activeAlert|alertHistory|alerts\.map|notifications\.map/);
 });
 
 test("retrospective exposes per-vehicle scores and immediate template recalculation", async () => {
