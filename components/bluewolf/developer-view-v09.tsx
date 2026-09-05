@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Database, Link2, Minus, Pause, Play, Plus, Save, ShieldCheck, Trash2 } from "lucide-react";
+import { Database, Link2, Minus, Pause, Play, Plus, Save, ShieldCheck, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -102,7 +102,7 @@ function layoutsFor(matrix:CountMatrix,vehicleTypes:VehicleType[]):SoLayout[]{
 function TemplatesSection(){
   const {state,save}=useWorkspace();const [family,setFamily]=useState<Family>("SO");const [name,setName]=useState("");
   const [siCounts,setSiCounts]=useState<Record<string,number>>(()=>Object.fromEntries(state.vehicleTypes.map(t=>[t.id,1])));const [siAngles,setSiAngles]=useState<number[]>([120,120]);
-  const [matrix,setMatrix]=useState<CountMatrix>(()=>{const m=blankMatrix(state.vehicleTypes);state.vehicleTypes.forEach((t,i)=>{m.single[t.id]=1;});return m;});
+  const [matrix,setMatrix]=useState<CountMatrix>(()=>{const m=blankMatrix(state.vehicleTypes);state.vehicleTypes.forEach((t)=>{m.single[t.id]=1;});return m;});
   const layouts=useMemo(()=>layoutsFor(matrix,state.vehicleTypes),[matrix,state.vehicleTypes]);const [layoutId,setLayoutId]=useState<string>("");const selected=layouts.find(l=>l.id===layoutId)??layouts[0];
   const [relations,setRelations]=useState<Record<string,SoRelation[]>>({});
   useEffect(()=>{if(layouts.length&&!layouts.some(l=>l.id===layoutId))setLayoutId(layouts[0].id);},[layouts,layoutId]);
@@ -110,7 +110,7 @@ function TemplatesSection(){
   const siItems=state.vehicleTypes.flatMap(type=>Array.from({length:siCounts[type.id]??0},()=>type));
   const seqAngles=Array.from({length:Math.max(0,siItems.length-1)},(_,i)=>siAngles[i]??120);
   const previewTypes=family==="SI"?siItems:state.vehicleTypes;
-  const relationAllowed=(index:number)=>{if(!selected)return["same","opposite"] as SoRelation[];const a=selected.entities[index],b=selected.entities[index+1];return a?.kind==="double"||b?.kind==="double"?["same","opposite","mixed"]:["same","opposite"];};
+  const relationAllowed=(index:number): SoRelation[]=>{if(!selected)return["same","opposite"] as SoRelation[];const a=selected.entities[index],b=selected.entities[index+1];return a?.kind==="double"||b?.kind==="double"?["same","opposite","mixed"]:["same","opposite"];};
   const setRelation=(index:number,value:SoRelation)=>{if(!selected)return;const next=selectedRelations.map((r,i)=>i===index?value:r);setRelations({...relations,[selected.id]:next});};
   const changeMatrix=(kind:RouteKind,typeId:string,value:number)=>setMatrix({...matrix,[kind]:{...matrix[kind],[typeId]:value}});
   const saveTemplate=async()=>{

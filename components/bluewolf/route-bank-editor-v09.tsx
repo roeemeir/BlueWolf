@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import type { SavedRoute, VehicleType } from "@/lib/bluewolf";
-import { doubleHippodromeGeometry, hippodromeLoop } from "./visuals-v09";
+import { hippodromeLoop } from "./visuals-v09";
 
 export type RouteV09 = SavedRoute & {
   radiusPx?: number;
@@ -27,7 +27,6 @@ const clamp=(v:number,a:number,b:number)=>Math.max(a,Math.min(b,v));
 const rad=(deg:number)=>deg*Math.PI/180;
 const rot=(p:Point,deg:number):Point=>({x:p.x*Math.cos(rad(deg))-p.y*Math.sin(rad(deg)),y:p.x*Math.sin(rad(deg))+p.y*Math.cos(rad(deg))});
 const toPath=(pts:Point[])=>pts.length?`M${pts.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" L")} Z`:"";
-const toOpen=(pts:Point[])=>pts.length?`M${pts.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" L")}`:"";
 
 function figureEight(center:Point,leg:number,radius:number,rotation:number,count=140){
   const sx=Math.max(radius*2.2,leg/2+radius),sy=Math.max(radius*1.35,20);const out:Point[]=[];

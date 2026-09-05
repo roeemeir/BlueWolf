@@ -78,7 +78,7 @@ function recalc(event: RetroEvent, original: SyncTemplate | undefined, selected:
   } else {
     const current = base.map(relationFromCode);
     const next = selected.values.map(relationFromCode);
-    const scores = next.map((relation, index) => relation === (current[index] ?? relation) ? 100 : (relation === "mixed" || current[index] === "mixed") ? 35 : 0);
+    const scores: number[] = next.map((relation, index) => relation === (current[index] ?? relation) ? 100 : (relation === "mixed" || current[index] === "mixed") ? 35 : 0);
     position = scores.length ? scores.reduce((sum, score) => sum + score, 0) / scores.length : 100;
   }
   const sync = clamp(position * .6 + clamp(event.sync + 8) * .2 + clamp(event.sync + 5) * .2);

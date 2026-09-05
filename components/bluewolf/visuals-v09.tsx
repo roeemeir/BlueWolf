@@ -1,7 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
-
 import {
   SO_RELATION_LABELS,
   getServerScenario,

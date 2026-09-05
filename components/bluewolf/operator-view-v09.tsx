@@ -49,7 +49,7 @@ function estimateTemplateScores(
   } else {
     const activeRelations = activeValues.map(relationFromCode);
     const previewRelations = preview.values.map(relationFromCode);
-    const pairScores = previewRelations.map((relation, index) => {
+    const pairScores: number[] = previewRelations.map((relation, index) => {
       const current = activeRelations[index] ?? relation;
       if (current === relation) return 100;
       if (current === "mixed" || relation === "mixed") return 35;
