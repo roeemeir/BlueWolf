@@ -33,7 +33,7 @@ from .models import (
     RouteTopology,
     VehicleSample,
 )
-from .v08_core import Point2D, RouteShape, classify_route as classify_topology
+from .v08_core import Point2D, Rotation, RouteShape, classify_route as classify_topology
 
 
 _EPSILON = 1e-9
@@ -266,7 +266,11 @@ def _fit_shape(points: Sequence[CanonicalPoint], config: DetectionConfig, *, rob
             (Point2D(point.x_m, point.y_m) for point in points),
             period_s=1.0,
         )
-        if descriptor.shape is RouteShape.FIGURE_EIGHT:
+        if descriptor.shape is RouteShape.FIGURE_EIGHT or (descriptor.shape is RouteShape.DOUBLE_HIPPODROME and descriptor.rotation is Rotation.UNKNOWN):
+            # A mathematically sampled figure-eight can cross exactly at a sampled
+            # vertex. The strict segment-intersection test then sees no proper
+            # crossing, but its two lobes cancel signed area and rotation is
+            # UNKNOWN. A real non-self-crossing dog-bone retains non-zero area.
             subtype = RouteSubtype.FIGURE_EIGHT
             topology = RouteTopology.SELF_CROSSING
             canonical = _empirical_cycle_points(points, short_axis, long_axis)

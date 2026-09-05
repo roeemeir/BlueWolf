@@ -352,7 +352,7 @@ class CoreSession:
             route_state.pending_since_utc = None
             return []
 
-        if route_state.pending_revision is None or _material_route_change(route_state.pending_revision, observed):
+        if route_state.pending_revision is None:
             route_state.pending_revision = observed
             route_state.pending_since_utc = sample.sample_time_utc
             return [self._route_change(
@@ -363,6 +363,11 @@ class CoreSession:
                 previous_route_id=route_state.confirmed.route_id,
             )]
 
+        # Stability means the route continues to be materially different from
+        # the confirmed baseline. Do not restart the 120 s clock merely because
+        # the fitted geometry converges while the vehicle settles onto the new
+        # route. Always keep the newest stable candidate for the final revision.
+        route_state.pending_revision = observed
         assert route_state.pending_since_utc is not None
         stable_seconds = (sample.sample_time_utc - route_state.pending_since_utc).total_seconds()
         if stable_seconds < _ROUTE_REVISION_CONFIRM_SECONDS:
