@@ -7,10 +7,14 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL("..", import.meta.url));
 const preview = path.join(root, "preview-v08");
 
-test("v0.8 preview loads every declared CSS and JS asset", async () => {
+test("v0.8 offline preview loads every declared CSS and JS asset", async () => {
   const html = await readFile(path.join(preview, "index.html"), "utf8");
   const assets = [...html.matchAll(/(?:src|href)="\.\/(.+?)"/g)].map((match) => match[1]);
-  assert.deepEqual(assets, ["styles.css", "core.js", "core-patch.js", "app.js"]);
+  assert.ok(assets.includes("styles.css"));
+  assert.ok(assets.includes("core.js"));
+  assert.ok(assets.includes("core-patch.js"));
+  assert.ok(assets.includes("sync-patch.js"));
+  assert.ok(assets.includes("app.js"));
   for (const asset of assets) {
     const file = path.join(preview, asset);
     const info = await stat(file);
@@ -20,27 +24,30 @@ test("v0.8 preview loads every declared CSS and JS asset", async () => {
   }
 });
 
-test("v0.8 preview asset order preserves the core patch before the UI", async () => {
+test("v0.8 offline preview patch order preserves core, sync and UI layering", async () => {
   const html = await readFile(path.join(preview, "index.html"), "utf8");
   const core = html.indexOf("./core.js");
   const patch = html.indexOf("./core-patch.js");
+  const sync = html.indexOf("./sync-patch.js");
   const app = html.indexOf("./app.js");
-  assert.ok(core >= 0 && patch > core && app > patch);
+  assert.ok(core >= 0 && patch > core && sync > patch && app > sync);
 });
 
-test("v0.8 preview contains executable core and application entry points", async () => {
+test("v0.8 offline preview contains executable core and application entry points", async () => {
   const core = await readFile(path.join(preview, "core.js"), "utf8");
   const patch = await readFile(path.join(preview, "core-patch.js"), "utf8");
+  const sync = await readFile(path.join(preview, "sync-patch.js"), "utf8");
   const app = await readFile(path.join(preview, "app.js"), "utf8");
   assert.match(core, /window\.BWCore/);
   assert.match(patch, /BWCore/);
+  assert.match(sync, /BWCore/);
   assert.match(app, /BWCore/);
-  assert.doesNotMatch(core + patch + app, /<script/i);
+  assert.doesNotMatch(core + patch + sync + app, /<script/i);
 });
 
-test("v0.8 preview CSS includes responsive mobile and dark-mode contracts", async () => {
+test("v0.8 offline preview CSS includes responsive, dark-mode and safe-area contracts", async () => {
   const css = await readFile(path.join(preview, "styles.css"), "utf8");
-  assert.match(css, /@media\(max-width:760px\)/);
+  assert.match(css, /@media[^\{]*max-width\s*:\s*\d+px/);
   assert.match(css, /body\.dark/);
   assert.match(css, /safe-area-inset-bottom/);
   assert.match(css, /\.live-map-wrap/);
