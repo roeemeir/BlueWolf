@@ -49,22 +49,17 @@ jobs:
           npm run dev -- --host 127.0.0.1 --port 3000 > /tmp/bluewolf-app.log 2>&1 &
           echo $! > /tmp/bluewolf-app.pid
           for attempt in $(seq 1 75); do
-            if curl -fsS http://127.0.0.1:3000/ >/dev/null; then
-              exit 0
-            fi
-            if ! kill -0 $(cat /tmp/bluewolf-app.pid) 2>/dev/null; then
-              cat /tmp/bluewolf-app.log
-              exit 1
-            fi
+            if curl -fsS http://127.0.0.1:3000/ >/dev/null; then exit 0; fi
+            if ! kill -0 $(cat /tmp/bluewolf-app.pid) 2>/dev/null; then cat /tmp/bluewolf-app.log; exit 1; fi
             sleep 1
           done
           cat /tmp/bluewolf-app.log
           exit 1
 
-      - name: Desktop and mobile browser QA
+      - name: v0.9 desktop, PDF and mobile browser QA
         env:
           BLUEWOLF_BASE_URL: http://127.0.0.1:3000
-        run: npx playwright test tests/browser-v08.spec.mjs --reporter=line --workers=1
+        run: npx playwright test tests/browser-v09.spec.mjs --reporter=line --workers=1
 
       - name: Create protected preview credentials
         run: |
@@ -81,9 +76,7 @@ jobs:
           node scripts/preview-gate.mjs > /tmp/bluewolf-gate.log 2>&1 &
           echo $! > /tmp/bluewolf-gate.pid
           for attempt in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:4173/ | grep -q "Protected validation preview"; then
-              exit 0
-            fi
+            if curl -fsS http://127.0.0.1:4173/ | grep -q "Protected validation preview"; then exit 0; fi
             sleep 1
           done
           cat /tmp/bluewolf-gate.log
@@ -91,22 +84,14 @@ jobs:
 
       - name: Start Cloudflare Quick Tunnel
         run: |
-          curl -L --fail --retry 4 --retry-delay 2 \
-            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-            -o /tmp/cloudflared
+          curl -L --fail --retry 4 --retry-delay 2 https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared
           chmod +x /tmp/cloudflared
           /tmp/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:4173 > /tmp/cloudflared.log 2>&1 &
           echo $! > /tmp/cloudflared.pid
           for attempt in $(seq 1 60); do
             URL=$(grep -Eo 'https://[-a-z0-9]+\.trycloudflare\.com' /tmp/cloudflared.log | head -1 || true)
-            if [ -n "$URL" ]; then
-              echo "PREVIEW_URL=$URL" >> "$GITHUB_ENV"
-              exit 0
-            fi
-            if ! kill -0 $(cat /tmp/cloudflared.pid) 2>/dev/null; then
-              cat /tmp/cloudflared.log
-              exit 1
-            fi
+            if [ -n "$URL" ]; then echo "PREVIEW_URL=$URL" >> "$GITHUB_ENV"; exit 0; fi
+            if ! kill -0 $(cat /tmp/cloudflared.pid) 2>/dev/null; then cat /tmp/cloudflared.log; exit 1; fi
             sleep 1
           done
           cat /tmp/cloudflared.log
@@ -116,25 +101,12 @@ jobs:
         run: |
           curl --retry 15 --retry-all-errors --retry-delay 2 -fsS "$PREVIEW_URL/" -o /tmp/public-login.html
           grep -q "Protected validation preview" /tmp/public-login.html
-
-          curl --retry 10 --retry-all-errors --retry-delay 2 -fsS \
-            -c /tmp/bluewolf-preview.cookies \
-            -D /tmp/bluewolf-login.headers \
-            -o /dev/null \
-            -X POST --data-urlencode "password=$PREVIEW_PASSWORD" \
-            "$PREVIEW_URL/__bluewolf_login"
+          curl --retry 10 --retry-all-errors --retry-delay 2 -fsS -c /tmp/bluewolf-preview.cookies -D /tmp/bluewolf-login.headers -o /dev/null -X POST --data-urlencode "password=$PREVIEW_PASSWORD" "$PREVIEW_URL/__bluewolf_login"
           grep -q "303" /tmp/bluewolf-login.headers
-
-          curl --retry 10 --retry-all-errors --retry-delay 2 -fsS \
-            -b /tmp/bluewolf-preview.cookies "$PREVIEW_URL/" -o /tmp/bluewolf-home.html
+          curl --retry 10 --retry-all-errors --retry-delay 2 -fsS -b /tmp/bluewolf-preview.cookies "$PREVIEW_URL/" -o /tmp/bluewolf-home.html
           grep -q "זאב כחול" /tmp/bluewolf-home.html
-
-          curl --retry 10 --retry-all-errors --retry-delay 2 -fsS \
-            -b /tmp/bluewolf-preview.cookies \
-            -H "x-bluewolf-workspace: bw-preview-verification" \
-            "$PREVIEW_URL/api/workspace" -o /tmp/bluewolf-workspace.json
+          curl --retry 10 --retry-all-errors --retry-delay 2 -fsS -b /tmp/bluewolf-preview.cookies -H "x-bluewolf-workspace: bw-preview-verification" "$PREVIEW_URL/api/workspace" -o /tmp/bluewolf-workspace.json
           grep -Eq '"available":(true|false)' /tmp/bluewolf-workspace.json
-
           node - <<'NODE' > /tmp/bluewolf-assets.txt
           const fs = require('node:fs');
           const html = fs.readFileSync('/tmp/bluewolf-home.html', 'utf8');
@@ -142,11 +114,9 @@ jobs:
           const assets = [...new Set(matches.filter((value) => value.startsWith('/') && !value.startsWith('//') && value !== '/'))];
           for (const asset of assets.slice(0, 30)) console.log(asset);
           NODE
-
           while IFS= read -r asset; do
             [ -z "$asset" ] && continue
-            curl --retry 5 --retry-all-errors --retry-delay 1 -fsS \
-              -b /tmp/bluewolf-preview.cookies "$PREVIEW_URL$asset" -o /dev/null
+            curl --retry 5 --retry-all-errors --retry-delay 1 -fsS -b /tmp/bluewolf-preview.cookies "$PREVIEW_URL$asset" -o /dev/null
           done < /tmp/bluewolf-assets.txt
 
       - name: Prepare verified preview details
@@ -155,14 +125,13 @@ jobs:
             echo "PREVIEW_URL=$PREVIEW_URL"
             echo "PREVIEW_PASSWORD=$PREVIEW_PASSWORD"
             echo "COMMIT=$GITHUB_SHA"
-            echo "VERIFICATION=Core + lint + TypeScript + build + tests + desktop/mobile browser QA + public tunnel checks: PASS"
+            echo "VERIFICATION=Core + lint + TypeScript + build + tests + v0.9 desktop/PDF/mobile browser QA + public tunnel checks: PASS"
           } > /tmp/bluewolf-preview.txt
-          echo "Verified preview details prepared."
 
       - name: Upload preview details
         uses: actions/upload-artifact@v4
         with:
-          name: bluewolf-verified-preview
+          name: bluewolf-verified-preview-v09
           path: /tmp/bluewolf-preview.txt
           retention-days: 1
           if-no-files-found: error
@@ -176,8 +145,8 @@ jobs:
         if: always()
         run: |
           echo "--- application ---"
-          tail -n 120 /tmp/bluewolf-app.log 2>/dev/null || true
+          tail -n 160 /tmp/bluewolf-app.log 2>/dev/null || true
           echo "--- gate ---"
-          tail -n 120 /tmp/bluewolf-gate.log 2>/dev/null || true
+          tail -n 160 /tmp/bluewolf-gate.log 2>/dev/null || true
           echo "--- tunnel ---"
-          tail -n 120 /tmp/cloudflared.log 2>/dev/null || true
+          tail -n 160 /tmp/cloudflared.log 2>/dev/null || true
