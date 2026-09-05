@@ -50,5 +50,5 @@ test("v0.8 offline preview CSS includes responsive, dark-mode and safe-area cont
   assert.match(css, /@media[^\{]*max-width\s*:\s*\d+px/);
   assert.match(css, /body\.dark/);
   assert.match(css, /safe-area-inset-bottom/);
-  assert.match(css, /\.live-map-wrap/);
+  assert.match(css, /\.map-wrap/);
 });
