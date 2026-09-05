@@ -58,6 +58,8 @@ class ChangeKind(StrEnum):
     VEHICLE_EXPIRED = "vehicle_expired"
     ROUTE_CANDIDATE = "route_candidate"
     ROUTE_CONFIRMED = "route_confirmed"
+    ROUTE_REVISION_CANDIDATE = "route_revision_candidate"
+    ROUTE_REVISED = "route_revised"
     GROUP_CANDIDATE = "group_candidate"
     GROUP_CONFIRMED = "group_confirmed"
     GROUP_CHANGED = "group_changed"
