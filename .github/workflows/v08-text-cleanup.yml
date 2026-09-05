@@ -1,0 +1,37 @@
+name: Blue Wolf v0.8 terminology cleanup
+
+on:
+  push:
+    branches: [tmp-v08-repair-run-2]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-v08-repair-run-2
+          fetch-depth: 0
+      - name: Remove obsolete smile migration label
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('components/bluewolf/developer-view.tsx')
+          text = p.read_text()
+          old = 'template.name.replaceAll("חיוך", "שרשרת")'
+          if old not in text:
+              raise SystemExit('obsolete label anchor not found')
+          p.write_text(text.replace(old, 'template.name', 1))
+          PY
+      - name: Commit cleanup
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add components/bluewolf/developer-view.tsx
+          git commit -m "Remove obsolete smile terminology migration"
+          git push origin HEAD:tmp-v08-repair-run-2
