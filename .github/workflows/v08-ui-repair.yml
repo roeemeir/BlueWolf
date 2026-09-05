@@ -1,0 +1,67 @@
+name: Blue Wolf v0.8 template editor repair
+
+on:
+  push:
+    branches: [tmp-v08-repair-run-2]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp-v08-repair-run-2
+          fetch-depth: 0
+      - name: Fix editable SO relations
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('components/bluewolf/developer-view.tsx')
+          text = p.read_text()
+          def rep(old, new):
+              global text
+              if old not in text:
+                  raise SystemExit(f'missing snippet: {old[:100]!r}')
+              text = text.replace(old, new, 1)
+
+          rep(
+              '  const [selectedLayoutKey, setSelectedLayoutKey] = useState<string>("");\n',
+              '  const [selectedLayoutKey, setSelectedLayoutKey] = useState<string>("");\n  const [relationOverrides, setRelationOverrides] = useState<Record<string, SoRelation[]>>({});\n'
+          )
+          rep(
+              '  const selectedLayout = layouts.find((item) => item.key === selectedLayoutKey) ?? layouts[0];\n  const previewTypes',
+              '  const selectedLayout = layouts.find((item) => item.key === selectedLayoutKey) ?? layouts[0];\n  const selectedRelations = selectedLayout ? (relationOverrides[selectedLayout.key] ?? selectedLayout.relations) : [];\n  const previewTypes'
+          )
+          rep(
+              '  const previewValues = selectedLayout?.relations.map(relationCode) ?? [];',
+              '  const previewValues = selectedRelations.map(relationCode);'
+          )
+          rep(
+              '      soSpec: ({ singleCounts, doubleCounts, figure8Counts: figureCounts, chain: previewKinds, relations: selectedLayout.relations } as unknown) as SyncTemplate["soSpec"],',
+              '      soSpec: ({ singleCounts, doubleCounts, figure8Counts: figureCounts, chain: previewKinds, relations: selectedRelations } as unknown) as SyncTemplate["soSpec"],'
+          )
+          rep(
+              '    const signature = `${template.family}:${selectedLayout.key}:${template.mix}`;\n    const duplicate = state.templates.some((item) => `${item.family}:${item.constellation}:${item.mix}` === `${template.family}:${template.constellation}:${template.mix}`);',
+              '    const signature = `${template.family}:${canonicalSoKey(selectedLayout.entities, selectedRelations)}:${template.mix}`;\n    const duplicate = state.templates.some((item) => canonicalTemplateKey(item) === canonicalTemplateKey(template));'
+          )
+          old = '''  const updateRelation = (index: number, relation: SoRelation) => {\n    if (!selectedLayout) return;\n    const relations = selectedLayout.relations.map((item, itemIndex) => itemIndex === index ? relation : item);\n    const key = canonicalSoKey(selectedLayout.entities, relations);\n    const updated: SoLayoutOption = { ...selectedLayout, relations, key };\n    const layoutIndex = layouts.findIndex((item) => item.key === selectedLayout.key);\n    if (layoutIndex >= 0) {\n      // local selection key is sufficient; layout generation stays deterministic.\n      setSelectedLayoutKey(updated.key);\n    }\n  };'''
+          new = '''  const updateRelation = (index: number, relation: SoRelation) => {\n    if (!selectedLayout) return;\n    const relations = selectedRelations.map((item, itemIndex) => itemIndex === index ? relation : item);\n    setRelationOverrides((current) => ({ ...current, [selectedLayout.key]: relations }));\n  };'''
+          rep(old, new)
+          rep(
+              '{selectedLayout && <><h3>יחס בין ישויות סמוכות</h3><div className="v04-pair-grid">{selectedLayout.relations.map((relation, index) =>',
+              '{selectedLayout && <><h3>יחס בין ישויות סמוכות</h3><div className="v04-pair-grid">{selectedRelations.map((relation, index) =>'
+          )
+          p.write_text(text)
+          PY
+      - name: Commit template editor fix
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add components/bluewolf/developer-view.tsx
+          git commit -m "Keep SO relation edits stable and deduplicate by full template law"
+          git push origin HEAD:tmp-v08-repair-run-2
