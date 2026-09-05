@@ -44,18 +44,20 @@ from .templates import (
     TemplateSlot,
     fit_template,
 )
-from .v08 import (
+from .v08_core import (
+    GroupLifecycleEvent,
     LifecycleEvent,
     Point2D,
     Rotation,
     RouteDescriptor,
     RouteKind,
-    RouteLifecycleV08,
+    RouteLifecycle,
     RouteShape,
     SoEntity,
     SoEntityKind,
     SoLayout,
     SoRelation,
+    StableGroupLifecycle,
     angle_delta_deg,
     canonical_so_layout_key,
     classify_route,
@@ -67,6 +69,10 @@ from .v08 import (
     validate_so_layout,
 )
 
+# Compatibility alias for the earlier v0.8 staging name. New code should use
+# RouteLifecycle; keeping the alias avoids breaking a preview/checkpoint caller.
+RouteLifecycleV08 = RouteLifecycle
+
 __all__ = [
     "ChangeKind",
     "CheckpointCompatibilityError",
@@ -76,6 +82,7 @@ __all__ = [
     "CoreSession",
     "Direction",
     "FieldQuality",
+    "GroupLifecycleEvent",
     "LifecycleEvent",
     "MemberTemplateFit",
     "NoLegalTemplateAssignment",
@@ -88,6 +95,7 @@ __all__ = [
     "RouteDetection",
     "RouteFamily",
     "RouteKind",
+    "RouteLifecycle",
     "RouteLifecycleV08",
     "RouteShape",
     "RouteSubtype",
@@ -95,6 +103,7 @@ __all__ = [
     "SoEntityKind",
     "SoLayout",
     "SoRelation",
+    "StableGroupLifecycle",
     "StateChange",
     "SynchronizationTemplate",
     "TemplateFit",
