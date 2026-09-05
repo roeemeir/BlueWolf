@@ -68,9 +68,20 @@ from .v08_core import (
     so_group_compatible,
     validate_so_layout,
 )
+from .sync_v08 import (
+    DoubleSingleEquivalent,
+    circular_angle_distance_deg,
+    circular_cycle_distance,
+    double_as_single,
+    double_quarter,
+    double_quarter_relation,
+    phase_in_region,
+    si_pair_angle_error_deg,
+    si_tangent_error_deg,
+    so_relation_phase_error,
+    so_turn_weighted_error,
+)
 
-# Compatibility alias for the earlier v0.8 staging name. New code should use
-# RouteLifecycle; keeping the alias avoids breaking a preview/checkpoint caller.
 RouteLifecycleV08 = RouteLifecycle
 
 __all__ = [
@@ -81,6 +92,7 @@ __all__ = [
     "CoreConfig",
     "CoreSession",
     "Direction",
+    "DoubleSingleEquivalent",
     "FieldQuality",
     "GroupLifecycleEvent",
     "LifecycleEvent",
@@ -114,15 +126,21 @@ __all__ = [
     "aggregate_group_scores",
     "angle_delta_deg",
     "canonical_so_layout_key",
+    "circular_angle_distance_deg",
+    "circular_cycle_distance",
     "circular_phase_distance",
     "classify_route",
     "closed_polyline_length",
     "curvature_at_phase",
     "detect_closed_route",
+    "double_as_single",
+    "double_quarter",
+    "double_quarter_relation",
     "fit_template",
     "grouping_compatible",
     "material_change",
     "normalized_curvature_error",
+    "phase_in_region",
     "point_at_phase",
     "project_onto_closed_polyline",
     "project_wgs84",
@@ -131,7 +149,11 @@ __all__ = [
     "score_error",
     "score_vehicle",
     "si_group_compatible",
+    "si_pair_angle_error_deg",
+    "si_tangent_error_deg",
     "so_group_compatible",
+    "so_relation_phase_error",
+    "so_turn_weighted_error",
     "tangent_error_deg",
     "validate_so_layout",
 ]
