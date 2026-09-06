@@ -122,10 +122,12 @@ class LiveAnalysisV18Tests(unittest.TestCase):
         checkpoint = original.checkpoint()
         uninterrupted = original.ingest(_dataset(361, 365))
 
+        # Real recovery queries enough NAV before the checkpoint frontier to
+        # hydrate route fitting, plus everything after it to catch up.
         restored, recovered = LiveAnalysisSession.restore(
             checkpoint,
             app_config=_config(),
-            recovery_dataset=_dataset(300, 365),
+            recovery_dataset=_dataset(60, 365),
         )
         self.assertEqual(restored.core.processed_until_utc, START + timedelta(seconds=365))
         self.assertEqual(recovered.accepted_samples, 5 * 3)
