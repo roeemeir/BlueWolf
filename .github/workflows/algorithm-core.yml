@@ -1,0 +1,38 @@
+name: Blue Wolf Algorithm Core
+
+on:
+  push:
+    paths:
+      - "packages/bluewolf-core/**"
+  pull_request:
+    paths:
+      - "packages/bluewolf-core/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core-contract:
+    name: Algorithm core contract + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Independent core typecheck + executable tests
+        run: npm run core:test
+      - name: Verify core boundary stays pure
+        run: |
+          if grep -RInE 'from ["'"'](react|next|drizzle-orm|@/)|\b(window|document|localStorage)\b|fetch\s*\(' packages/bluewolf-core/src; then
+            echo "Algorithm core crossed the application/runtime boundary"
+            exit 1
+          fi
+      - name: Core contract summary
+        run: |
+          echo "Core API: $(grep -Eo 'CORE_API_VERSION = \"[^\"]+' packages/bluewolf-core/src/contracts.ts | head -1)"
+          echo "No UI build, browser QA or DB migration is required for a core-only development gate."
