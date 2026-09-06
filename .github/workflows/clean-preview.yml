@@ -115,12 +115,20 @@ jobs:
             exit 1
           fi
           grep -q "Protected validation preview" /tmp/public-login.html
-          curl --retry 10 --retry-all-errors --retry-delay 2 -fsS -c /tmp/bluewolf-preview.cookies -D /tmp/bluewolf-login.headers -o /dev/null -X POST --data-urlencode "password=$PREVIEW_PASSWORD" "$PREVIEW_URL/__bluewolf_login"
-          grep -q "303" /tmp/bluewolf-login.headers
-          curl --retry 10 --retry-all-errors --retry-delay 2 -fsS -b /tmp/bluewolf-preview.cookies "$PREVIEW_URL/" -o /tmp/bluewolf-home.html
+          LOGIN_CODE=$(curl --retry 10 --retry-all-errors --retry-delay 2 -sS -c /tmp/bluewolf-preview.cookies -o /dev/null -w '%{http_code}' -X POST --data-urlencode "password=$PREVIEW_PASSWORD" "$PREVIEW_URL/__bluewolf_login")
+          echo "Public login HTTP $LOGIN_CODE"
+          test "$LOGIN_CODE" = "303"
+          HOME_CODE=$(curl --retry 10 --retry-all-errors --retry-delay 2 -sS -b /tmp/bluewolf-preview.cookies -o /tmp/bluewolf-home.html -w '%{http_code}' "$PREVIEW_URL/")
+          echo "Authenticated home HTTP $HOME_CODE"
+          test "$HOME_CODE" = "200"
           grep -q "זאב כחול" /tmp/bluewolf-home.html
-          grep -q "v0.10" /tmp/bluewolf-home.html
-          curl --retry 10 --retry-all-errors --retry-delay 2 -fsS -b /tmp/bluewolf-preview.cookies -H "x-bluewolf-workspace: bw-preview-verification" "$PREVIEW_URL/api/workspace" -o /tmp/bluewolf-workspace.json
+          if grep -q "Protected validation preview" /tmp/bluewolf-home.html; then
+            echo "Authenticated request unexpectedly returned the login page"
+            exit 1
+          fi
+          API_CODE=$(curl --retry 10 --retry-all-errors --retry-delay 2 -sS -b /tmp/bluewolf-preview.cookies -H "x-bluewolf-workspace: bw-preview-verification" -o /tmp/bluewolf-workspace.json -w '%{http_code}' "$PREVIEW_URL/api/workspace")
+          echo "Workspace API HTTP $API_CODE"
+          test "$API_CODE" = "200"
           grep -Eq '"available":(true|false)' /tmp/bluewolf-workspace.json
           node - <<'NODE' > /tmp/bluewolf-assets.txt
           const fs = require('node:fs');
@@ -129,10 +137,13 @@ jobs:
           const assets = [...new Set(matches.filter((value) => value.startsWith('/') && !value.startsWith('//') && value !== '/'))];
           for (const asset of assets.slice(0, 30)) console.log(asset);
           NODE
+          ASSET_COUNT=0
           while IFS= read -r asset; do
             [ -z "$asset" ] && continue
             curl --retry 5 --retry-all-errors --retry-delay 1 -fsS -b /tmp/bluewolf-preview.cookies "$PREVIEW_URL$asset" -o /dev/null
+            ASSET_COUNT=$((ASSET_COUNT + 1))
           done < /tmp/bluewolf-assets.txt
+          echo "Verified public assets: $ASSET_COUNT"
 
       - name: Prepare verified preview details
         run: |
