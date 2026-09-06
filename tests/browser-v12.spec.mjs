@@ -7,7 +7,7 @@ test("live simulation is NAV-derived and exposes versioned Python Core", async (
   const runtime = failures(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
-  await expect(page.getByText(/v0\.14 · SRS v1\.7 · Python Core 1\.0\.0/)).toBeVisible();
+  await expect(page.getByText(/v0\.15 · SRS v1\.8 · Python Core 1\.0\.0/)).toBeVisible();
   await expect(page.getByRole("heading", { name: "תמונה מבצעית" })).toBeVisible();
   await expect(page.locator(".v09-kpis")).not.toContainText("96%");
   await expect(page.locator(".v09-kpis")).not.toContainText("4.2s");
@@ -65,7 +65,7 @@ test("historical range derives events and event-only PDF from NAV", async ({ pag
   expect(runtime, runtime.join("\n")).toEqual([]);
 });
 
-test("in-app System Tests execute production Core and compare to external GT", async ({ page }) => {
+test("in-app System Tests execute production Core and compare Figure-8 to external GT", async ({ page }) => {
   const runtime = failures(page);
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1400, height: 1000 });
@@ -77,19 +77,22 @@ test("in-app System Tests execute production Core and compare to external GT", a
   const failedCards = await page.locator(".v09-test-grid article:has(.fail)").allTextContents();
   expect(failedCards, failedCards.join("\n---\n")).toEqual([]);
   await expect(page.locator(".v09-test-grid")).toContainText("Core contract");
-  await expect(page.locator(".v09-test-grid")).toContainText("Simulator→NAV→Core→GT");
+  await expect(page.locator(".v09-test-grid")).toContainText("Simulator→NAV→Python Core→GT");
+  await expect(page.locator(".v09-test-grid")).toContainText("שמינייה = היפודרום עם legs מוצלבים");
   await expect(page.locator(".v09-test-grid")).toContainText("30 יום");
   await expect(page.locator(".v09-test-grid")).toContainText("Influx adapter");
   expect(runtime, runtime.join("\n")).toEqual([]);
 });
 
-test("SO builder stays count-first with mirror-deduplicated layouts", async ({ page }) => {
+test("SO builder stays count-first and exposes Figure-8 as a crossed-leg entity", async ({ page }) => {
   const runtime = failures(page);
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: /מפתחים/ }).click();
   await page.locator(".v09-dev-nav button", { hasText: "תבניות" }).click();
   await expect(page.locator(".v10-template-builder")).toBeVisible();
   await expect(page.locator(".v10-so-counts")).toBeVisible();
+  await expect(page.locator(".v10-so-counts")).toContainText("שמינייה");
+  await expect(page.locator(".v10-so-counts")).toContainText("legs מוצלבים");
   await expect(page.locator(".v10-layout-options button").first()).toBeVisible();
   await page.locator(".v10-layout-options button").first().click();
   await expect(page.locator(".v10-smile-preview")).toBeVisible();
