@@ -3,40 +3,41 @@ name: Blue Wolf CI
 on:
   push:
     paths-ignore:
+      - "core/**"
       - "packages/bluewolf-core/**"
   pull_request:
     paths-ignore:
+      - "core/**"
       - "packages/bluewolf-core/**"
   workflow_dispatch:
 
 jobs:
-  algorithm-core:
-    name: Algorithm Core contract
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-      - run: npm ci
-      - name: Run isolated replaceable-core suite
-        run: npm run core:test
-
-  python-reference:
-    name: Python reference core
+  python-core:
+    name: Canonical Python Algorithm Core
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run retained deterministic reference tests
+      - name: Run canonical Core suite
         working-directory: core
         run: PYTHONPATH=src python -m unittest discover -s tests -v
+      - name: Show contract defaults
+        working-directory: core
+        run: |
+          PYTHONPATH=src python - <<'PY'
+          import bluewolf_core
+          from bluewolf_core import CoreConfig
+          c = CoreConfig()
+          print("Core API", bluewolf_core.CORE_API_VERSION)
+          print("implementation", bluewolf_core.IMPLEMENTATION_LANGUAGE)
+          print("grid/batch/checkpoint", c.timing.logical_grid_seconds, c.timing.live_batch_seconds, c.timing.checkpoint_seconds)
+          print("membership confirmation", c.grouping.membership_confirmation_seconds)
+          PY
 
   web:
-    name: Web application + persistence contract
+    name: Web application + persistence + migration compatibility
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +46,8 @@ jobs:
           node-version: "24"
           cache: npm
       - run: npm ci
+      - name: Temporary TypeScript Core compatibility suite
+        run: npm run core:test
       - name: Lint
         run: npm run lint
       - name: TypeScript
@@ -55,10 +58,10 @@ jobs:
         run: npm test
 
   browser:
-    name: Browser QA v1.5 Core + NAV truth
+    name: Browser QA v1.7 NAV truth + migration compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    needs: [algorithm-core, python-reference, web]
+    needs: [python-core, web]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -83,7 +86,7 @@ jobs:
           done
           cat /tmp/bluewolf-server.log
           exit 1
-      - name: v1.5 provenance, Core boundary, history, GT and mobile acceptance
+      - name: Provenance, history, GT and mobile acceptance
         env:
           BLUEWOLF_BASE_URL: http://127.0.0.1:3000
         run: npx playwright test tests/browser-v12.spec.mjs --reporter=line --workers=1
