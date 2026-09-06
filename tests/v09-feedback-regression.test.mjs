@@ -21,7 +21,7 @@ test("v0.9 feedback requirements are wired into source and official SRS", async 
   ]);
 
   assert.match(geometry, /outward semicircles, never inward hooks/i);
-  assert.match(geometry, /upper straight|topA.*topB/is);
+  assert.match(geometry, /topA.*topB/is);
   assert.match(geometry, /bottomB.*bottomA/is);
   assert.match(geometry, /doubleHippodromeLoop/);
   assert.match(map, /scoreTrace/);
@@ -42,5 +42,6 @@ test("v0.9 feedback requirements are wired into source and official SRS", async 
   assert.match(routeBank, /data-kind="angle"/);
   assert.match(settings, /v09-range-list/);
   assert.match(srs, /SRS-2701/);
-  assert.match(srs, /SRS-4101/);
+  assert.match(srs, /## 41\. v1\.1 release gate/);
+  assert.match(srs, /Browser QA passes on desktop and iPhone-sized RTL viewport/);
 });
