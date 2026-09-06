@@ -16,26 +16,21 @@ test("desktop v0.9 live geometry, traces, base map and cropped timeline", async 
   await expect(page.getByRole("heading", { name: "תמונה מבצעית" })).toBeVisible();
   await expect(page.locator(".v09-live-map")).toBeVisible();
 
-  // Base map is separate from analytical overlays.
   await expect(page.locator(".v09-map-select select")).toBeVisible();
   await expect(page.locator(".v09-overlay-bar button", { hasText: "מפת הנדסה" })).toHaveCount(0);
 
-  // Normal trace is visible and score trace is an independent layer with a score legend.
   expect(await page.locator(".v09-trace-dots circle").count()).toBeGreaterThan(20);
   await page.locator(".v09-overlay-bar button", { hasText: "עקבה לפי ציון" }).click();
   await expect(page.locator(".v09-score-legend")).toBeVisible();
   expect(await page.locator(".v09-score-trace circle").count()).toBeGreaterThan(20);
 
-  // Vehicle marker color is vehicle type, while hulls have independent group colors.
   await expect(page.locator(".v09-vehicles")).toBeVisible();
   await expect(page.locator(".v09-hulls path")).toHaveCount(2);
 
-  // Both groups and all 3 score layers are rendered. Hiding Route removes two paths.
   await expect(page.locator(".v09-timeline path[fill='none']")).toHaveCount(6);
   await page.locator(".v09-chart-toggles button", { hasText: "נתיב" }).click();
   await expect(page.locator(".v09-timeline path[fill='none']")).toHaveCount(4);
 
-  // Window selection truly slices the data/x-axis and exposes a complete legend.
   await page.locator(".v09-window-picker button", { hasText: "30 דק׳" }).click();
   await expect(page.locator(".v09-timeline")).toContainText("18:30");
   await expect(page.locator(".v09-timeline")).toContainText("19:00");
@@ -54,15 +49,13 @@ test("SO builder uses +/- controls, immediate permutations and relation-responsi
   await page.getByRole("button", { name: /מפתחים/ }).click();
   await expect(page.locator(".v09-template-builder")).toBeVisible();
 
-  // Add one Type A and one Type B Single using plus controls.
   const singleSection = page.locator(".v09-so-count-groups section").first();
   const rows = singleSection.locator(".v09-count-row");
   await rows.nth(0).locator(".v09-stepper button").last().click();
   await rows.nth(1).locator(".v09-stepper button").last().click();
   await expect(page.locator(".v09-layout-options button").first()).toBeVisible();
-  expect(await page.locator(".v09-layout-options button").count()).toBeGreaterThan(1); // order + co-located variant
+  expect(await page.locator(".v09-layout-options button").count()).toBeGreaterThan(1);
 
-  // Relation change moves markers in the preview.
   const before = await page.locator(".v09-template-svg").innerHTML();
   const relation = page.locator(".v09-relation-editors select").first();
   await relation.selectOption("opposite");
@@ -85,7 +78,7 @@ test("developer exposes threshold diagrams, scoring sensitivity, GT traces and p
 
   await page.locator(".v09-dev-nav button", { hasText: "GT ו־Sweep" }).click();
   await expect(page.locator(".v09-gt-map")).toBeVisible();
-  expect(await page.locator(".v09-gt-map circle").count()).toBeGreaterThan(20); // original trace dots
+  expect(await page.locator(".v09-gt-map circle").count()).toBeGreaterThan(20);
   await page.getByText("Route classified wrong").locator("input").check();
   await expect(page.locator(".v09-axis-handle")).toHaveCount(4);
 
@@ -103,7 +96,7 @@ test("investigation exports a PDF with maps and explicit joined/left vehicle bou
   const failures = collectRuntimeFailures(page);
   await page.setViewportSize({ width: 1280, height: 960 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: /תחקור/ }).click();
+  await page.getByRole("button", { name: "תחקור", exact: true }).click();
   await expect(page.locator(".v09-report-map").first()).toBeVisible();
   await expect(page.getByText(/הצטרפו:/).first()).toBeVisible();
   await expect(page.getByText(/יצאו:/).first()).toBeVisible();
