@@ -169,5 +169,6 @@ test("investigation keeps Events separate from Alerts and uses saved-position re
 
 test("the checked-in SRS carries the no-regression release doctrine", async () => {
   const srs = await source("docs/BLUE_WOLF_SRS.md");
-  assert.match(srs, /no.regression|אסור.*להחזיר|לא.*להחזיר/i);
+  assert.match(srs, /No previously accepted capability may disappear in a later release without an explicit requirement change/i);
+  assert.match(srs, /PASS \/ FAIL \/ INTEGRATION \/ DEMO/);
 });
