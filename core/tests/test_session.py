@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from datetime import UTC, datetime, timedelta
 
@@ -73,6 +74,11 @@ def route_revision_scenario() -> tuple[VehicleSample, ...]:
     return tuple(first) + tuple(second)
 
 
+def restore(checkpoint: bytes, recovery_samples: tuple[VehicleSample, ...]) -> CoreSession:
+    """Model the operational restart: compact checkpoint + Influx lookback."""
+    return CoreSession.from_checkpoint(checkpoint, recovery_samples=recovery_samples)
+
+
 class SessionDeterminismTests(unittest.TestCase):
     def test_one_batch_and_five_second_batches_are_equivalent(self) -> None:
         samples = scenario()
@@ -98,7 +104,7 @@ class SessionDeterminismTests(unittest.TestCase):
         self.assertEqual(incremental.debug_state(), one.debug_state())
         self.assertEqual(incremental.export_checkpoint(), one.export_checkpoint())
 
-    def test_checkpoint_restore_matches_uninterrupted_processing(self) -> None:
+    def test_checkpoint_restore_plus_influx_replay_matches_uninterrupted_processing(self) -> None:
         samples = scenario()
         first_half = tuple(sample for sample in samples if sample.sample_time_utc <= START + timedelta(seconds=15))
         second_half = tuple(sample for sample in samples if sample.sample_time_utc > START + timedelta(seconds=15))
@@ -109,12 +115,21 @@ class SessionDeterminismTests(unittest.TestCase):
 
         before_restart = CoreSession()
         before_restart.process_batch(first_half)
-        restored = CoreSession.from_checkpoint(before_restart.export_checkpoint())
+        restored = restore(before_restart.export_checkpoint(), first_half)
         actual_tail = restored.process_batch(second_half)
 
         self.assertEqual(actual_tail, expected_tail)
         self.assertEqual(restored.debug_state(), uninterrupted.debug_state())
         self.assertEqual(restored.export_checkpoint(), uninterrupted.export_checkpoint())
+
+    def test_checkpoint_does_not_persist_navigation_history(self) -> None:
+        session = CoreSession()
+        session.process_batch(route_scenario(180))
+        payload = json.loads(session.export_checkpoint().decode("utf-8"))
+        self.assertEqual(payload["checkpoint_schema_version"], 4)
+        self.assertEqual(payload["recovery_history_seconds"], 600)
+        self.assertTrue(payload["routes"])
+        self.assertTrue(all("history" not in route for route in payload["routes"]))
 
     def test_overlapping_query_samples_are_ignored(self) -> None:
         session = CoreSession()
@@ -182,7 +197,7 @@ class SessionDeterminismTests(unittest.TestCase):
         self.assertGreaterEqual(routed_frames[0].phase, 0.0)
         self.assertLess(routed_frames[0].phase, 1.0)
 
-    def test_route_lifecycle_survives_checkpoint_without_duplicate_candidate(self) -> None:
+    def test_route_lifecycle_survives_compact_checkpoint_with_influx_hydration(self) -> None:
         samples = route_scenario()
         first_half = tuple(sample for sample in samples if sample.sample_time_utc <= START + timedelta(seconds=180))
         second_half = tuple(sample for sample in samples if sample.sample_time_utc > START + timedelta(seconds=180))
@@ -197,7 +212,7 @@ class SessionDeterminismTests(unittest.TestCase):
 
         before_restart = CoreSession()
         before_restart.process_batch(first_half)
-        restored = CoreSession.from_checkpoint(before_restart.export_checkpoint())
+        restored = restore(before_restart.export_checkpoint(), first_half)
         actual_tail = restored.process_batch(second_half)
 
         self.assertEqual(actual_tail, expected_tail)
@@ -263,7 +278,7 @@ class SessionDeterminismTests(unittest.TestCase):
         self.assertEqual(route["revision"], 1)
         self.assertTrue(str(route["confirmed_route_id"]).endswith(":r1"))
 
-    def test_pending_revision_survives_checkpoint_deterministically(self) -> None:
+    def test_pending_revision_survives_compact_checkpoint_with_influx_hydration(self) -> None:
         samples = route_revision_scenario()
         split_at = START + timedelta(seconds=600)
         first = tuple(sample for sample in samples if sample.sample_time_utc <= split_at)
@@ -275,7 +290,7 @@ class SessionDeterminismTests(unittest.TestCase):
 
         restarted = CoreSession()
         restarted.process_batch(first)
-        restored = CoreSession.from_checkpoint(restarted.export_checkpoint())
+        restored = restore(restarted.export_checkpoint(), first)
         actual = restored.process_batch(second)
 
         self.assertEqual(actual, expected)
