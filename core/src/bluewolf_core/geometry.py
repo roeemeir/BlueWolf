@@ -30,6 +30,25 @@ def _points(value: Iterable[CanonicalPoint]) -> tuple[CanonicalPoint, ...]:
     return points
 
 
+def _dedupe_for_resampling(value: Iterable[CanonicalPoint]) -> tuple[CanonicalPoint, ...]:
+    """Remove zero-length join artifacts without changing route geometry.
+
+    Learned routes often contain the same point twice where a straight leg and
+    a turn meet, or repeat the first point at the end of an explicitly closed
+    trace. Those are representation artifacts, not a geometric failure.
+    """
+    output: list[CanonicalPoint] = []
+    for point in value:
+        if output and math.hypot(point.x_m - output[-1].x_m, point.y_m - output[-1].y_m) <= _EPSILON:
+            continue
+        output.append(point)
+    if len(output) > 1 and math.hypot(output[0].x_m - output[-1].x_m, output[0].y_m - output[-1].y_m) <= _EPSILON:
+        output.pop()
+    if len(output) < 3:
+        raise ValueError("a closed polyline requires at least three distinct points")
+    return tuple(output)
+
+
 def _segments(
     points: tuple[CanonicalPoint, ...],
 ) -> tuple[tuple[CanonicalPoint, CanonicalPoint, float], ...]:
@@ -78,7 +97,7 @@ def resample_closed_polyline(
 ) -> tuple[CanonicalPoint, ...]:
     if not 3 <= count <= 64:
         raise ValueError("count must be in [3, 64]")
-    frozen = _points(points)
+    frozen = _dedupe_for_resampling(points)
     return tuple(point_at_phase(frozen, index / count)[0] for index in range(count))
 
 
