@@ -145,7 +145,7 @@ function groupVehicleScores(tracks: Track[], groupScore: ScoreBreakdown, timing:
 
 function emptyGroup(key: "si" | "so"): DerivedGroup { return { key, id: key === "si" ? "SI-NODATA" : "SO-NODATA", name: key === "si" ? "SI" : "SO", family: key === "si" ? "SI" : "SO", members: [], score: EMPTY_SCORE, routeScore: 0, observedAngles: [], observedRelations: [], periodErrorPct: 0, motionErrorPct: 0, vehicles: {} }; }
 
-function alertsFromAnalysis(groups: { si: DerivedGroup; so: DerivedGroup }, ungrouped: number[], provenance: NavigationProvenance, config: CoreConfig) {
+function alertsFromAnalysis(groups: { si: DerivedGroup; so: DerivedGroup }, ungrouped: number[], provenance: NavigationProvenance, config: CoreConfig): DerivedAlert[] {
   const alerts: DerivedAlert[] = [];
   if (!provenance.sampleCount) return [{ id: "no-data", severity: "critical", title: "אין נתוני ניווט", detail: "לא התקבלו דגימות בטווח המבוקש ולכן לא חושבו ציונים, קבוצות או שערוך רוח.", vehicleIds: [], evidence: provenance.warnings }];
   if (provenance.completenessPct != null && provenance.completenessPct < 80) alerts.push({ id: "data-gaps", severity: "warning", title: "שלמות נתונים נמוכה", detail: `שלמות הדגימות המחושבת היא ${provenance.completenessPct.toFixed(1)}%. יש לפרש ציונים ואירועים בזהירות.`, vehicleIds: [], evidence: [`${provenance.sampleCount} דגימות`, `מרווח חציוני ${provenance.samplingMedianSeconds?.toFixed(1) ?? "—"} שנ׳`] });
