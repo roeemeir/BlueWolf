@@ -288,7 +288,18 @@ async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCo
   if (operationalRequest && options.liveRole !== "preview") operationalLiveKeys.add(key);
   const { latestMs, spanMs } = datasetTimes(dataset);
   const pending = livePending.get(key);
-  if (pending && pending.latestMs === latestMs) return pending.promise;
+  if (pending) {
+    if (pending.latestMs === latestMs) return pending.promise;
+    // A later cutoff must never start a second Python session while the warm-up
+    // or previous delta for the same key is still running. Wait for that frontier
+    // to settle; then the request below continues as a normal incremental batch.
+    try {
+      await pending.promise;
+    } catch {
+      // If the previous request failed, retry the newer cutoff from the current
+      // session map (or a clean warm-up) rather than spawning concurrent sessions.
+    }
+  }
 
   const promise = (async () => {
     let entry = liveSessions.get(key);
