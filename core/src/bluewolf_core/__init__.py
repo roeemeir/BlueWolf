@@ -19,6 +19,7 @@ from .geometry import (
     tangent_error_deg,
 )
 from .models import (
+    CanonicalPoint,
     ChangeKind,
     ClosedRoute,
     CoreBatchResult,
@@ -26,6 +27,7 @@ from .models import (
     FieldQuality,
     PrimitiveMetrics,
     RouteFamily,
+    RouteRegion,
     RouteSubtype,
     RouteTopology,
     StateChange,
@@ -94,6 +96,7 @@ RouteLifecycleV08 = RouteLifecycle
 __all__ = [
     "CORE_API_VERSION",
     "IMPLEMENTATION_LANGUAGE",
+    "CanonicalPoint",
     "ChangeKind",
     "CheckpointCompatibilityError",
     "ClosedRoute",
@@ -118,6 +121,7 @@ __all__ = [
     "RouteKind",
     "RouteLifecycle",
     "RouteLifecycleV08",
+    "RouteRegion",
     "RouteShape",
     "RouteSubtype",
     "RouteTopology",
