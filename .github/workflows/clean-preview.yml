@@ -1,4 +1,4 @@
-name: Blue Wolf v1.5 protected preview
+name: Blue Wolf v1.8 protected preview
 
 on:
   workflow_dispatch:
@@ -26,7 +26,7 @@ jobs:
         run: npm ci
       - name: Replaceable Algorithm Core gate
         run: npm run core:test
-      - name: Python reference-core gate
+      - name: Canonical Python Core gate
         working-directory: core
         run: PYTHONPATH=src python -m unittest discover -s tests -v
       - name: Web + persistence release gates
@@ -39,7 +39,20 @@ jobs:
         run: |
           npm install --no-save @playwright/test@1.55.0
           npx playwright install --with-deps chromium
+      - name: Start canonical Python Core service
+        run: |
+          PYTHONPATH=core/src python core/service/http_service.py --host 127.0.0.1 --port 8765 > /tmp/bluewolf-python-core.log 2>&1 &
+          echo $! > /tmp/bluewolf-python-core.pid
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8765/health | grep -q '"implementationLanguage":"python"'; then exit 0; fi
+            if ! kill -0 $(cat /tmp/bluewolf-python-core.pid) 2>/dev/null; then cat /tmp/bluewolf-python-core.log; exit 1; fi
+            sleep 1
+          done
+          cat /tmp/bluewolf-python-core.log
+          exit 1
       - name: Start application runtime
+        env:
+          BLUEWOLF_PYTHON_CORE_URL: http://127.0.0.1:8765
         run: |
           npm run dev -- --host 127.0.0.1 --port 3000 > /tmp/bluewolf-app.log 2>&1 &
           echo $! > /tmp/bluewolf-app.pid
@@ -50,7 +63,10 @@ jobs:
           done
           cat /tmp/bluewolf-app.log
           exit 1
-      - name: v1.5 Core boundary, NAV truth, history, GT and mobile browser QA
+      - name: Verify Web proxy reaches canonical Python Core
+        run: |
+          curl -fsS http://127.0.0.1:3000/api/core/rpc | grep -q '"implementationLanguage":"python"'
+      - name: v1.8 Core boundary, Figure-8, NAV truth, history, GT and mobile browser QA
         env:
           BLUEWOLF_BASE_URL: http://127.0.0.1:3000
         run: npx playwright test tests/browser-v12.spec.mjs --reporter=line --workers=1
@@ -87,7 +103,7 @@ jobs:
           done
           cat /tmp/cloudflared.log
           exit 1
-      - name: Verify public login, authenticated app, workspace API and assets
+      - name: Verify public login, authenticated app, Python Core proxy, workspace API and assets
         run: |
           HOST=${PREVIEW_URL#https://}
           PUBLIC_READY=0
@@ -108,6 +124,9 @@ jobs:
           test "$HOME_CODE" = "200"
           grep -q "זאב כחול" /tmp/bluewolf-home.html
           if grep -q "Protected validation preview" /tmp/bluewolf-home.html; then exit 1; fi
+          CORE_CODE=$(curl --retry 10 --retry-all-errors --retry-delay 2 -sS -b /tmp/bluewolf-preview.cookies -o /tmp/bluewolf-core.json -w '%{http_code}' "$PREVIEW_URL/api/core/rpc")
+          test "$CORE_CODE" = "200"
+          grep -q '"implementationLanguage":"python"' /tmp/bluewolf-core.json
           API_CODE=$(curl --retry 10 --retry-all-errors --retry-delay 2 -sS -b /tmp/bluewolf-preview.cookies -H "x-bluewolf-workspace: bw-preview-verification" -o /tmp/bluewolf-workspace.json -w '%{http_code}' "$PREVIEW_URL/api/workspace")
           test "$API_CODE" = "200"
           grep -Eq '"available":(true|false)' /tmp/bluewolf-workspace.json
@@ -131,13 +150,13 @@ jobs:
             echo "PREVIEW_URL=$PREVIEW_URL"
             echo "PREVIEW_PASSWORD=$PREVIEW_PASSWORD"
             echo "COMMIT=$GITHUB_SHA"
-            echo "VERIFICATION=Algorithm Core contract/tests + Python reference + lint + TypeScript + build + DB/architecture regression + v1.5 NAV/Influx/history/GT/browser/mobile + public login/workspace API/assets: PASS"
+            echo "VERIFICATION=Python canonical Core + stateful Live/checkpoint + Figure-8 + TypeScript compatibility + lint + build + DB/architecture regression + SRS v1.8 NAV/Influx/history/GT/browser/mobile + public login/Python-Core proxy/workspace API/assets: PASS"
           } > /tmp/bluewolf-preview.txt
           cat /tmp/bluewolf-preview.txt
       - name: Upload preview details
         uses: actions/upload-artifact@v4
         with:
-          name: bluewolf-verified-preview-v15
+          name: bluewolf-verified-preview-v18
           path: /tmp/bluewolf-preview.txt
           retention-days: 1
           if-no-files-found: error
@@ -148,6 +167,8 @@ jobs:
       - name: Diagnostics
         if: always()
         run: |
+          echo "--- Python Core ---"
+          tail -n 180 /tmp/bluewolf-python-core.log 2>/dev/null || true
           echo "--- application ---"
           tail -n 220 /tmp/bluewolf-app.log 2>/dev/null || true
           echo "--- gate ---"
