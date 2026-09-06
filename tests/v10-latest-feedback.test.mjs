@@ -51,16 +51,40 @@ test("investigation includes event-specific evidence, centroid labels and detail
   assert.match(source, /96 מ׳.*70 מ׳.*42 שניות/s);
 });
 
-test("wind estimation exists in UI and Python core", () => {
+test("wind estimation and deterministic disturbance are end-to-end", () => {
   const ui = read("components/bluewolf/v10/wind.ts");
-  const core = read("core/src/bluewolf_core/wind.py");
-  const tests = read("core/tests/test_wind.py");
+  const map = read("components/bluewolf/v10/map.tsx");
+  const timeline = read("components/bluewolf/v10/timeline.tsx");
+  const operator = read("components/bluewolf/v10/operator.tsx");
+  const coreEstimator = read("core/src/bluewolf_core/wind.py");
+  const coreSimulator = read("core/src/bluewolf_core/simulator.py");
+  const estimatorTests = read("core/tests/test_wind.py");
+  const simulatorTests = read("core/tests/test_simulator.py");
+
   assert.match(ui, /estimatedKnots/);
   assert.match(ui, /estimatedBearingDeg/);
   assert.match(ui, /syncPenalty/);
-  assert.match(core, /KNOTS_PER_MPS/);
-  assert.match(core, /estimate_wind_from_navigation/);
-  assert.match(tests, /known_east_wind/);
+  assert.match(ui, /windOffsetPx/);
+  assert.match(ui, /applyWindPenalty/);
+
+  assert.match(map, /windMode/);
+  assert.match(map, /windOffsetPx/);
+  assert.match(map, /historicalTick/);
+  assert.match(map, /הפרעת רוח פעילה/);
+  assert.match(timeline, /averageWindPenalty/);
+  assert.match(timeline, /applyWindPenalty/);
+  assert.match(timeline, /windMode/);
+  assert.match(operator, /windMode=\{effectiveWindMode\}/);
+  assert.match(operator, /syncWeightPct=\{state\.weights\.total\.sync\}/);
+
+  assert.match(coreEstimator, /KNOTS_PER_MPS/);
+  assert.match(coreEstimator, /estimate_wind_from_navigation/);
+  assert.match(estimatorTests, /known_east_wind/);
+  assert.match(coreSimulator, /class SimulatedWind/);
+  assert.match(coreSimulator, /gust_amplitude_mps/);
+  assert.match(coreSimulator, /wind_response_gain/);
+  assert.match(simulatorTests, /gust_component_is_deterministic/);
+  assert.match(simulatorTests, /wind_disturbance_changes_navigation_and_sync_geometry/);
 });
 
 test("GT exposes map layers, live angle and ruler", () => {
