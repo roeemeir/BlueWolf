@@ -74,6 +74,8 @@ A Figure-8 that is geometrically outside the configured SO grouping thresholds S
 ### 5.1 Warm-up
 An Operator live session SHALL warm the canonical Python Core once from the currently selected navigation window.
 
+The first warm-up response SHALL prioritize current operational analysis. It SHALL NOT block the first usable Operator result on a full historical timeline reconstruction. The live session MAY begin with one current history frame and grow the bounded Timeline through subsequent incremental batches.
+
 ### 5.2 Five-second increments
 After warm-up, each live poll SHALL send only navigation samples newer than the previously processed frontier. The normal active-source cadence remains five seconds unless changed by configured source settings.
 
@@ -138,12 +140,43 @@ A release containing this amendment SHALL include automated evidence for at leas
 - Figure-8 Simulator -> NAV -> Python Core -> GT validation;
 - Figure-8 Template Builder layout persistence;
 - warm-up followed by five-second incremental batches;
+- fast current-analysis warm-up followed by Timeline growth from later live batches;
 - duplicate/overlapping Live query suppression;
 - uninterrupted vs checkpoint/restore/replay equivalence;
 - checkpoint containing no permanent NAV history;
 - preview sessions not becoming checkpoint-authoritative;
 - missing Influx altitude remaining null;
+- deterministic repeated simulator retrieval for the same explicit historical range;
+- valid SI largest-compatible-component retention in the presence of a remote circle-like outlier;
 - full integrated TypeScript/build/JS/browser release gate before public preview.
 
 ## 10. Release truth
 No Figure-8, Live-session, checkpoint or data-quality capability is considered implemented merely because a UI label or mock says so. PASS requires executable production-path evidence. A public preview SHALL not be declared verified until the exact release commit passes the integrated release workflow and the public authenticated URL is checked.
+
+## 11. Deterministic simulator history boundary
+For simulator history, determinism applies to the complete retrieval contract, not only to the mathematical route generator.
+
+For an identical explicit request tuple `(serverId, from, to, grouping configuration, wind mode, target sampling policy)`, repeated calls SHALL produce the same effective range, sample timestamps, samples and provenance regardless of the wall-clock milliseconds at which the function is invoked.
+
+The rolling 30-day availability rule SHALL therefore use a stable reference derived from the explicit request when the request itself provides the historical cutoff. An internal fresh `now()` value SHALL NOT shift the lower bound between two otherwise identical historical requests.
+
+If a requested range is clipped by the 30-day availability boundary, that clipping SHALL be deterministic for the same explicit request.
+
+## 12. Robust SI grouping
+SI grouping SHALL be based on a compatible component of route evidence, not on an all-or-nothing requirement across every track temporarily classified as circular.
+
+The Core SHALL:
+- evaluate circle-track compatibility using the SI geometric law, including compatible centres and rotation/direction;
+- select the largest mutually connected compatible SI component;
+- require at least two members before exposing an active SI group;
+- keep remote/incompatible circle-like tracks outside that group;
+- prevent one remote or transiently misclassified circular outlier from erasing an otherwise valid SI group.
+
+A deterministic regression fixture containing a valid three-vehicle SI formation plus a remote circular outlier SHALL remain part of the independent Core suite.
+
+## 13. Python Core transport behavior
+The application/Core transport is an infrastructure boundary only; it SHALL NOT change algorithm semantics.
+
+The HTTP service SHALL support persistent HTTP/1.1 request handling suitable for repeated live batches. Successful Core responses SHALL be flushed as complete JSON responses. Structured Core validation failures SHALL preserve their meaningful HTTP error status through the web proxy, while an actual inability to reach the Python service may be represented as a service-unavailable transport failure.
+
+Transport failure SHALL never trigger a hidden TypeScript algorithm fallback or simulator substitution.
