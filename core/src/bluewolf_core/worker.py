@@ -7,7 +7,8 @@ supervision.
 
 Protocol: one JSON object per stdin line, one JSON response per stdout line.
 Supported commands: hello, create_session, process_batch, checkpoint,
-restore_session, close_session, analyze_dataset, analyze_history.
+restore_session, close_session, analyze_dataset, analyze_history,
+so_pair_compatibility.
 """
 
 from __future__ import annotations
@@ -22,7 +23,12 @@ from enum import Enum
 from typing import Any, Mapping
 
 from . import CORE_API_VERSION, IMPLEMENTATION_LANGUAGE, __version__
-from .application_analysis import analyze_navigation_dataset, build_analysis_history, derive_events
+from .application_analysis import (
+    analyze_navigation_dataset,
+    build_analysis_history,
+    derive_events,
+    so_pair_compatibility,
+)
 from .config import CoreConfig
 from .models import FieldQuality, VehicleSample
 from .session_v17 import CoreSession
@@ -133,6 +139,16 @@ class CoreWorker:
                 "history": history,
                 "events": derive_events(history, config.get("thresholds", {})),
             }
+
+        if command == "so_pair_compatibility":
+            first = request.get("first")
+            second = request.get("second")
+            settings = request.get("settings")
+            if not isinstance(first, Mapping) or not isinstance(second, Mapping):
+                raise ValueError("first and second geometries are required")
+            if settings is not None and not isinstance(settings, Mapping):
+                raise ValueError("settings must be an object")
+            return {"evidence": so_pair_compatibility(first, second, settings)}
 
         if command == "create_session":
             config = _config(request.get("config"))
