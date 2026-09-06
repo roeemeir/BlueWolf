@@ -3,7 +3,7 @@ export const CORE_API_VERSION = "1.0.0" as const;
 export type CoreFamily = "SI" | "SO";
 export type SoRelation = "same" | "opposite" | "mixed";
 export type GroupKey = "si" | "so";
-export type RouteKind = "circle" | "single" | "double";
+export type RouteKind = "circle" | "single" | "double" | "figure8";
 
 export type ScoreWeights = {
   sync: { position: number; period: number; motion: number };
@@ -52,13 +52,15 @@ export const DEFAULT_SO_GROUPING: SoGroupingSettings = {
 };
 
 export type SoGeometryDescriptor = {
-  kind: "single" | "double";
+  /** Figure-8 is a single SO hippodrome entity whose two legs cross internally. */
+  kind: "single" | "double" | "figure8";
   center: { x: number; y: number };
   radius: number;
   legLength: number;
   rotationDeg: number;
   secondLegLength?: number;
   bendDeg?: number;
+  crossedLegs?: boolean;
 };
 
 export type RawNavigationSample = {
@@ -69,7 +71,7 @@ export type RawNavigationSample = {
   active: boolean;
   latitude: number;
   longitude: number;
-  altitude: number;
+  altitude: number | null;
   velocityNorth: number;
   velocityEast: number;
   x: number;
