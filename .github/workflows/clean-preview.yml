@@ -1,4 +1,4 @@
-name: Blue Wolf v0.10 protected preview
+name: Blue Wolf v1.4 protected preview
 
 on:
   workflow_dispatch:
@@ -15,35 +15,28 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
-
       - name: Install dependencies
         run: npm ci
-
       - name: Python core release gate
         working-directory: core
         run: PYTHONPATH=src python -m unittest discover -s tests -v
-
       - name: Web static release gates
         run: |
           npm run lint
           npx tsc --noEmit
           npm run build
           npm test
-
       - name: Install Chromium browser QA runtime
         run: |
           npm install --no-save @playwright/test@1.55.0
           npx playwright install --with-deps chromium
-
       - name: Start application runtime
         run: |
           npm run dev -- --host 127.0.0.1 --port 3000 > /tmp/bluewolf-app.log 2>&1 &
@@ -55,17 +48,14 @@ jobs:
           done
           cat /tmp/bluewolf-app.log
           exit 1
-
-      - name: v0.10 desktop, investigation, GT, template and mobile browser QA
+      - name: v1.4 navigation source, historical, GT E2E and mobile browser QA
         env:
           BLUEWOLF_BASE_URL: http://127.0.0.1:3000
-        run: npx playwright test tests/browser-v10.spec.mjs --reporter=line --workers=1
-
+        run: npx playwright test tests/browser-v12.spec.mjs --reporter=line --workers=1
       - name: Create protected preview credentials
         run: |
           echo "PREVIEW_PASSWORD=$(openssl rand -hex 4)" >> "$GITHUB_ENV"
           echo "PREVIEW_TOKEN=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
-
       - name: Start cookie-protected preview gate
         env:
           PREVIEW_GATE_HOST: 127.0.0.1
@@ -81,7 +71,6 @@ jobs:
           done
           cat /tmp/bluewolf-gate.log
           exit 1
-
       - name: Start Cloudflare Quick Tunnel
         run: |
           curl -L --fail --retry 4 --retry-delay 2 https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /tmp/cloudflared
@@ -96,16 +85,12 @@ jobs:
           done
           cat /tmp/cloudflared.log
           exit 1
-
       - name: Verify public login, authenticated app, API and assets
         run: |
           HOST=${PREVIEW_URL#https://}
           PUBLIC_READY=0
           for attempt in $(seq 1 60); do
-            if getent ahostsv4 "$HOST" >/dev/null 2>&1 && curl -fsS --connect-timeout 5 --max-time 15 "$PREVIEW_URL/" -o /tmp/public-login.html; then
-              PUBLIC_READY=1
-              break
-            fi
+            if getent ahostsv4 "$HOST" >/dev/null 2>&1 && curl -fsS --connect-timeout 5 --max-time 15 "$PREVIEW_URL/" -o /tmp/public-login.html; then PUBLIC_READY=1; break; fi
             sleep 2
           done
           if [ "$PUBLIC_READY" -ne 1 ]; then
@@ -116,18 +101,12 @@ jobs:
           fi
           grep -q "Protected validation preview" /tmp/public-login.html
           LOGIN_CODE=$(curl --retry 10 --retry-all-errors --retry-delay 2 -sS -c /tmp/bluewolf-preview.cookies -o /dev/null -w '%{http_code}' -X POST --data-urlencode "password=$PREVIEW_PASSWORD" "$PREVIEW_URL/__bluewolf_login")
-          echo "Public login HTTP $LOGIN_CODE"
           test "$LOGIN_CODE" = "303"
           HOME_CODE=$(curl --retry 10 --retry-all-errors --retry-delay 2 -sS -b /tmp/bluewolf-preview.cookies -o /tmp/bluewolf-home.html -w '%{http_code}' "$PREVIEW_URL/")
-          echo "Authenticated home HTTP $HOME_CODE"
           test "$HOME_CODE" = "200"
           grep -q "זאב כחול" /tmp/bluewolf-home.html
-          if grep -q "Protected validation preview" /tmp/bluewolf-home.html; then
-            echo "Authenticated request unexpectedly returned the login page"
-            exit 1
-          fi
+          if grep -q "Protected validation preview" /tmp/bluewolf-home.html; then exit 1; fi
           API_CODE=$(curl --retry 10 --retry-all-errors --retry-delay 2 -sS -b /tmp/bluewolf-preview.cookies -H "x-bluewolf-workspace: bw-preview-verification" -o /tmp/bluewolf-workspace.json -w '%{http_code}' "$PREVIEW_URL/api/workspace")
-          echo "Workspace API HTTP $API_CODE"
           test "$API_CODE" = "200"
           grep -Eq '"available":(true|false)' /tmp/bluewolf-workspace.json
           node - <<'NODE' > /tmp/bluewolf-assets.txt
@@ -144,35 +123,31 @@ jobs:
             ASSET_COUNT=$((ASSET_COUNT + 1))
           done < /tmp/bluewolf-assets.txt
           echo "Verified public assets: $ASSET_COUNT"
-
       - name: Prepare verified preview details
         run: |
           {
             echo "PREVIEW_URL=$PREVIEW_URL"
             echo "PREVIEW_PASSWORD=$PREVIEW_PASSWORD"
             echo "COMMIT=$GITHUB_SHA"
-            echo "VERIFICATION=Core + wind + lint + TypeScript + build + tests + v0.10 desktop/investigation/GT/template/mobile browser QA + public tunnel checks: PASS"
+            echo "VERIFICATION=Python Core + lint + TypeScript + build + JS provenance gates + v1.4 simulation/Influx source behavior + historical slicing + event PDF + GT E2E + mobile browser QA + public login/API/assets: PASS"
           } > /tmp/bluewolf-preview.txt
           cat /tmp/bluewolf-preview.txt
-
       - name: Upload preview details
         uses: actions/upload-artifact@v4
         with:
-          name: bluewolf-verified-preview-v10
+          name: bluewolf-verified-preview-v14
           path: /tmp/bluewolf-preview.txt
           retention-days: 1
           if-no-files-found: error
-
       - name: Keep verified preview alive
         run: |
           echo "Preview verified and available while this job remains active."
           sleep 4500
-
       - name: Diagnostics
         if: always()
         run: |
           echo "--- application ---"
-          tail -n 160 /tmp/bluewolf-app.log 2>/dev/null || true
+          tail -n 200 /tmp/bluewolf-app.log 2>/dev/null || true
           echo "--- gate ---"
           tail -n 160 /tmp/bluewolf-gate.log 2>/dev/null || true
           echo "--- tunnel ---"
