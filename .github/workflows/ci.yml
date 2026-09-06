@@ -112,6 +112,8 @@ jobs:
       - name: Runtime logs
         if: always()
         run: |
+          echo "--- Focused Core diagnostics ---"
+          grep -E '\[bluewolf-live-core\]|\[bluewolf-core-rpc-error\]' /tmp/bluewolf-server.log || true
           echo "--- Python Core ---"
           tail -n 150 /tmp/bluewolf-python-core.log || true
           echo "--- Web ---"
