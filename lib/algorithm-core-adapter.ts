@@ -18,7 +18,7 @@ export type AppCoreOptions = {
   siTemplate?: SyncTemplate;
   soTemplate?: SyncTemplate;
   groupingSettings: SoGroupingSettings;
-  /** Preview sessions are live-calculated but may never restore or overwrite the operational checkpoint. */
+  /** Optional explicit role; normal Operator sessions are promoted by the live History request. */
   liveRole?: "primary" | "preview";
 };
 
@@ -81,6 +81,7 @@ type StoredCheckpoint = {
 
 const liveSessions = new Map<string, LiveSessionEntry>();
 const livePending = new Map<string, PendingLive>();
+const operationalLiveKeys = new Set<string>();
 const LIVE_MIN_WINDOW_MS = 20 * 60_000;
 const LIVE_MAX_WINDOW_MS = 2 * 60 * 60_000 + 5_000;
 const LIVE_SESSION_LIMIT = 12;
@@ -94,10 +95,6 @@ function coreConfig(options: AppCoreOptions) {
     soTemplate: options.soTemplate,
     groupingSettings: options.groupingSettings,
   };
-}
-
-function isOperational(options: AppCoreOptions) {
-  return options.liveRole !== "preview";
 }
 
 async function rpc(payload: Record<string, unknown>): Promise<RpcEnvelope> {
@@ -236,12 +233,21 @@ function trimLiveSessions() {
   const oldest = [...liveSessions.entries()].sort((a, b) => a[1].touchedAt - b[1].touchedAt)[0];
   if (!oldest) return;
   liveSessions.delete(oldest[0]);
+  operationalLiveKeys.delete(oldest[0]);
   void closeLiveSession(oldest[1]);
 }
 
-async function startLiveSession(dataset: CoreNavigationDataset, options: AppCoreOptions, spanMs: number) {
+function isOperationalLiveKey(key: string, options: AppCoreOptions) {
+  if (options.liveRole === "preview") return false;
+  return options.liveRole === "primary" || operationalLiveKeys.has(key);
+}
+
+async function startLiveSession(dataset: CoreNavigationDataset, options: AppCoreOptions, spanMs: number, key: string) {
+  // Yield once so Operator's sibling History request can promote this key before
+  // checkpoint restore is decided. Template preview calls do not request History.
+  await Promise.resolve();
   const config = coreConfig(options);
-  const stored = isOperational(options) ? await loadStoredCheckpoint(dataset) : null;
+  const stored = isOperationalLiveKey(key, options) ? await loadStoredCheckpoint(dataset) : null;
   const { fromMs, latestMs } = datasetTimes(dataset);
   const checkpointMs = stored?.processedUntilUtc ? Date.parse(stored.processedUntilUtc) : Number.NaN;
   const canRestore = Boolean(
@@ -277,8 +283,9 @@ async function startLiveSession(dataset: CoreNavigationDataset, options: AppCore
   });
 }
 
-async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCoreOptions): Promise<LiveEnvelope> {
+async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCoreOptions, operationalRequest = false): Promise<LiveEnvelope> {
   const key = liveSessionKey(dataset, options);
+  if (operationalRequest && options.liveRole !== "preview") operationalLiveKeys.add(key);
   const { latestMs, spanMs } = datasetTimes(dataset);
   const pending = livePending.get(key);
   if (pending && pending.latestMs === latestMs) return pending.promise;
@@ -293,7 +300,7 @@ async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCo
     }
 
     if (!entry) {
-      const body = await startLiveSession(dataset, options, spanMs);
+      const body = await startLiveSession(dataset, options, spanMs, key);
       if (!body.sessionId) throw new Error("Python Core did not return live sessionId");
       const envelope = requireLiveEnvelope(body);
       const created: LiveSessionEntry = {
@@ -330,7 +337,7 @@ async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCo
       touchedAt: now,
     };
     liveSessions.set(key, updated);
-    if (isOperational(options) && dataset.provenance.source === "influx" && now - updated.lastCheckpointAt >= CHECKPOINT_INTERVAL_MS) {
+    if (isOperationalLiveKey(key, options) && dataset.provenance.source === "influx" && now - updated.lastCheckpointAt >= CHECKPOINT_INTERVAL_MS) {
       updated.lastCheckpointAt = now;
       await saveStoredCheckpoint(dataset, updated);
     }
@@ -350,12 +357,11 @@ async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCo
  * Single production application/Core boundary.
  *
  * Live operator windows are warmed once in a stateful Python Core session and
- * then send only samples newer than the previous five-second poll. Real Influx
- * primary sessions persist a compact Core checkpoint every five minutes and
- * restore it only when its frontier is covered by the newly queried NAV window.
- * Template-preview sessions are isolated from checkpoint restore/write.
- * Historical investigation and short E2E fixtures remain stateless current-Core
- * replay. There is deliberately no TypeScript algorithm fallback.
+ * then send only samples newer than the previous five-second poll. A live key
+ * becomes operational only when the Operator History/Timeline request promotes
+ * it; therefore template-only preview sessions cannot restore or overwrite the
+ * five-minute Influx checkpoint. Historical investigation and short E2E fixtures
+ * remain stateless current-Core replay. There is no TypeScript algorithm fallback.
  */
 export async function analyzeNavigationDataset(dataset: CoreNavigationDataset, options: AppCoreOptions): Promise<CoreAnalysis> {
   if (isLiveWindow(dataset)) return (await ensureLiveEnvelope(dataset, options)).analysis;
@@ -371,7 +377,7 @@ export async function analyzeNavigationHistory(
   lookbackMinutes = 12,
 ): Promise<{ history: AnalysisFrame[]; events: DerivedEvent[] }> {
   if (maxFrames <= 40 && isLiveWindow(dataset)) {
-    const envelope = await ensureLiveEnvelope(dataset, options);
+    const envelope = await ensureLiveEnvelope(dataset, options, true);
     return { history: envelope.history, events: envelope.events };
   }
   const body = await rpc({
