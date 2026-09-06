@@ -1,6 +1,6 @@
 export {
+  analyzeNavigationHistory,
   buildAnalysisHistory,
-  deriveEvents,
 } from "@/lib/algorithm-core-adapter";
 
 export type {
