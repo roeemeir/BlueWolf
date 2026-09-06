@@ -23,7 +23,7 @@ from typing import Any, Mapping
 from . import CORE_API_VERSION, IMPLEMENTATION_LANGUAGE, __version__
 from .config import CoreConfig
 from .models import FieldQuality, VehicleSample
-from .session import CoreSession
+from .session_v17 import CoreSession
 
 
 def _parse_time(value: str) -> datetime:
@@ -83,6 +83,14 @@ def _sample(raw: Mapping[str, Any]) -> VehicleSample:
     )
 
 
+def _samples(raw: object) -> list[VehicleSample]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("samples must be a list")
+    return [_sample(item) for item in raw]
+
+
 def _config(raw: object) -> CoreConfig:
     return CoreConfig.from_dict(raw) if isinstance(raw, Mapping) else CoreConfig()
 
@@ -109,12 +117,9 @@ class CoreWorker:
 
         if command == "process_batch":
             session = self._require_session(request)
-            raw_samples = request.get("samples", [])
-            if not isinstance(raw_samples, list):
-                raise ValueError("samples must be a list")
             observed_raw = request.get("observedUntilUtc")
             observed = _parse_time(observed_raw) if isinstance(observed_raw, str) else None
-            result = session.process_batch((_sample(item) for item in raw_samples), observed_until_utc=observed)
+            result = session.process_batch(_samples(request.get("samples")), observed_until_utc=observed)
             return {"result": _wire(result)}
 
         if command == "checkpoint":
@@ -123,6 +128,7 @@ class CoreWorker:
             return {
                 "checkpointBase64": encoded,
                 "processedUntilUtc": _wire(session.processed_until_utc),
+                "recoveryHistoryStartUtc": _wire(session.recovery_history_start_utc),
             }
 
         if command == "restore_session":
@@ -133,12 +139,18 @@ class CoreWorker:
             algorithm_version = str(request.get("algorithmVersion", __version__))
             checkpoint = base64.b64decode(encoded.encode("ascii"), validate=True)
             session_id = uuid.uuid4().hex
-            self._sessions[session_id] = CoreSession.from_checkpoint(
+            session = CoreSession.from_checkpoint(
                 checkpoint,
                 config=config,
                 algorithm_version=algorithm_version,
+                recovery_samples=_samples(request.get("recoverySamples")),
             )
-            return {"sessionId": session_id}
+            self._sessions[session_id] = session
+            return {
+                "sessionId": session_id,
+                "processedUntilUtc": _wire(session.processed_until_utc),
+                "recoveryHistoryStartUtc": _wire(session.recovery_history_start_utc),
+            }
 
         if command == "close_session":
             session_id = str(request.get("sessionId", ""))
