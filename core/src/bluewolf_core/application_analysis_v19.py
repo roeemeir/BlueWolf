@@ -1,13 +1,17 @@
-"""Blue Wolf application analysis v1.9 grouping refinement.
+"""Blue Wolf application analysis v1.9 grouping and estimator refinement.
 
-This module keeps the stable v1.8 application/Core contract and changes only
-how SO tracks are compared for grouping.  A Double hippodrome is articulated:
-a single PCA axis cannot describe both straight arms.  v1.9 therefore learns
-the two dominant straight axes directly from the raw navigation velocity and
-compares each learned arm as an ordinary Single segment.
+This module keeps the stable v1.8 application/Core contract and changes two
+raw-navigation primitives:
+
+1. An articulated Double hippodrome is grouped using its two straight arms
+   learned directly from NAV rather than one global PCA axis / fixed bend.
+2. The explanatory disturbance/wind estimate for non-circular routes uses the
+   local directed route tangent at the current branch rather than the same
+   global PCA axis. This prevents ordinary Double/Figure-8 turns from being
+   misreported as extreme wind.
 
 The implementation is pure and has no UI, DB, filesystem, HTTP or simulator-GT
-access.  The public Core API remains 1.0.0.
+access. The public Core API remains 1.0.0.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from . import application_analysis_v18 as _v18
 
 _base = _v18._base
 _ORIGINAL_LARGEST_COMPONENT = _base._largest_compatible_component
+_ORIGINAL_WIND_ESTIMATE = _base._wind_estimate
 
 
 def _axis_deg(sample: Mapping[str, Any]) -> float | None:
@@ -38,7 +43,7 @@ def _dominant_double_axes(track: Any) -> list[float]:
     """Return the two straight-arm axes of an articulated Double route.
 
     Straight samples form strong heading peaks while the outer U-turns and the
-    centre bend spread their headings over many bins.  Folding headings to
+    centre bend spread their headings over many bins. Folding headings to
     0..180 removes travel direction and leaves route-axis evidence only.
     """
     cycle = _v18._representative_cycle(track.samples, track.fit)
@@ -133,7 +138,7 @@ def _track_grouping_geometries(track: Any) -> list[Mapping[str, Any]]:
         arm for axis in _dominant_double_axes(track)
         if (arm := _arm_geometry(track, axis)) is not None
     ]
-    # Require both arms before replacing the legacy PCA approximation.  A
+    # Require both arms before replacing the legacy PCA approximation. A
     # partial observation must remain conservative rather than inventing a bend.
     return learned if len(learned) >= 2 else [geometry]
 
@@ -206,10 +211,101 @@ def _largest_compatible_component_v19(
     )
 
 
-# v1.8 analysis performs global lookup through the stable base module, so this
-# patch changes only the SO grouping primitive while retaining the exact same
-# public analysis/history/event envelope.
+def _point_to_segment_distance(
+    px: float,
+    py: float,
+    ax: float,
+    ay: float,
+    bx: float,
+    by: float,
+) -> float:
+    dx = bx - ax
+    dy = by - ay
+    denominator = dx * dx + dy * dy
+    if denominator <= 1e-12:
+        return math.hypot(px - ax, py - ay)
+    fraction = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / denominator))
+    closest_x = ax + fraction * dx
+    closest_y = ay + fraction * dy
+    return math.hypot(px - closest_x, py - closest_y)
+
+
+def _local_route_heading(track: Any) -> float | None:
+    """Choose the directed local route tangent using NAV geometry + motion.
+
+    Position gives the local neighborhood. Heading is used only to disambiguate
+    competing nearby branches (especially at a Figure-8 crossing or Double
+    articulation). The measured current velocity magnitude is not used to create
+    the expected vector, so a real disturbance can still appear in the residual.
+    """
+    samples = track.samples
+    if len(samples) < 3:
+        return None
+    training = samples[: max(3, int(len(samples) * 0.8))]
+    if len(training) < 2:
+        return None
+    current = track.current
+    px = float(current["x"])
+    py = float(current["y"])
+    measured_heading = _base._current_heading(current)
+    candidates: list[tuple[float, float, float]] = []
+    for index in range(len(training) - 1):
+        first = training[index]
+        second = training[index + 1]
+        ax, ay = float(first["x"]), float(first["y"])
+        bx, by = float(second["x"]), float(second["y"])
+        if math.hypot(bx - ax, by - ay) < 0.25:
+            continue
+        heading = _base._wrap360(math.degrees(math.atan2(bx - ax, by - ay)))
+        distance = _point_to_segment_distance(px, py, ax, ay, bx, by)
+        heading_error = abs(_base._wrap180(measured_heading - heading))
+        candidates.append((distance, heading_error, heading))
+    if not candidates:
+        return None
+
+    minimum_distance = min(item[0] for item in candidates)
+    local_scale = max(5.0, float(getattr(track.fit, "minor_span", 20.0)) * 0.20)
+    nearby = [item for item in candidates if item[0] <= minimum_distance + local_scale]
+    distance, heading_error, heading = min(nearby, key=lambda item: (item[1], item[0]))
+    # If every nearby branch disagrees almost completely with measured motion,
+    # avoid inventing an expected tangent; report the conservative base estimate.
+    if heading_error > 80.0:
+        return None
+    return heading
+
+
+def _wind_estimate_v19(track: Any, provenance: Mapping[str, Any]) -> dict[str, float]:
+    if track.kind == "circle":
+        return _ORIGINAL_WIND_ESTIMATE(track, provenance)
+
+    heading = _local_route_heading(track)
+    if heading is None:
+        return _ORIGINAL_WIND_ESTIMATE(track, provenance)
+
+    speed = _base._mean_speed(track.samples)
+    angle = math.radians(heading)
+    expected_east = math.sin(angle) * speed
+    expected_north = math.cos(angle) * speed
+    residual_east = float(track.current.get("velocityEast", 0.0)) - expected_east
+    residual_north = float(track.current.get("velocityNorth", 0.0)) - expected_north
+    residual_mps = math.hypot(residual_east, residual_north)
+    completeness = provenance.get("completenessPct")
+    data_factor = min(100.0, len(track.samples) / 12.0 * 100.0) if completeness is None else float(completeness)
+    confidence = _base._clamp(float(track.route_score) * 0.72 + data_factor * 0.28, 0.0, 99.0)
+    return {
+        "speedKnots": residual_mps * 1.9438444924406,
+        "bearingDeg": 0.0 if residual_mps < 0.05 else _base._wrap360(math.degrees(math.atan2(residual_east, residual_north))),
+        "confidencePct": confidence,
+        "residualNorth": residual_north,
+        "residualEast": residual_east,
+    }
+
+
+# v1.8 analysis performs global lookup through the stable base module, so these
+# patches change only raw-NAV primitives while retaining the exact same public
+# analysis/history/event envelope.
 _base._largest_compatible_component = _largest_compatible_component_v19
+_base._wind_estimate = _wind_estimate_v19
 
 CORE_API_VERSION = _v18.CORE_API_VERSION
 analyze_navigation_dataset = _v18.analyze_navigation_dataset
