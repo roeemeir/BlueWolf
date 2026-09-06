@@ -180,3 +180,59 @@ The application/Core transport is an infrastructure boundary only; it SHALL NOT 
 The HTTP service SHALL support persistent HTTP/1.1 request handling suitable for repeated live batches. Successful Core responses SHALL be flushed as complete JSON responses. Structured Core validation failures SHALL preserve their meaningful HTTP error status through the web proxy, while an actual inability to reach the Python service may be represented as a service-unavailable transport failure.
 
 Transport failure SHALL never trigger a hidden TypeScript algorithm fallback or simulator substitution.
+
+## 14. Articulated Double SO grouping from Raw NAV
+A Double SO route SHALL NOT be reduced to one global PCA axis for inter-route grouping when the route contains two articulated straight arms.
+
+For grouping a Double with Single/Double/Figure-8 neighbors, the canonical Core SHALL:
+- derive dominant straight-arm axes from the observed Raw NAV motion/geometry;
+- derive the usable straight-arm extent/centre from the same NAV evidence;
+- compare the learned arms using the normal SO external-neighbor geometry law;
+- preserve the configured angle, parallel-distance and lateral-distance thresholds;
+- use the strongest valid arm-to-neighbor relation for the pairwise grouping decision;
+- remain conservative when there is insufficient evidence to learn both Double arms.
+
+A fixed synthetic bend angle SHALL NOT be treated as operational truth when Raw NAV provides the articulated geometry. Ground Truth SHALL remain outside the production grouping calculation.
+
+The independent Core suite SHALL contain a regression in which a Double with deliberately poor global-PCA geometry is still grouped correctly with an attached Single solely from Raw NAV arm evidence.
+
+## 15. Bounded Live CoreSession warm-up
+The selected Operator navigation window and the streaming CoreSession reconstruction horizon are distinct concepts.
+
+The application analysis/display SHALL retain the complete selected Live navigation window (for example 30 minutes) subject to the configured Live retention policy.
+
+For a **fresh** CoreSession warm-up, the streaming state machine SHALL process only the reconstructible route-fitting horizon that the CoreSession itself can retain. With the current canonical Core this horizon is 600 seconds. Raw NAV older than that horizon MAY remain available to current display/application analysis but SHALL NOT be replayed redundantly through every streaming lifecycle transition when it cannot affect the final retained CoreSession route-fit state.
+
+This optimization SHALL NOT:
+- reduce the selected Operator display/analysis time window;
+- change the authoritative Raw NAV dataset;
+- change the accepted-sample count reported by the Live session;
+- clip normal incremental batches after the warm-up frontier;
+- change checkpoint recovery semantics.
+
+The independent Core suite SHALL prove that a 30-minute warm-up keeps all 30 minutes in the Live analysis/display buffer while only the retained route-history horizon is fed through the streaming Core state machine.
+
+## 16. Branch-aware disturbance/wind estimator
+The displayed wind/disturbance value is explanatory navigation-derived evidence only. It SHALL NOT be a direct scoring input.
+
+For non-circular routes, a single global PCA axis SHALL NOT be used as the expected instantaneous motion direction when the route can contain articulated, curved or self-crossing branches.
+
+The canonical estimator SHALL:
+- derive a local directed route tangent from historical Raw NAV near the current position;
+- use current measured heading only to disambiguate competing nearby branches, such as the central Figure-8 crossing or an articulated Double junction;
+- use learned route-motion magnitude rather than manufacturing a target from GT;
+- compute the displayed residual from measured navigation velocity minus that local expected route velocity;
+- fall back conservatively when local tangent evidence is insufficient;
+- never read simulator injected-wind truth or any GT field.
+
+Ordinary route articulation SHALL NOT be misreported as extreme wind merely because it differs from a global PCA axis. A regression fixture SHALL verify both a near-zero residual on an undisturbed articulated branch and recovery of a small injected navigation-velocity residual within reasonable tolerance.
+
+## 17. Deterministic semantic E2E fixtures
+A system test that asserts a specific scenario topology SHALL use a deterministic scenario phase/cutoff that actually contains that topology. A wall-clock-dependent cutoff SHALL NOT be used for a semantic assertion when the simulator intentionally transitions to another topology later in its cycle.
+
+Accordingly:
+- topology-specific assertions such as Double+Single grouping SHALL use an explicit deterministic timestamp or equivalent deterministic scenario phase;
+- independent GT SHALL still be evaluated only after the production Core result is computed;
+- dynamic/stress tests MAY continue to sweep wall-clock-relative windows, but they SHALL assert invariants appropriate to all phases rather than a topology that is present only in one phase.
+
+The integrated Browser/System Tests SHALL continue to require production-path evidence rather than labels or mocks.
