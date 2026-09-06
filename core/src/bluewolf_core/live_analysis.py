@@ -23,6 +23,7 @@ from .application_analysis_v18 import (
 )
 from .config import CoreConfig
 from .models import FieldQuality, VehicleSample
+from .session import _ROUTE_HISTORY_SECONDS
 from .session_v17 import CoreSession
 
 
@@ -138,6 +139,29 @@ def _bounded_dataset(
     return {"samples": samples, "provenance": normalized}
 
 
+def _core_bootstrap_samples(
+    samples: list[dict[str, Any]],
+    observed: datetime | None,
+) -> list[dict[str, Any]]:
+    """Return only the reconstructible CoreSession route-history horizon.
+
+    The application analysis/display may legitimately retain a 30/60/120-minute
+    NAV window, but the streaming CoreSession itself retains only
+    `_ROUTE_HISTORY_SECONDS` of route-fitting history. Feeding older warm-up NAV
+    through every streaming state transition is therefore redundant at the final
+    cutoff and can delay the first usable live result. Incremental batches are
+    never clipped by this helper; it is used only while the CoreSession has no
+    processed frontier yet.
+    """
+    if not samples:
+        return []
+    latest = observed
+    if latest is None:
+        latest = max(_parse_time(str(sample["timestamp"])) for sample in samples)
+    cutoff = latest - timedelta(seconds=_ROUTE_HISTORY_SECONDS)
+    return [sample for sample in samples if _parse_time(str(sample["timestamp"])) >= cutoff]
+
+
 @dataclass(slots=True)
 class LiveAnalysisEnvelope:
     analysis: dict[str, Any]
@@ -238,8 +262,17 @@ class LiveAnalysisSession:
         observed = _parse_time(str(observed_raw)) if observed_raw else None
         core_batch = None
         if accepted or observed is not None:
+            # A fresh live session needs only the same reconstructible route-fit
+            # horizon that CoreSession itself can retain. Keep every accepted
+            # sample in `self.samples` for the selected display/analysis window,
+            # but avoid replaying older NAV through streaming lifecycle state.
+            core_samples = (
+                _core_bootstrap_samples(accepted, observed)
+                if self.core.processed_until_utc is None
+                else accepted
+            )
             core_batch = self.core.process_batch(
-                [_vehicle_sample(sample) for sample in accepted],
+                [_vehicle_sample(sample) for sample in core_samples],
                 observed_until_utc=observed,
             )
 
