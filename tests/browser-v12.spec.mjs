@@ -3,11 +3,11 @@ import { expect, test } from "@playwright/test";
 const baseURL = process.env.BLUEWOLF_BASE_URL ?? "http://127.0.0.1:3000";
 function failures(page) { const out = []; page.on("pageerror", (error) => out.push(`pageerror: ${error.message}`)); page.on("console", (message) => { if (message.type() === "error") out.push(`console: ${message.text()}`); }); return out; }
 
-test("live simulation is NAV-derived and exposes versioned Core", async ({ page }) => {
+test("live simulation is NAV-derived and exposes versioned Python Core", async ({ page }) => {
   const runtime = failures(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
-  await expect(page.getByText(/v0\.13 · SRS v1\.5 · Core 1\.0\.0/)).toBeVisible();
+  await expect(page.getByText(/v0\.14 · SRS v1\.7 · Python Core 1\.0\.0/)).toBeVisible();
   await expect(page.getByRole("heading", { name: "תמונה מבצעית" })).toBeVisible();
   await expect(page.locator(".v09-kpis")).not.toContainText("96%");
   await expect(page.locator(".v09-kpis")).not.toContainText("4.2s");
@@ -74,7 +74,8 @@ test("in-app System Tests execute production Core and compare to external GT", a
   await expect(page.getByRole("heading", { name: "בדיקות מערכת אמיתיות" })).toBeVisible();
   await page.getByRole("button", { name: "הרץ E2E" }).click();
   await expect.poll(async () => await page.locator(".v09-test-kpis").textContent(), { timeout: 90_000 }).toMatch(/ניתוחי Core/);
-  expect(await page.locator(".v09-test-grid .fail").count()).toBe(0);
+  const failedCards = await page.locator(".v09-test-grid article:has(.fail)").allTextContents();
+  expect(failedCards, failedCards.join("\n---\n")).toEqual([]);
   await expect(page.locator(".v09-test-grid")).toContainText("Core contract");
   await expect(page.locator(".v09-test-grid")).toContainText("Simulator→NAV→Core→GT");
   await expect(page.locator(".v09-test-grid")).toContainText("30 יום");
