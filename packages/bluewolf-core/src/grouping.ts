@@ -29,7 +29,9 @@ function averageAxisDeg(a: number, b: number) {
 
 function segments(geometry: SoGeometryDescriptor): Segment[] {
   const center = geometry.center;
-  if (geometry.kind === "single") {
+  if (geometry.kind === "single" || geometry.kind === "figure8") {
+    // Figure-8 is externally the same SO entity as a single hippodrome: two
+    // end turns on one main axis. Its legs cross only inside the route.
     const leg = Math.max(1, geometry.legLength); const u = unit(geometry.rotationDeg);
     return [{ angleDeg: geometry.rotationDeg, leg, turns: [add(center, scale(u, -leg / 2)), add(center, scale(u, leg / 2))] }];
   }
