@@ -4,12 +4,12 @@ import test from "node:test";
 
 const read = (path) => fs.readFileSync(path, "utf8");
 
-test("active dashboard declares v0.14 / SRS v1.7 / Python Core", () => {
+test("active dashboard declares v0.15 / SRS v1.8 / Python Core", () => {
   const page = read("app/page.tsx");
   const dashboard = read("components/bluewolf/dashboard-app-v12.tsx");
   assert.match(page, /DashboardAppV12/);
-  assert.match(dashboard, /v0\.14/);
-  assert.match(dashboard, /SRS v1\.7/);
+  assert.match(dashboard, /v0\.15/);
+  assert.match(dashboard, /SRS v1\.8/);
   assert.match(dashboard, /Python Core/);
   assert.match(dashboard, /CORE_API_VERSION/);
 });
