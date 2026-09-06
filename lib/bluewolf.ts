@@ -105,7 +105,7 @@ export type InfluxFillMode = "forward-fill" | "linear";
 export type InfluxValueRule = { sourceValue: string; mappedValue: string };
 export type InfluxFieldMapping = { systemKey: string; label: string; bucket: string; measurement: string; key: string; valueMode: InfluxValueMode; sourceValue: string; mappedValue: string; rules?: InfluxValueRule[]; fallbackValue?: string; fillMode: InfluxFillMode };
 export type InfluxSettings = { url: string; organization: string; token: string; idleProbeMinutes: number; activePollSeconds: number; joinToleranceSeconds: number; mappings: InfluxFieldMapping[] };
-export type ServerDefinition = { id: string; name: string; enabled: boolean; influxTag: string };
+export type ServerDefinition = { id: string; name: string; enabled: boolean };
 export type VehicleIdRange = { min: number; max: number };
 export type VehicleType = { id: string; name: string; minId: number; maxId: number; idRanges?: VehicleIdRange[]; workSpeedKmh: number; siRoles: RingRole[]; icon: VehicleIconName; color: string };
 export type GtSegment = { id: string; family: Family; layer: "sync" | "route"; quality: "good" | "medium" | "low"; label: string; serverId: string; groupId: string; start: string; end: string; vehicleCount: number; routeType: string; score: number; participants?: number[]; clipStartPct?: number; clipEndPct?: number; arena?: string; routeCorrected?: boolean };
@@ -197,11 +197,11 @@ export const DEFAULT_WORKSPACE: WorkspaceState = {
     { id: "engineering", name: "מפת הנדסה", kind: "engineering", urlTemplate: "local://engineering", attribution: "Blue Wolf", enabled: true, isDefault: true, cacheMode: "day-offline" },
     { id: "wmts-1", name: "WMTS", kind: "wmts", urlTemplate: "https://maps.example/{z}/{x}/{y}", attribution: "Configured map", enabled: false, isDefault: false, tokenRef: "MAP_TOKEN", cacheMode: "online" },
   ],
-  influx: { url: "", organization: "", token: "", idleProbeMinutes: 10, activePollSeconds: 5, joinToleranceSeconds: 10, mappings: DEFAULT_INFLUX_MAPPINGS },
+  influx: { url: "", organization: "", token: "", idleProbeMinutes: 5, activePollSeconds: 5, joinToleranceSeconds: 5, mappings: DEFAULT_INFLUX_MAPPINGS },
   servers: [
-    { id: "1", name: "שרת 1", enabled: true, influxTag: "server-1" },
-    { id: "2", name: "שרת 2", enabled: true, influxTag: "server-2" },
-    { id: "3", name: "שרת 3", enabled: true, influxTag: "server-3" },
+    { id: "1", name: "שרת 1", enabled: true },
+    { id: "2", name: "שרת 2", enabled: true },
+    { id: "3", name: "שרת 3", enabled: true },
   ],
   arenas: ["זירה א׳", "זירה ב׳", "זירה ג׳"],
   vehicleTypes: [
