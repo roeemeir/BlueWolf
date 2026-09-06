@@ -67,7 +67,7 @@ function canonicalExisting(template: SyncTemplate) {
     const kind: SoKind = entity.kind === "double" ? "double" : "single";
     const parsed: Slot[] = entity.vehicleTypes.map((token, index) => {
       const match = /^slot:(\d+):dir:(-?1)$/.exec(token);
-      return match ? { index: Number(match[1]), direction: Number(match[2]) as Direction } : { index, direction: 1 };
+      return match ? { index: Number(match[1]), direction: Number(match[2]) as Direction } : { index, direction: 1 as Direction };
     }).slice(0, capacity(kind));
     return entitySignature({ id: "legacy", kind, slots: parsed });
   }).join("|");
