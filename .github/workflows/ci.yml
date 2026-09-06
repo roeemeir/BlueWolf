@@ -2,23 +2,41 @@ name: Blue Wolf CI
 
 on:
   push:
+    paths-ignore:
+      - "packages/bluewolf-core/**"
   pull_request:
+    paths-ignore:
+      - "packages/bluewolf-core/**"
+  workflow_dispatch:
 
 jobs:
-  core:
-    name: Python core
+  algorithm-core:
+    name: Algorithm Core contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Run isolated replaceable-core suite
+        run: npm run core:test
+
+  python-reference:
+    name: Python reference core
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run deterministic core tests
+      - name: Run retained deterministic reference tests
         working-directory: core
         run: PYTHONPATH=src python -m unittest discover -s tests -v
 
   web:
-    name: Web application
+    name: Web application + persistence contract
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,14 +51,14 @@ jobs:
         run: npx tsc --noEmit
       - name: Build
         run: npm run build
-      - name: Tests and preview asset smoke
+      - name: JS regression + architecture + DB contract tests
         run: npm test
 
   browser:
-    name: Browser QA v1.4 NAV truth
+    name: Browser QA v1.5 Core + NAV truth
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    needs: [core, web]
+    timeout-minutes: 35
+    needs: [algorithm-core, python-reference, web]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -65,7 +83,7 @@ jobs:
           done
           cat /tmp/bluewolf-server.log
           exit 1
-      - name: v1.4 navigation provenance, history, E2E GT and mobile acceptance
+      - name: v1.5 provenance, Core boundary, history, GT and mobile acceptance
         env:
           BLUEWOLF_BASE_URL: http://127.0.0.1:3000
         run: npx playwright test tests/browser-v12.spec.mjs --reporter=line --workers=1
