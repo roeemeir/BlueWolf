@@ -61,6 +61,7 @@ type LiveSessionEntry = {
   windowSpanMs: number;
   envelope: LiveEnvelope;
   touchedAt: number;
+  lastCheckpointAt: number;
 };
 
 type PendingLive = {
@@ -68,11 +69,20 @@ type PendingLive = {
   promise: Promise<LiveEnvelope>;
 };
 
+type StoredCheckpoint = {
+  available?: boolean;
+  checkpointBase64?: string;
+  processedUntilUtc?: string;
+  coreApiVersion?: string;
+  algorithmVersion?: string;
+};
+
 const liveSessions = new Map<string, LiveSessionEntry>();
 const livePending = new Map<string, PendingLive>();
 const LIVE_MIN_WINDOW_MS = 20 * 60_000;
 const LIVE_MAX_WINDOW_MS = 2 * 60 * 60_000 + 5_000;
 const LIVE_SESSION_LIMIT = 12;
+const CHECKPOINT_INTERVAL_MS = 5 * 60_000;
 
 function coreConfig(options: AppCoreOptions) {
   return {
@@ -161,6 +171,51 @@ function deltaDataset(dataset: CoreNavigationDataset, afterMs: number): CoreNavi
   };
 }
 
+function workspaceId() {
+  if (typeof window === "undefined") return null;
+  return window.localStorage.getItem("bluewolf-workspace-id");
+}
+
+async function loadStoredCheckpoint(dataset: CoreNavigationDataset): Promise<StoredCheckpoint | null> {
+  if (dataset.provenance.source !== "influx") return null;
+  const id = workspaceId();
+  if (!id) return null;
+  try {
+    const response = await fetch(`/api/core/checkpoint?serverId=${encodeURIComponent(dataset.provenance.serverId)}`, {
+      cache: "no-store",
+      headers: { "x-bluewolf-workspace": id },
+    });
+    if (!response.ok) return null;
+    const body = await response.json() as StoredCheckpoint;
+    return body.available && body.checkpointBase64 ? body : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveStoredCheckpoint(dataset: CoreNavigationDataset, entry: LiveSessionEntry) {
+  if (dataset.provenance.source !== "influx") return;
+  const id = workspaceId();
+  if (!id) return;
+  try {
+    const snapshot = await rpc({ command: "checkpoint_analysis_session", sessionId: entry.sessionId });
+    if (!snapshot.checkpointBase64 || !snapshot.processedUntilUtc) return;
+    await fetch("/api/core/checkpoint", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-bluewolf-workspace": id },
+      body: JSON.stringify({
+        serverId: dataset.provenance.serverId,
+        coreApiVersion: CORE_API_VERSION,
+        algorithmVersion: "python-current",
+        processedUntilUtc: snapshot.processedUntilUtc,
+        checkpointBase64: snapshot.checkpointBase64,
+      }),
+    });
+  } catch {
+    // Persistence failure does not change the already-computed Core result.
+  }
+}
+
 async function closeLiveSession(entry: LiveSessionEntry | undefined) {
   if (!entry?.sessionId) return;
   try {
@@ -176,6 +231,44 @@ function trimLiveSessions() {
   if (!oldest) return;
   liveSessions.delete(oldest[0]);
   void closeLiveSession(oldest[1]);
+}
+
+async function startLiveSession(dataset: CoreNavigationDataset, options: AppCoreOptions, spanMs: number) {
+  const config = coreConfig(options);
+  const stored = await loadStoredCheckpoint(dataset);
+  const { fromMs, latestMs } = datasetTimes(dataset);
+  const checkpointMs = stored?.processedUntilUtc ? Date.parse(stored.processedUntilUtc) : Number.NaN;
+  const canRestore = Boolean(
+    stored?.checkpointBase64 &&
+    stored.coreApiVersion === CORE_API_VERSION &&
+    Number.isFinite(checkpointMs) &&
+    checkpointMs >= fromMs &&
+    checkpointMs <= latestMs,
+  );
+
+  if (canRestore) {
+    try {
+      return await rpc({
+        command: "restore_analysis_session",
+        checkpointBase64: stored!.checkpointBase64,
+        config,
+        recoveryDataset: dataset,
+        retentionSeconds: Math.max(12 * 60, Math.ceil(spanMs / 1000)),
+        maxHistoryFrames: 72,
+      });
+    } catch {
+      // Incompatible/stale checkpoint falls back to a clean Python warm-up,
+      // never to the TypeScript compatibility algorithm.
+    }
+  }
+
+  return rpc({
+    command: "create_analysis_session",
+    config,
+    dataset,
+    retentionSeconds: Math.max(12 * 60, Math.ceil(spanMs / 1000)),
+    maxHistoryFrames: 72,
+  });
 }
 
 async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCoreOptions): Promise<LiveEnvelope> {
@@ -194,22 +287,18 @@ async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCo
     }
 
     if (!entry) {
-      const body = await rpc({
-        command: "create_analysis_session",
-        config: coreConfig(options),
-        dataset,
-        retentionSeconds: Math.max(12 * 60, Math.ceil(spanMs / 1000)),
-        maxHistoryFrames: 72,
-      });
+      const body = await startLiveSession(dataset, options, spanMs);
       if (!body.sessionId) throw new Error("Python Core did not return live sessionId");
       const envelope = requireLiveEnvelope(body);
-      liveSessions.set(key, {
+      const created: LiveSessionEntry = {
         sessionId: body.sessionId,
         latestMs,
         windowSpanMs: spanMs,
         envelope,
         touchedAt: Date.now(),
-      });
+        lastCheckpointAt: Date.now(),
+      };
+      liveSessions.set(key, created);
       trimLiveSessions();
       return envelope;
     }
@@ -226,12 +315,19 @@ async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCo
       dataset: delta,
     });
     const envelope = requireLiveEnvelope(body);
-    liveSessions.set(key, {
+    const now = Date.now();
+    const updated: LiveSessionEntry = {
       ...entry,
       latestMs,
+      windowSpanMs: spanMs,
       envelope,
-      touchedAt: Date.now(),
-    });
+      touchedAt: now,
+    };
+    liveSessions.set(key, updated);
+    if (dataset.provenance.source === "influx" && now - updated.lastCheckpointAt >= CHECKPOINT_INTERVAL_MS) {
+      updated.lastCheckpointAt = now;
+      await saveStoredCheckpoint(dataset, updated);
+    }
     return envelope;
   })();
 
@@ -248,7 +344,9 @@ async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCo
  * Single production application/Core boundary.
  *
  * Live operator windows are warmed once in a stateful Python Core session and
- * then send only samples newer than the previous five-second poll. Historical
+ * then send only samples newer than the previous five-second poll. Real Influx
+ * sessions persist a compact Core checkpoint every five minutes and restore it
+ * only when its frontier is covered by the newly queried NAV window. Historical
  * investigation and short E2E fixtures remain stateless current-Core replay.
  * There is deliberately no TypeScript algorithm fallback.
  */
