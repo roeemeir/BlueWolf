@@ -18,33 +18,49 @@ test("canonical algorithm implementation is isolated Python with language-neutra
   const init = read("core/src/bluewolf_core/__init__.py");
   const worker = read("core/src/bluewolf_core/worker.py");
   const session = read("core/src/bluewolf_core/session_v17.py");
+  const service = read("core/service/http_service.py");
   assert.match(init, /IMPLEMENTATION_LANGUAGE = "python"/);
   assert.match(init, /CORE_API_VERSION = "1\.0\.0"/);
   assert.match(worker, /create_session/);
   assert.match(worker, /process_batch/);
   assert.match(worker, /restore_session/);
+  assert.match(worker, /analyze_dataset/);
+  assert.match(worker, /analyze_history/);
   assert.match(worker, /recoverySamples/);
   assert.match(session, /checkpoint_schema_version/);
   assert.match(session, /hydrate_recovery_history/);
+  assert.match(service, /CoreWorker/);
+  assert.match(service, /\/rpc/);
   assert.doesNotMatch(worker, /sqlite3|requests|httpx|react|localStorage/i);
 });
 
-test("web algorithm adapter remains a single compatibility boundary during Python migration", () => {
+test("active Web adapter calls Python service and has no TypeScript algorithm fallback", () => {
   const adapter = read("lib/algorithm-core-adapter.ts");
+  const proxy = read("app/api/core/rpc/route.ts");
   const analyzer = read("components/bluewolf/v12/navigation-analyzer.ts");
   const history = read("components/bluewolf/v12/navigation-history.ts");
-  assert.match(adapter, /packages\/bluewolf-core\/src\/index/);
-  assert.match(adapter, /analyzeNavigationDataset as runCore/);
+  const operator = read("components/bluewolf/v12/operator.tsx");
+  assert.match(adapter, /CORE_IMPLEMENTATION = "python"/);
+  assert.match(adapter, /\/api\/core\/rpc/);
+  assert.match(adapter, /command: "analyze_dataset"/);
+  assert.match(adapter, /command: "analyze_history"/);
+  assert.doesNotMatch(adapter, /analyzeNavigationDataset as runCore|packages\/bluewolf-core\/src\/index/);
+  assert.match(proxy, /BLUEWOLF_PYTHON_CORE_URL/);
+  assert.match(proxy, /\/health/);
+  assert.match(proxy, /\/rpc/);
   assert.match(analyzer, /algorithm-core-adapter/);
   assert.match(history, /algorithm-core-adapter/);
-  assert.doesNotMatch(analyzer, /function pca|siScores|soPairCompatibility/);
-  assert.doesNotMatch(history, /function boundaryReason|function routeSignature/);
+  assert.match(operator, /לא מתבצע חישוב חלופי ב־TypeScript/);
 });
 
-test("SO grouping production law is not duplicated in legacy UI", () => {
-  const legacy = read("components/bluewolf/v10/grouping.ts");
-  assert.match(legacy, /packages\/bluewolf-core/);
-  assert.doesNotMatch(legacy, /function segments|averageAxisDeg/);
+test("SO grouping production law is implemented in canonical Python analysis", () => {
+  const python = read("core/src/bluewolf_core/application_analysis.py");
+  const adapter = read("lib/algorithm-core-adapter.ts");
+  assert.match(python, /def so_pair_compatibility/);
+  assert.match(python, /maxParallelLegs/);
+  assert.match(python, /maxLateralLegs/);
+  assert.match(python, /maxAngleDeg/);
+  assert.match(adapter, /checkSoPairCompatibility/);
 });
 
 test("workspace persistence remains separate and compact Core checkpoints are first-class", () => {
