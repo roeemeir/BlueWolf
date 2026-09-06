@@ -7,6 +7,7 @@ import "./v04-fixes.css";
 import "./v05.css";
 import "./v08.css";
 import "./v09.css";
+import "./v10.css";
 
 export const metadata: Metadata = {
   title: "זאב כחול | ניטור סנכרון רכבים",

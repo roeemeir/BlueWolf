@@ -1,4 +1,4 @@
-name: Blue Wolf clean protected preview
+name: Blue Wolf v0.10 protected preview
 
 on:
   workflow_dispatch:
@@ -56,10 +56,10 @@ jobs:
           cat /tmp/bluewolf-app.log
           exit 1
 
-      - name: v0.9 desktop, PDF and mobile browser QA
+      - name: v0.10 desktop, investigation, GT, template and mobile browser QA
         env:
           BLUEWOLF_BASE_URL: http://127.0.0.1:3000
-        run: npx playwright test tests/browser-v09.spec.mjs --reporter=line --workers=1
+        run: npx playwright test tests/browser-v10.spec.mjs --reporter=line --workers=1
 
       - name: Create protected preview credentials
         run: |
@@ -105,6 +105,7 @@ jobs:
           grep -q "303" /tmp/bluewolf-login.headers
           curl --retry 10 --retry-all-errors --retry-delay 2 -fsS -b /tmp/bluewolf-preview.cookies "$PREVIEW_URL/" -o /tmp/bluewolf-home.html
           grep -q "זאב כחול" /tmp/bluewolf-home.html
+          grep -q "v0.10" /tmp/bluewolf-home.html
           curl --retry 10 --retry-all-errors --retry-delay 2 -fsS -b /tmp/bluewolf-preview.cookies -H "x-bluewolf-workspace: bw-preview-verification" "$PREVIEW_URL/api/workspace" -o /tmp/bluewolf-workspace.json
           grep -Eq '"available":(true|false)' /tmp/bluewolf-workspace.json
           node - <<'NODE' > /tmp/bluewolf-assets.txt
@@ -125,13 +126,14 @@ jobs:
             echo "PREVIEW_URL=$PREVIEW_URL"
             echo "PREVIEW_PASSWORD=$PREVIEW_PASSWORD"
             echo "COMMIT=$GITHUB_SHA"
-            echo "VERIFICATION=Core + lint + TypeScript + build + tests + v0.9 desktop/PDF/mobile browser QA + public tunnel checks: PASS"
+            echo "VERIFICATION=Core + wind + lint + TypeScript + build + tests + v0.10 desktop/investigation/GT/template/mobile browser QA + public tunnel checks: PASS"
           } > /tmp/bluewolf-preview.txt
+          cat /tmp/bluewolf-preview.txt
 
       - name: Upload preview details
         uses: actions/upload-artifact@v4
         with:
-          name: bluewolf-verified-preview-v09
+          name: bluewolf-verified-preview-v10
           path: /tmp/bluewolf-preview.txt
           retention-days: 1
           if-no-files-found: error

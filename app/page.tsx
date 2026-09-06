@@ -1,5 +1,5 @@
-import { DashboardAppV09 } from "@/components/bluewolf/dashboard-app-v09";
+import { DashboardAppV10 } from "@/components/bluewolf/dashboard-app-v10";
 
 export default function Home() {
-  return <DashboardAppV09 />;
+  return <DashboardAppV10 />;
 }
