@@ -87,8 +87,11 @@ class LiveAnalysisV18Tests(unittest.TestCase):
         session = LiveAnalysisSession(_config())
         warmup = session.ingest(_dataset(0, 180))
         self.assertEqual(warmup.accepted_samples, 181 * 3)
+        self.assertEqual(len(warmup.history), 1)
+        self.assertTrue(warmup.analysis["available"])
         incremental = session.ingest(_dataset(176, 185))
         self.assertEqual(incremental.accepted_samples, 5 * 3)
+        self.assertEqual(len(incremental.history), 2)
         self.assertEqual(sorted(incremental.analysis["groups"]["si"]["members"]), [101, 201, 301])
         self.assertEqual(incremental.analysis["provenance"]["latestSampleAt"], (START + timedelta(seconds=185)).isoformat(timespec="milliseconds").replace("+00:00", "Z"))
 
