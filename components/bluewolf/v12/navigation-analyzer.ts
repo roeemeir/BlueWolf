@@ -1,6 +1,5 @@
 export {
   analyzeNavigationDataset,
-  compareMembership,
   CORE_API_VERSION,
 } from "@/lib/algorithm-core-adapter";
 
