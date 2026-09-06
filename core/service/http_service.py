@@ -13,7 +13,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Mapping
 
-from bluewolf_core.worker import CoreWorker
+from bluewolf_core.worker_v19 import CoreWorker
 
 
 class Handler(BaseHTTPRequestHandler):
