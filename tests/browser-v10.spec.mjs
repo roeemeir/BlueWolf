@@ -9,7 +9,7 @@ function collectRuntimeFailures(page) {
   return failures;
 }
 
-test("v0.10 live keeps all group data, group colors, 30m trail and continuous score colorbar", async ({ page }) => {
+test("v0.10 live keeps all group data, group colors, 30m trail, wind disturbance and continuous score colorbar", async ({ page }) => {
   const failures = collectRuntimeFailures(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
@@ -17,6 +17,19 @@ test("v0.10 live keeps all group data, group colors, 30m trail and continuous sc
   await expect(page.locator(".v10-group-card")).toHaveCount(2);
   await expect(page.locator(".v10-live-map")).toContainText("עקבה: 30 דקות");
   expect(await page.locator(".v09-trace-dots circle").count()).toBeGreaterThan(80);
+
+  const wind = page.locator(".v10-wind-select select");
+  await expect(wind).toHaveValue("gusty");
+  await expect(page.locator(".v10-live-map")).toContainText("הפרעת רוח פעילה");
+  const gustyTimeline = await page.locator(".v09-timeline path[fill='none']").first().getAttribute("d");
+  await wind.selectOption("off");
+  await expect(page.locator(".v10-live-map")).not.toContainText("הפרעת רוח פעילה");
+  const offTimeline = await page.locator(".v09-timeline path[fill='none']").first().getAttribute("d");
+  expect(offTimeline).not.toEqual(gustyTimeline);
+  await wind.selectOption("steady");
+  await expect(page.locator(".v10-live-map")).toContainText("הפרעת רוח פעילה");
+  const steadyTimeline = await page.locator(".v09-timeline path[fill='none']").first().getAttribute("d");
+  expect(steadyTimeline).not.toEqual(offTimeline);
 
   await page.locator(".v09-overlay-bar button", { hasText: "עקבה לפי ציון" }).click();
   await expect(page.locator(".v10-score-colorbar")).toBeVisible();
