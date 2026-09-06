@@ -3,54 +3,66 @@ name: Blue Wolf Algorithm Core
 on:
   push:
     paths:
-      - "packages/bluewolf-core/**"
+      - "core/**"
+      - "docs/BLUE_WOLF_ARCHITECTURE_DECISIONS_2026-09-06_V1_7.md"
+      - "docs/BLUE_WOLF_ARCHITECTURE_V1_7_SIMPLIFIED_CANONICAL.md"
   pull_request:
     paths:
-      - "packages/bluewolf-core/**"
+      - "core/**"
+      - "docs/BLUE_WOLF_ARCHITECTURE_DECISIONS_2026-09-06_V1_7.md"
+      - "docs/BLUE_WOLF_ARCHITECTURE_V1_7_SIMPLIFIED_CANONICAL.md"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  core-contract:
-    name: Algorithm core contract + tests
+  python-core-contract:
+    name: Canonical Python Core contract + tests
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: "24"
-          cache: npm
-      - run: npm ci
-      - name: Independent core typecheck + executable tests
-        run: npm run core:test
-      - name: Verify core boundary stays pure
+          python-version: "3.12"
+      - name: Run independent Core regression suite
+        working-directory: core
+        run: PYTHONPATH=src python -m unittest discover -s tests -v
+      - name: Verify canonical Core boundary stays pure
         run: |
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs';
-          import path from 'node:path';
-          const root = 'packages/bluewolf-core/src';
-          const forbidden = [
-            /from\s+["'](?:react|next|drizzle-orm|@\/)/,
-            /\b(?:window|document|localStorage)\b/,
-            /\bfetch\s*\(/,
-          ];
-          const files = fs.readdirSync(root).filter((name) => name.endsWith('.ts'));
-          const violations = [];
-          for (const file of files) {
-            const source = fs.readFileSync(path.join(root, file), 'utf8');
-            for (const rule of forbidden) if (rule.test(source)) violations.push(`${file}: ${rule}`);
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path("core/src/bluewolf_core")
+          forbidden = {
+              "database": re.compile(r"\b(?:sqlite3|sqlalchemy|drizzle|d1)\b", re.I),
+              "network": re.compile(r"\b(?:requests|httpx|aiohttp|urllib\.request|socket)\b", re.I),
+              "ui": re.compile(r"\b(?:react|next|window|document|localStorage)\b", re.I),
+              "ttag": re.compile(r"\bttag\b", re.I),
           }
-          if (violations.length) {
-            console.error('Algorithm core crossed the application/runtime boundary:');
-            console.error(violations.join('\n'));
-            process.exit(1);
-          }
-          console.log(`Core boundary clean across ${files.length} source files.`);
-          NODE
+          violations = []
+          for path in sorted(root.glob("*.py")):
+              text = path.read_text(encoding="utf-8")
+              for name, rule in forbidden.items():
+                  if rule.search(text):
+                      violations.append(f"{path}: {name}")
+          if violations:
+              raise SystemExit("Core boundary violation:\n" + "\n".join(violations))
+          print(f"Canonical Python Core boundary clean across {len(list(root.glob('*.py')))} files.")
+          PY
       - name: Core contract summary
+        working-directory: core
         run: |
-          echo "Core API: $(grep -Eo 'CORE_API_VERSION = \"[^\"]+' packages/bluewolf-core/src/contracts.ts | head -1)"
-          echo "No UI build, browser QA or DB migration is required for a core-only development gate."
+          PYTHONPATH=src python - <<'PY'
+          import bluewolf_core
+          from bluewolf_core import CoreConfig
+          config = CoreConfig()
+          print("Core API:", bluewolf_core.CORE_API_VERSION)
+          print("Implementation:", bluewolf_core.IMPLEMENTATION_LANGUAGE, bluewolf_core.__version__)
+          print("logical_grid_seconds:", config.timing.logical_grid_seconds)
+          print("live_batch_seconds:", config.timing.live_batch_seconds)
+          print("checkpoint_seconds:", config.timing.checkpoint_seconds)
+          print("membership_confirmation_seconds:", config.grouping.membership_confirmation_seconds)
+          PY
