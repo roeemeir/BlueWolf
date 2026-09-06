@@ -14,27 +14,28 @@ test("active dashboard declares v0.14 / SRS v1.7 / Python Core", () => {
   assert.match(dashboard, /CORE_API_VERSION/);
 });
 
-test("canonical algorithm implementation is isolated Python with language-neutral worker", () => {
+test("canonical algorithm implementation is isolated Python with stateful live worker", () => {
   const init = read("core/src/bluewolf_core/__init__.py");
   const worker = read("core/src/bluewolf_core/worker.py");
   const session = read("core/src/bluewolf_core/session_v17.py");
+  const live = read("core/src/bluewolf_core/live_analysis.py");
   const service = read("core/service/http_service.py");
   assert.match(init, /IMPLEMENTATION_LANGUAGE = "python"/);
   assert.match(init, /CORE_API_VERSION = "1\.0\.0"/);
-  assert.match(worker, /create_session/);
-  assert.match(worker, /process_batch/);
-  assert.match(worker, /restore_session/);
-  assert.match(worker, /analyze_dataset/);
-  assert.match(worker, /analyze_history/);
-  assert.match(worker, /recoverySamples/);
+  assert.match(worker, /create_analysis_session/);
+  assert.match(worker, /process_analysis_batch/);
+  assert.match(worker, /checkpoint_analysis_session/);
+  assert.match(worker, /restore_analysis_session/);
   assert.match(session, /checkpoint_schema_version/);
   assert.match(session, /hydrate_recovery_history/);
+  assert.match(live, /LiveAnalysisSession/);
+  assert.match(live, /CoreSession/);
   assert.match(service, /CoreWorker/);
   assert.match(service, /\/rpc/);
   assert.doesNotMatch(worker, /sqlite3|requests|httpx|react|localStorage/i);
 });
 
-test("active Web adapter calls Python service and has no TypeScript algorithm fallback", () => {
+test("active Web adapter sends only live NAV deltas after Python warmup and has no TS fallback", () => {
   const adapter = read("lib/algorithm-core-adapter.ts");
   const proxy = read("app/api/core/rpc/route.ts");
   const analyzer = read("components/bluewolf/v12/navigation-analyzer.ts");
@@ -42,15 +43,31 @@ test("active Web adapter calls Python service and has no TypeScript algorithm fa
   const operator = read("components/bluewolf/v12/operator.tsx");
   assert.match(adapter, /CORE_IMPLEMENTATION = "python"/);
   assert.match(adapter, /\/api\/core\/rpc/);
-  assert.match(adapter, /command: "analyze_dataset"/);
-  assert.match(adapter, /command: "analyze_history"/);
-  assert.doesNotMatch(adapter, /analyzeNavigationDataset as runCore|packages\/bluewolf-core\/src\/index/);
+  assert.match(adapter, /command: "create_analysis_session"/);
+  assert.match(adapter, /command: "process_analysis_batch"/);
+  assert.match(adapter, /Date\.parse\(sample\.timestamp\) > afterMs/);
+  assert.match(adapter, /livePending/);
+  assert.doesNotMatch(adapter, /analyzeNavigationDataset as runCore|packages\/bluewolf-core\/src\/analyzer/);
   assert.match(proxy, /BLUEWOLF_PYTHON_CORE_URL/);
   assert.match(proxy, /\/health/);
   assert.match(proxy, /\/rpc/);
   assert.match(analyzer, /algorithm-core-adapter/);
   assert.match(history, /algorithm-core-adapter/);
   assert.match(operator, /לא מתבצע חישוב חלופי ב־TypeScript/);
+});
+
+test("Figure-8 is an SO hippodrome with crossed legs and single-hippodrome external grouping", () => {
+  const contracts = read("packages/bluewolf-core/src/contracts.ts");
+  const grouping = read("packages/bluewolf-core/src/grouping.ts");
+  const analysis = read("core/src/bluewolf_core/application_analysis_v18.py");
+  const topologyTest = read("core/tests/test_route_topology_v08.py");
+  assert.match(contracts, /RouteKind = "circle" \| "single" \| "double" \| "figure8"/);
+  assert.match(contracts, /crossedLegs\?: boolean/);
+  assert.match(grouping, /geometry\.kind === "single" \|\| geometry\.kind === "figure8"/);
+  assert.match(analysis, /return "figure8"/);
+  assert.match(analysis, /geometry\["crossedLegs"\] = True/);
+  assert.match(topologyTest, /hippodrome whose two straight legs cross/);
+  assert.match(topologyTest, /RouteTopology\.SELF_CROSSING/);
 });
 
 test("SO grouping production law is implemented in canonical Python analysis", () => {
@@ -76,6 +93,14 @@ test("workspace persistence remains separate and compact Core checkpoints are fi
   assert.match(checkpoint, /coreCheckpoints/);
   assert.match(context, /bluewolf-workspace-state/);
   assert.match(context, /\/api\/workspace/);
+});
+
+test("Influx missing altitude remains missing instead of becoming a fabricated zero", () => {
+  const route = read("app/api/influx/query/route.ts");
+  const contracts = read("packages/bluewolf-core/src/contracts.ts");
+  assert.match(route, /altitude: item\.altitude \?\? null/);
+  assert.doesNotMatch(route, /altitude: item\.altitude \?\? 0/);
+  assert.match(contracts, /altitude: number \| null/);
 });
 
 test("active operator contains no old fabricated KPI literals", () => {
