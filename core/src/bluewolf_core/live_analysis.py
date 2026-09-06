@@ -18,7 +18,6 @@ from typing import Any, Mapping
 from . import __version__
 from .application_analysis_v18 import (
     analyze_navigation_dataset,
-    build_analysis_history,
     derive_events,
     provenance_from_samples,
 )
@@ -192,29 +191,27 @@ class LiveAnalysisSession:
             start = end
         dataset = _bounded_dataset(self.samples, provenance, start, end)
         analysis = analyze_navigation_dataset(dataset, self.app_config)
+        timestamp = dataset["provenance"].get("latestSampleAt") or dataset["provenance"].get("to")
 
-        if bootstrap_history and self.samples and (end - start).total_seconds() >= 60:
-            self.history = build_analysis_history(
-                dataset,
-                self.app_config,
-                max_frames=min(self.max_history_frames, 36),
-                lookback_minutes=12,
-            )
-        else:
-            timestamp = dataset["provenance"].get("latestSampleAt") or dataset["provenance"].get("to")
-            if timestamp and (not self.history or self.history[-1]["timestamp"] != timestamp):
-                history_start = max(start, end - timedelta(minutes=12))
-                history_samples = [
-                    sample for sample in self.samples
-                    if _parse_time(str(sample["timestamp"])) >= history_start
-                ]
-                history_dataset = _bounded_dataset(history_samples, provenance, history_start, end)
-                self.history.append({
-                    "timestamp": timestamp,
-                    "analysis": analyze_navigation_dataset(history_dataset, self.app_config),
-                })
-                if len(self.history) > self.max_history_frames:
-                    self.history = self.history[-self.max_history_frames:]
+        # Live warm-up must make the current operational picture available first.
+        # Building dozens of historical analysis frames synchronously delayed the
+        # first usable group result. Seed history with the already-computed current
+        # analysis, then append one bounded 12-minute frame per incremental batch.
+        if bootstrap_history:
+            self.history = [{"timestamp": timestamp, "analysis": analysis}] if timestamp else []
+        elif timestamp and (not self.history or self.history[-1]["timestamp"] != timestamp):
+            history_start = max(start, end - timedelta(minutes=12))
+            history_samples = [
+                sample for sample in self.samples
+                if _parse_time(str(sample["timestamp"])) >= history_start
+            ]
+            history_dataset = _bounded_dataset(history_samples, provenance, history_start, end)
+            self.history.append({
+                "timestamp": timestamp,
+                "analysis": analyze_navigation_dataset(history_dataset, self.app_config),
+            })
+            if len(self.history) > self.max_history_frames:
+                self.history = self.history[-self.max_history_frames:]
 
         return LiveAnalysisEnvelope(
             analysis=analysis,
