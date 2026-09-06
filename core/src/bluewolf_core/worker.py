@@ -1,14 +1,9 @@
 """Language-neutral JSONL transport for the canonical Python Core.
 
-The worker owns only in-memory CoreSession instances and pure analysis calls. It
-does not access InfluxDB, files, databases or UI state. An external orchestrator
-is responsible for source queries, Join, checkpoint persistence and lifecycle
-supervision.
-
-Protocol: one JSON object per stdin line, one JSON response per stdout line.
-Supported commands: hello, create_session, process_batch, checkpoint,
-restore_session, close_session, analyze_dataset, analyze_history,
-so_pair_compatibility.
+The worker owns only in-memory CoreSession/LiveAnalysisSession instances and
+pure analysis calls. It does not access InfluxDB, files, databases or UI state.
+An external orchestrator is responsible for source queries, Join, checkpoint
+persistence and lifecycle supervision.
 """
 
 from __future__ import annotations
@@ -30,6 +25,7 @@ from .application_analysis_v18 import (
     so_pair_compatibility,
 )
 from .config import CoreConfig
+from .live_analysis import LiveAnalysisEnvelope, LiveAnalysisSession
 from .models import FieldQuality, VehicleSample
 from .session_v17 import CoreSession
 
@@ -56,25 +52,21 @@ def _sample(raw: Mapping[str, Any]) -> VehicleSample:
     timestamp = raw.get("sample_time_utc", raw.get("timestamp"))
     if not isinstance(timestamp, str):
         raise ValueError("sample_time_utc/timestamp is required")
-
     server = raw.get("server_id", raw.get("serverId", 0))
     vehicle_identifier = raw.get("vehicle_identifier", raw.get("vehicleId"))
     if vehicle_identifier is None:
         raise ValueError("vehicle_identifier/vehicleId is required")
     vehicle_number = raw.get("vehicle_number", raw.get("vehicleNumber", vehicle_identifier))
-
     latitude = raw.get("latitude_deg", raw.get("latitude"))
     longitude = raw.get("longitude_deg", raw.get("longitude"))
     altitude = raw.get("altitude_m", raw.get("altitude"))
     velocity_north = raw.get("velocity_north_mps", raw.get("velocityNorth"))
     velocity_east = raw.get("velocity_east_mps", raw.get("velocityEast"))
-
     quality_raw = raw.get("field_quality", raw.get("fieldQuality", {}))
     field_quality = {
         str(key): item if isinstance(item, FieldQuality) else FieldQuality(str(item))
         for key, item in dict(quality_raw).items()
     }
-
     return VehicleSample(
         sample_time_utc=_parse_time(timestamp),
         server_id=int(server),
@@ -103,9 +95,20 @@ def _config(raw: object) -> CoreConfig:
     return CoreConfig.from_dict(raw) if isinstance(raw, Mapping) else CoreConfig()
 
 
+def _live_payload(envelope: LiveAnalysisEnvelope) -> dict[str, Any]:
+    return {
+        "analysis": envelope.analysis,
+        "history": envelope.history,
+        "events": envelope.events,
+        "acceptedSamples": envelope.accepted_samples,
+        "coreBatchResult": _wire(envelope.core_batch),
+    }
+
+
 class CoreWorker:
     def __init__(self) -> None:
         self._sessions: dict[str, CoreSession] = {}
+        self._live_sessions: dict[str, LiveAnalysisSession] = {}
 
     def handle(self, request: Mapping[str, Any]) -> dict[str, Any]:
         command = str(request.get("command", ""))
@@ -149,6 +152,70 @@ class CoreWorker:
             if settings is not None and not isinstance(settings, Mapping):
                 raise ValueError("settings must be an object")
             return {"evidence": so_pair_compatibility(first, second, settings)}
+
+        if command == "create_analysis_session":
+            config = request.get("config")
+            if not isinstance(config, Mapping):
+                raise ValueError("config is required")
+            session_id = uuid.uuid4().hex
+            session = LiveAnalysisSession(
+                app_config=config,
+                algorithm_version=str(request.get("algorithmVersion", __version__)),
+                retention_seconds=int(request.get("retentionSeconds", 30 * 60)),
+                max_history_frames=int(request.get("maxHistoryFrames", 72)),
+            )
+            self._live_sessions[session_id] = session
+            response: dict[str, Any] = {"sessionId": session_id}
+            dataset = request.get("dataset")
+            if dataset is not None:
+                if not isinstance(dataset, Mapping):
+                    raise ValueError("dataset must be an object")
+                response.update(_live_payload(session.ingest(dataset)))
+            return response
+
+        if command == "process_analysis_batch":
+            session = self._require_live_session(request)
+            dataset = request.get("dataset")
+            if not isinstance(dataset, Mapping):
+                raise ValueError("dataset is required")
+            return _live_payload(session.ingest(dataset))
+
+        if command == "checkpoint_analysis_session":
+            session = self._require_live_session(request)
+            encoded = base64.b64encode(session.checkpoint()).decode("ascii")
+            return {
+                "checkpointBase64": encoded,
+                "processedUntilUtc": _wire(session.core.processed_until_utc),
+                "recoveryHistoryStartUtc": _wire(session.core.recovery_history_start_utc),
+            }
+
+        if command == "restore_analysis_session":
+            encoded = request.get("checkpointBase64")
+            config = request.get("config")
+            recovery_dataset = request.get("recoveryDataset")
+            if not isinstance(encoded, str):
+                raise ValueError("checkpointBase64 is required")
+            if not isinstance(config, Mapping):
+                raise ValueError("config is required")
+            if not isinstance(recovery_dataset, Mapping):
+                raise ValueError("recoveryDataset is required")
+            checkpoint = base64.b64decode(encoded.encode("ascii"), validate=True)
+            session, envelope = LiveAnalysisSession.restore(
+                checkpoint,
+                app_config=config,
+                recovery_dataset=recovery_dataset,
+                algorithm_version=str(request.get("algorithmVersion", __version__)),
+                retention_seconds=int(request.get("retentionSeconds", 30 * 60)),
+                max_history_frames=int(request.get("maxHistoryFrames", 72)),
+            )
+            session_id = uuid.uuid4().hex
+            self._live_sessions[session_id] = session
+            return {"sessionId": session_id, **_live_payload(envelope)}
+
+        if command == "close_analysis_session":
+            session_id = str(request.get("sessionId", ""))
+            existed = self._live_sessions.pop(session_id, None) is not None
+            return {"closed": existed}
 
         if command == "create_session":
             config = _config(request.get("config"))
@@ -206,6 +273,13 @@ class CoreWorker:
         session = self._sessions.get(session_id)
         if session is None:
             raise ValueError("unknown sessionId")
+        return session
+
+    def _require_live_session(self, request: Mapping[str, Any]) -> LiveAnalysisSession:
+        session_id = str(request.get("sessionId", ""))
+        session = self._live_sessions.get(session_id)
+        if session is None:
+            raise ValueError("unknown analysis sessionId")
         return session
 
 
