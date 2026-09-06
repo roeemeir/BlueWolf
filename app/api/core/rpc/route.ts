@@ -18,7 +18,7 @@ export async function GET() {
       signal: AbortSignal.timeout(5_000),
     });
     const payload = await response.json().catch(() => ({}));
-    return Response.json(payload, { status: response.ok ? 200 : 503 });
+    return Response.json(payload, { status: response.status });
   } catch (error) {
     return Response.json({
       ok: false,
@@ -39,7 +39,7 @@ export async function POST(request: Request) {
       body: JSON.stringify(body),
     });
     const payload = await response.json().catch(() => ({ ok: false, message: "Invalid Python Core response" }));
-    return Response.json(payload, { status: response.ok ? 200 : 503 });
+    return Response.json(payload, { status: response.status });
   } catch (error) {
     return Response.json({
       ok: false,
