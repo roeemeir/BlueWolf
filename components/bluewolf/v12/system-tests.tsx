@@ -67,7 +67,17 @@ export function V12SystemTests() {
         add(`שרת ${serverId} · רכבים פעילים`, "Simulator→NAV→Python Core→GT", gt.activeVehicles.every((id) => detected.includes(id)), `GT ${ids(gt.activeVehicles)} · ניתוח ${ids(detected)}`);
         add(`שרת ${serverId} · טווח ציונים`, "Python Core scoring", [analysis.groups.si.score, analysis.groups.so.score].every((score) => Object.values(score).every((value) => Number.isFinite(value) && value >= 0 && value <= 100)), `SI ${analysis.groups.si.score.total} · SO ${analysis.groups.so.score.total}`);
 
-        if (serverId === "2") add("שרת 2 · נתיב SO לא חוקי נשאר מחוץ לקבוצה", "Python Core grouping", gt.ungroupedVehicles.every((id) => analysis.ungroupedVehicles.includes(id)), `GT מחוץ ${ids(gt.ungroupedVehicles)} · בפועל ${ids(analysis.ungroupedVehicles)}`);
+        if (serverId === "2") {
+          add("שרת 2 · נתיב SO מרוחק נשאר מחוץ לקבוצה", "Python Core grouping", gt.ungroupedVehicles.every((id) => analysis.ungroupedVehicles.includes(id)), `GT מחוץ ${ids(gt.ungroupedVehicles)} · בפועל ${ids(analysis.ungroupedVehicles)}`);
+          const gtFigure8 = gt.routeKinds[521];
+          const detectedFigure8 = analysis.routes.find((route) => route.vehicleId === 521);
+          add(
+            "שרת 2 · שמינייה = היפודרום עם legs מוצלבים",
+            "Simulator→NAV→Python Core→GT",
+            gtFigure8 === "figure8" && detectedFigure8?.kind === "figure8" && detectedFigure8.geometry?.crossedLegs === true,
+            `GT=${gtFigure8 ?? "—"} · Core=${detectedFigure8?.kind ?? "—"} · crossedLegs=${String(detectedFigure8?.geometry?.crossedLegs ?? false)}`,
+          );
+        }
         if (serverId === "3") add("שרת 3 · Double+Single מזוהים כקבוצת SO", "Python Core grouping", analysis.groups.so.members.length >= 2, `SO בפועל ${ids(analysis.groups.so.members)}`);
 
         const gtVehicle = gt.activeVehicles.find((id) => analysis.groups.so.vehicles[id] || analysis.groups.si.vehicles[id]);
@@ -83,12 +93,17 @@ export function V12SystemTests() {
         { kind: "single", center: { x: 120, y: 5 }, radius: 25, legLength: 100, rotationDeg: 5 },
         grouping,
       );
+      const validFigure8 = await checkSoPairCompatibility(
+        { kind: "figure8", center: { x: 0, y: 0 }, radius: 25, legLength: 100, rotationDeg: 0, crossedLegs: true },
+        { kind: "single", center: { x: 120, y: 5 }, radius: 25, legLength: 100, rotationDeg: 5 },
+        grouping,
+      );
       const invalid = await checkSoPairCompatibility(
         { kind: "single", center: { x: 0, y: 0 }, radius: 25, legLength: 100, rotationDeg: 0 },
         { kind: "single", center: { x: 90, y: 70 }, radius: 25, legLength: 100, rotationDeg: 45 },
         grouping,
       );
-      add("חוק קיבוץ · valid/invalid", "Python Core grouping", valid.valid && !invalid.valid, `valid=${valid.explanation} | invalid=${invalid.explanation}`);
+      add("חוק קיבוץ · Single/Figure-8/invalid", "Python Core grouping", valid.valid && validFigure8.valid && !invalid.valid, `single=${valid.explanation} | figure8=${validFigure8.explanation} | invalid=${invalid.explanation}`);
 
       const layouts = generateUniqueSoLayouts(2, 2).map((layout) => layout.join("-"));
       add("SO layout · ללא תמונות מראה כפולות", "Template builder", new Set(layouts).size === layouts.length && layouts.length > 0, `${layouts.length} layouts ייחודיים`);
