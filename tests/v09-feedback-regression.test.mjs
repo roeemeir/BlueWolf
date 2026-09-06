@@ -20,7 +20,9 @@ test("v0.9 feedback requirements are wired into source and official SRS", async 
     read("docs/BLUE_WOLF_SRS_CHANGESET_2026-09-06.md"),
   ]);
 
-  assert.match(geometry, /two parallel straight legs connected by two smooth outward semicircular turns/i);
+  assert.match(geometry, /outward semicircles, never inward hooks/i);
+  assert.match(geometry, /upper straight|topA.*topB/is);
+  assert.match(geometry, /bottomB.*bottomA/is);
   assert.match(geometry, /doubleHippodromeLoop/);
   assert.match(map, /scoreTrace/);
   assert.match(map, /TYPE_COLORS = \["#f59e0b", "#2563eb", "#8b5cf6"\]/);
