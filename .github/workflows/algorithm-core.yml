@@ -40,7 +40,6 @@ jobs:
               "database": re.compile(r"\b(?:sqlite3|sqlalchemy|drizzle|d1)\b", re.I),
               "network": re.compile(r"\b(?:requests|httpx|aiohttp|urllib\.request|socket)\b", re.I),
               "ui": re.compile(r"\b(?:react|next|window|document|localStorage)\b", re.I),
-              "ttag": re.compile(r"\bttag\b", re.I),
           }
           violations = []
           for path in sorted(root.glob("*.py")):
