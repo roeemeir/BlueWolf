@@ -1,12 +1,13 @@
 """Language-neutral JSONL transport for the canonical Python Core.
 
-The worker owns only in-memory CoreSession instances. It does not access
-InfluxDB, files, databases or HTTP. An external orchestrator is responsible for
-source queries, Join, checkpoint persistence and lifecycle supervision.
+The worker owns only in-memory CoreSession instances and pure analysis calls. It
+does not access InfluxDB, files, databases or UI state. An external orchestrator
+is responsible for source queries, Join, checkpoint persistence and lifecycle
+supervision.
 
 Protocol: one JSON object per stdin line, one JSON response per stdout line.
 Supported commands: hello, create_session, process_batch, checkpoint,
-restore_session, close_session.
+restore_session, close_session, analyze_dataset, analyze_history.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from enum import Enum
 from typing import Any, Mapping
 
 from . import CORE_API_VERSION, IMPLEMENTATION_LANGUAGE, __version__
+from .application_analysis import analyze_navigation_dataset, build_analysis_history, derive_events
 from .config import CoreConfig
 from .models import FieldQuality, VehicleSample
 from .session_v17 import CoreSession
@@ -106,6 +108,30 @@ class CoreWorker:
                 "coreApiVersion": CORE_API_VERSION,
                 "implementationLanguage": IMPLEMENTATION_LANGUAGE,
                 "implementationVersion": __version__,
+            }
+
+        if command == "analyze_dataset":
+            dataset = request.get("dataset")
+            config = request.get("config")
+            if not isinstance(dataset, Mapping):
+                raise ValueError("dataset is required")
+            if not isinstance(config, Mapping):
+                raise ValueError("config is required")
+            return {"analysis": analyze_navigation_dataset(dataset, config)}
+
+        if command == "analyze_history":
+            dataset = request.get("dataset")
+            config = request.get("config")
+            if not isinstance(dataset, Mapping):
+                raise ValueError("dataset is required")
+            if not isinstance(config, Mapping):
+                raise ValueError("config is required")
+            max_frames = int(request.get("maxFrames", 61))
+            lookback_minutes = int(request.get("lookbackMinutes", 12))
+            history = build_analysis_history(dataset, config, max_frames=max_frames, lookback_minutes=lookback_minutes)
+            return {
+                "history": history,
+                "events": derive_events(history, config.get("thresholds", {})),
             }
 
         if command == "create_session":
