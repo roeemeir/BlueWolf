@@ -37,7 +37,7 @@ jobs:
         run: npm test
 
   browser:
-    name: Browser QA v0.9
+    name: Browser QA v0.10
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [core, web]
@@ -70,10 +70,10 @@ jobs:
           done
           cat /tmp/bluewolf-server.log
           exit 1
-      - name: Desktop, PDF and mobile v0.9 acceptance
+      - name: Desktop, wind, templates, GT, investigation, PDF and mobile v0.10 acceptance
         env:
           BLUEWOLF_BASE_URL: http://127.0.0.1:3000
-        run: npx playwright test tests/browser-v09.spec.mjs --reporter=line --workers=1
+        run: npx playwright test tests/browser-v10.spec.mjs --reporter=line --workers=1
       - name: Application runtime log
         if: always()
         run: tail -n 250 /tmp/bluewolf-server.log || true
