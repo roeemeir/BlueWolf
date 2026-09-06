@@ -4,6 +4,7 @@ import type { SoRelation, VehicleType } from "@/lib/bluewolf";
 import { pointOnClosed, svgClosedPath } from "../v09/geometry";
 import { fixedVehicleTypes } from "../v09/map";
 import { getV09Scenario } from "../v09/simulator";
+import { windForVehicle, windOffsetPx, type WindMode } from "./wind";
 
 export type V10GroupKey = "si" | "so";
 export type OverlayKey = "trace" | "routes" | "hulls" | "relations" | "scoreTrace";
@@ -42,15 +43,16 @@ function continuousScoreColor(score: number) {
   return `hsl(${Math.round(safe * 1.2)} 70% 47%)`;
 }
 
-function traceScore(serverId: string, vehicleId: number, index: number, group: V10GroupKey) {
+function traceScore(serverId: string, vehicleId: number, index: number, group: V10GroupKey, tick: number, windMode: WindMode) {
   const base = group === "si" ? 91 : 84;
   const serverPenalty = serverId === "2" ? 7 : serverId === "3" ? 13 : 0;
-  return Math.max(0, Math.min(100, base - serverPenalty + 11 * Math.sin((vehicleId + index * 7) / 18)));
+  const windPenalty = windForVehicle(serverId, tick, vehicleId, windMode).syncPenalty;
+  return Math.max(0, Math.min(100, base - serverPenalty - windPenalty + 11 * Math.sin((vehicleId + index * 7) / 18)));
 }
 
 function routeByKey(routes: ReturnType<typeof getV09Scenario>["routes"], key: string) { return routes.find((route) => route.key === key) ?? routes[0]; }
 
-export function V10LiveMap({ serverId, tick, baseMap, overlays, vehicleTypes, selectedGroup, selectedVehicle, siAngles, soRelations, trailMinutes, onSelectGroup, onSelectVehicle, compact = false }: {
+export function V10LiveMap({ serverId, tick, baseMap, overlays, vehicleTypes, selectedGroup, selectedVehicle, siAngles, soRelations, trailMinutes, windMode = "off", onSelectGroup, onSelectVehicle, compact = false }: {
   serverId: string;
   tick: number;
   baseMap: string;
@@ -61,6 +63,7 @@ export function V10LiveMap({ serverId, tick, baseMap, overlays, vehicleTypes, se
   siAngles: number[];
   soRelations: SoRelation[];
   trailMinutes: number;
+  windMode?: WindMode;
   onSelectGroup: (group: V10GroupKey) => void;
   onSelectVehicle: (vehicle: number, group: V10GroupKey) => void;
   compact?: boolean;
@@ -70,7 +73,8 @@ export function V10LiveMap({ serverId, tick, baseMap, overlays, vehicleTypes, se
   const positions = (["si", "so"] as V10GroupKey[]).flatMap((groupKey) => scenario.groups[groupKey].members.map((vehicle) => {
     const route = routeByKey(scenario.routes, vehicle.routeKey);
     const point = pointOnClosed(route.points, vehicle.phase);
-    return { ...point, vehicle, groupKey, route };
+    const offset = windOffsetPx(serverId, tick, vehicle.id, windMode);
+    return { ...point, x: point.x + offset.x, y: point.y + offset.y, vehicle, groupKey, route };
   }));
   const siPositions = positions.filter((item) => item.groupKey === "si");
   const soPositions = positions.filter((item) => item.groupKey === "so");
@@ -82,11 +86,11 @@ export function V10LiveMap({ serverId, tick, baseMap, overlays, vehicleTypes, se
 
   return <svg className={`v09-live-map v10-live-map ${compact ? "compact" : ""}`} viewBox="0 0 1000 570" role="img" aria-label={`מפה חיה · ${scenario.title}`}>
     {background(baseMap)}
-    <g className="v09-map-heading"><text x="32" y="36">{scenario.title}</text><text x="32" y="57">{scenario.subtitle}</text><text x="32" y="78">עקבה: {trailMinutes} דקות</text></g>
+    <g className="v09-map-heading"><text x="32" y="36">{scenario.title}</text><text x="32" y="57">{scenario.subtitle}</text><text x="32" y="78">עקבה: {trailMinutes} דקות{windMode !== "off" ? " · הפרעת רוח פעילה" : ""}</text></g>
     {overlays.hulls && <g className="v09-hulls"><path d={hulls.si} fill="rgba(20,168,155,.045)" stroke={GROUP_COLORS.si} onClick={() => onSelectGroup("si")} /><path d={hulls.so} fill="rgba(93,111,244,.045)" stroke={GROUP_COLORS.so} onClick={() => onSelectGroup("so")} /></g>}
     {overlays.routes && <g className="v09-routes">{scenario.routes.map((route) => { const group = routeGroups.get(route.key) ?? "so"; return <path key={route.key} d={svgClosedPath(route.points)} fill="none" stroke={GROUP_COLORS[group]} strokeWidth={route.kind === "double" ? 5.6 : 4.6} opacity=".92" />; })}</g>}
-    {overlays.trace && <g className="v09-trace-dots">{positions.flatMap((item) => Array.from({ length: traceSamples }, (_, index) => { const point = pointOnClosed(item.route.points, item.vehicle.phase - (index + 1) * .012); return <circle key={`trace-${item.vehicle.id}-${index}`} cx={point.x} cy={point.y} r="3.7" fill={GROUP_COLORS[item.groupKey]} opacity={.18 + .62 * (1 - index / traceSamples)} />; }))}</g>}
-    {overlays.scoreTrace && <g className="v09-score-trace">{positions.flatMap((item) => Array.from({ length: scoreSamples }, (_, index) => { const point = pointOnClosed(item.route.points, item.vehicle.phase - (index + 1) * .011); const score = traceScore(serverId, item.vehicle.id, index, item.groupKey); return <circle key={`score-${item.vehicle.id}-${index}`} cx={point.x} cy={point.y} r="5" fill={continuousScoreColor(score)} stroke={GROUP_COLORS[item.groupKey]} strokeWidth="1.35" opacity=".93" />; }))}</g>}
+    {overlays.trace && <g className="v09-trace-dots">{positions.flatMap((item) => Array.from({ length: traceSamples }, (_, index) => { const historicalTick = tick - (index + 1) * 5; const point = pointOnClosed(item.route.points, item.vehicle.phase - (index + 1) * .012); const offset = windOffsetPx(serverId, historicalTick, item.vehicle.id, windMode); return <circle key={`trace-${item.vehicle.id}-${index}`} cx={point.x + offset.x} cy={point.y + offset.y} r="3.7" fill={GROUP_COLORS[item.groupKey]} opacity={.18 + .62 * (1 - index / traceSamples)} />; }))}</g>}
+    {overlays.scoreTrace && <g className="v09-score-trace">{positions.flatMap((item) => Array.from({ length: scoreSamples }, (_, index) => { const historicalTick = tick - (index + 1) * 5; const point = pointOnClosed(item.route.points, item.vehicle.phase - (index + 1) * .011); const offset = windOffsetPx(serverId, historicalTick, item.vehicle.id, windMode); const score = traceScore(serverId, item.vehicle.id, index, item.groupKey, historicalTick, windMode); return <circle key={`score-${item.vehicle.id}-${index}`} cx={point.x + offset.x} cy={point.y + offset.y} r="5" fill={continuousScoreColor(score)} stroke={GROUP_COLORS[item.groupKey]} strokeWidth="1.35" opacity=".93" />; }))}</g>}
     {overlays.relations && selectedGroup === "si" && <g className="v09-si-relations">{siPositions.flatMap((a, first) => siPositions.slice(first + 1).map((b) => { const ax = a.x - 235; const ay = a.y - 285; const bx = b.x - 235; const by = b.y - 285; const aa = Math.atan2(ay, ax); const bb = Math.atan2(by, bx); const raw = Math.abs(aa - bb) * 180 / Math.PI; const angle = Math.round(Math.min(raw, 360 - raw)); const x = (a.x + b.x) / 2; const y = (a.y + b.y) / 2; return <g key={`${a.vehicle.id}-${b.vehicle.id}`}><line x1={a.x} y1={a.y} x2={b.x} y2={b.y} /><rect x={x - 23} y={y - 11} width="46" height="22" rx="11" /><text x={x} y={y + 4} textAnchor="middle">{angle}°</text></g>; }))}<text x="230" y="525" textAnchor="middle" className="v09-template-caption">Template: {siAngles.join("° · ")}°</text></g>}
     {overlays.relations && selectedGroup === "so" && <g>{soPositions.slice(0, -1).map((item, index) => { const next = soPositions[index + 1]; return <g key={index}>{relationBadge((item.x + next.x) / 2, (item.y + next.y) / 2 - 36, soRelations[index] ?? "same")}</g>; })}</g>}
     <g className="v09-vehicles">{positions.map((item) => <VehicleArrow key={item.vehicle.id} x={item.x} y={item.y} heading={item.heading} color={GROUP_COLORS[item.groupKey]} id={item.vehicle.id} selected={selectedVehicle === item.vehicle.id} onClick={() => onSelectVehicle(item.vehicle.id, item.groupKey)} />)}</g>
