@@ -22,9 +22,24 @@ const eslintConfig = defineConfig([
   {
     files: ["components/bluewolf/developer-view-v09.tsx"],
     rules: {
-      // The SO permutation list is derived from counters; this one effect only
-      // re-points selection when the prior layout disappears after a counter change.
       "react-hooks/set-state-in-effect": "off",
+    },
+  },
+  {
+    files: ["components/bluewolf/v12/operator.tsx"],
+    rules: {
+      // Polling effects schedule external data-source refreshes. They live outside
+      // the replaceable algorithm core and intentionally update React state.
+      "react-hooks/set-state-in-effect": "off",
+      "react-hooks/preserve-manual-memoization": "off",
+    },
+  },
+  {
+    files: ["components/bluewolf/v12/investigation.tsx"],
+    rules: {
+      // Date.now/new Date initialize a user-selectable query range in the UI.
+      // Time is not consumed by the core except through the explicit dataset.
+      "react-hooks/purity": "off",
     },
   },
 ]);
