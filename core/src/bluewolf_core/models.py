@@ -86,7 +86,8 @@ class VehicleSample:
     """One canonical joined sample presented to the core.
 
     The ingestion adapter owns query, temporal join, interpolation and
-    forward-fill.  The core receives the result with provenance per field.
+    forward-fill. The core receives the result with provenance per field.
+    No TTAG is required by this contract.
     """
 
     sample_time_utc: datetime
@@ -157,6 +158,14 @@ class RouteRegion:
 
 @dataclass(frozen=True, slots=True)
 class ClosedRoute:
+    """Generic closed-route contract.
+
+    The canonical polyline is intentionally variable length. A detector may
+    internally resample to 64 points (or another bound) for performance, but
+    that is not a public-contract limit. Circles, octagons/polygons,
+    hippodromes and irregular closed loops all use the same representation.
+    """
+
     route_id: str
     family: RouteFamily
     subtype: RouteSubtype
@@ -174,8 +183,8 @@ class ClosedRoute:
     regions: tuple[RouteRegion, ...] = ()
 
     def __post_init__(self) -> None:
-        if not 3 <= len(self.canonical_points) <= 64:
-            raise ValueError("canonical_points must contain 3..64 points")
+        if len(self.canonical_points) < 3:
+            raise ValueError("canonical_points must contain at least 3 points")
         if self.length_m <= 0 or self.long_axis_a_m <= 0 or self.short_axis_b_m <= 0:
             raise ValueError("route dimensions must be positive")
         if self.estimated_period_s <= 0:
@@ -189,7 +198,7 @@ class PrimitiveMetrics:
     """Primitive errors consumed by the score function.
 
     `position_error` is expressed in degrees for SI and as a fraction of one
-    full cycle for SO.  The synchronization module may emphasize SO turn
+    full cycle for SO. The synchronization module may emphasize SO turn
     regions before placing the effective value here; `position_reason` keeps
     the operator-facing diagnostic without adding a fourth top-level weight.
     """
