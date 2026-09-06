@@ -1,4 +1,4 @@
-name: Blue Wolf v1.4 protected preview
+name: Blue Wolf v1.5 protected preview
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
   preview:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[preview]')
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 95
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,10 +24,12 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Python core release gate
+      - name: Replaceable Algorithm Core gate
+        run: npm run core:test
+      - name: Python reference-core gate
         working-directory: core
         run: PYTHONPATH=src python -m unittest discover -s tests -v
-      - name: Web static release gates
+      - name: Web + persistence release gates
         run: |
           npm run lint
           npx tsc --noEmit
@@ -48,7 +50,7 @@ jobs:
           done
           cat /tmp/bluewolf-app.log
           exit 1
-      - name: v1.4 navigation source, historical, GT E2E and mobile browser QA
+      - name: v1.5 Core boundary, NAV truth, history, GT and mobile browser QA
         env:
           BLUEWOLF_BASE_URL: http://127.0.0.1:3000
         run: npx playwright test tests/browser-v12.spec.mjs --reporter=line --workers=1
@@ -85,7 +87,7 @@ jobs:
           done
           cat /tmp/cloudflared.log
           exit 1
-      - name: Verify public login, authenticated app, API and assets
+      - name: Verify public login, authenticated app, workspace API and assets
         run: |
           HOST=${PREVIEW_URL#https://}
           PUBLIC_READY=0
@@ -129,13 +131,13 @@ jobs:
             echo "PREVIEW_URL=$PREVIEW_URL"
             echo "PREVIEW_PASSWORD=$PREVIEW_PASSWORD"
             echo "COMMIT=$GITHUB_SHA"
-            echo "VERIFICATION=Python Core + lint + TypeScript + build + JS provenance gates + v1.4 simulation/Influx source behavior + historical slicing + event PDF + GT E2E + mobile browser QA + public login/API/assets: PASS"
+            echo "VERIFICATION=Algorithm Core contract/tests + Python reference + lint + TypeScript + build + DB/architecture regression + v1.5 NAV/Influx/history/GT/browser/mobile + public login/workspace API/assets: PASS"
           } > /tmp/bluewolf-preview.txt
           cat /tmp/bluewolf-preview.txt
       - name: Upload preview details
         uses: actions/upload-artifact@v4
         with:
-          name: bluewolf-verified-preview-v14
+          name: bluewolf-verified-preview-v15
           path: /tmp/bluewolf-preview.txt
           retention-days: 1
           if-no-files-found: error
@@ -147,7 +149,7 @@ jobs:
         if: always()
         run: |
           echo "--- application ---"
-          tail -n 200 /tmp/bluewolf-app.log 2>/dev/null || true
+          tail -n 220 /tmp/bluewolf-app.log 2>/dev/null || true
           echo "--- gate ---"
           tail -n 160 /tmp/bluewolf-gate.log 2>/dev/null || true
           echo "--- tunnel ---"
