@@ -35,8 +35,6 @@ def _samples(points: list[tuple[float, float]], *, period_s: float = 120.0, dura
     for second in range(0, duration_s + 1, 2):
         x, y = _point_on_loop(points, second / period_s)
         lat, lon = local_m_to_wgs84(
-            # local_m_to_wgs84 accepts a CanonicalPoint through structural data
-            # only at runtime, so import lazily to keep this helper readable.
             __import__("bluewolf_core.models", fromlist=["CanonicalPoint"]).CanonicalPoint(x, y),
             ORIGIN_LAT,
             ORIGIN_LON,
@@ -67,11 +65,40 @@ def _double_so() -> list[tuple[float, float]]:
     ]
 
 
-def _figure_eight(count: int = 120) -> list[tuple[float, float]]:
+def _line(a: tuple[float, float], b: tuple[float, float], count: int = 30) -> list[tuple[float, float]]:
     return [
-        (145.0 * math.sin(t), 75.0 * math.sin(2.0 * t))
-        for t in (2.0 * math.pi * i / count for i in range(count))
+        (a[0] + (b[0] - a[0]) * i / count, a[1] + (b[1] - a[1]) * i / count)
+        for i in range(count)
     ]
+
+
+def _figure_eight() -> list[tuple[float, float]]:
+    """A hippodrome whose two straight legs cross at the centre.
+
+    The two end turns are ordinary semicircular hippodrome turns. The only
+    topology difference from a single SO hippodrome is that the upper-left leg
+    connects to the lower-right turn and the upper-right leg connects to the
+    lower-left turn, so the legs cross once.
+    """
+    left = (-100.0, 0.0)
+    right = (100.0, 0.0)
+    radius = 30.0
+    left_upper = (left[0], radius)
+    right_lower = (right[0], -radius)
+    right_upper = (right[0], radius)
+    left_lower = (left[0], -radius)
+
+    first_leg = _line(left_upper, right_lower)
+    right_turn = [
+        (right[0] + radius * math.cos(angle), radius * math.sin(angle))
+        for angle in (-math.pi / 2 + math.pi * i / 32 for i in range(32))
+    ]
+    second_leg = _line(right_upper, left_lower)
+    left_turn = [
+        (left[0] + radius * math.cos(angle), radius * math.sin(angle))
+        for angle in (-math.pi / 2 - math.pi * i / 32 for i in range(32))
+    ]
+    return first_leg + right_turn + second_leg + left_turn
 
 
 class ProductionTopologyIntegrationTests(unittest.TestCase):
@@ -84,7 +111,7 @@ class ProductionTopologyIntegrationTests(unittest.TestCase):
         self.assertLessEqual(len(detection.effective.canonical_points), 64)
         self.assertGreaterEqual(detection.fit_fraction, 0.75)
 
-    def test_figure_eight_keeps_self_crossing_topology(self) -> None:
+    def test_crossed_leg_hippodrome_is_figure_eight(self) -> None:
         detection = detect_closed_route(_samples(_figure_eight(), period_s=120, duration_s=360))
         self.assertIsNotNone(detection)
         assert detection is not None
