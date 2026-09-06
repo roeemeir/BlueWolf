@@ -8,7 +8,7 @@ import { normalizeInfluxRecords, type InfluxMappedRecord } from "@/lib/influx-na
 import { useWorkspace } from "../app-context";
 import { DEFAULT_SO_GROUPING } from "../v10/grouping";
 import { generateUniqueSoLayouts } from "../v10/template-builder";
-import { analyzeNavigationDataset } from "./navigation-analyzer";
+import { analyzeNavigationDataset, type NavigationDerivedAnalysis } from "./navigation-analyzer";
 import { analyzeNavigationHistory } from "./navigation-history";
 import { generateSimulationDataset, simulationHistoryBounds, simulatorGroundTruthAt, simulatorInjectedDisturbanceAt } from "./navigation-data";
 
@@ -16,6 +16,8 @@ type Result = { name: string; category: string; pass: boolean; detail: string };
 
 const bearingDiff = (a: number, b: number) => Math.abs(((a - b + 180) % 360 + 360) % 360 - 180);
 const ids = (value: number[]) => [...value].sort((a, b) => a - b).join(",");
+const routeSummary = (analysis: NavigationDerivedAnalysis) => analysis.routes.map((route) => `${route.vehicleId}:${route.kind}`).join(",") || "—";
+const noteSummary = (analysis: NavigationDerivedAnalysis) => analysis.groupingNotes.slice(0, 5).join(" | ") || "—";
 const fixtureRecords = (systemKey: string, value: string, time: string): InfluxMappedRecord[] => [{ systemKey, time, value, tags: { vehicle: "fixture-101" } }];
 
 export function V12SystemTests() {
@@ -71,7 +73,7 @@ export function V12SystemTests() {
             "שרת 1 · קבוצת SI בסיסית תואמת GT",
             "Simulator→NAV→Python Core→GT",
             ids(gt.siVehicles) === ids(analysis.groups.si.members),
-            `GT SI ${ids(gt.siVehicles)} · Core SI ${ids(analysis.groups.si.members)}`,
+            `GT SI ${ids(gt.siVehicles)} · Core SI ${ids(analysis.groups.si.members)} · routes ${routeSummary(analysis)} · notes ${noteSummary(analysis)}`,
           );
         }
         if (serverId === "2") {
@@ -85,7 +87,6 @@ export function V12SystemTests() {
             `GT=${gtFigure8 ?? "—"} · Core=${detectedFigure8?.kind ?? "—"} · crossedLegs=${String(detectedFigure8?.geometry?.crossedLegs ?? false)}`,
           );
         }
-        if (serverId === "3") add("שרת 3 · Double+Single מזוהים כקבוצת SO", "Python Core grouping", analysis.groups.so.members.length >= 2, `SO בפועל ${ids(analysis.groups.so.members)}`);
 
         const gtVehicle = gt.activeVehicles.find((id) => analysis.groups.so.vehicles[id] || analysis.groups.si.vehicles[id]);
         if (gtVehicle) {
@@ -103,6 +104,35 @@ export function V12SystemTests() {
           );
         }
       }
+
+      // Match the Operator's actual 30-minute live envelope, including the
+      // stateful Python session path instead of only the short stateless fixture.
+      const liveCenter = new Date(now.getTime() - 15_000);
+      const liveDataset = generateSimulationDataset({ serverId: "1", from: new Date(liveCenter.getTime() - 30 * 60_000), to: liveCenter, grouping, windMode: "gusty", targetPoints: 5200 });
+      const liveAnalysis = await analyzeNavigationDataset(liveDataset, options);
+      const liveGt = simulatorGroundTruthAt("1", liveCenter, grouping);
+      analysisCount += 1;
+      add(
+        "שרת 1 · חלון Live 30 דקות מחזיר קבוצת SI",
+        "Operator live session→Python Core→GT",
+        ids(liveGt.siVehicles) === ids(liveAnalysis.groups.si.members) && liveAnalysis.groups.si.members.length >= 2,
+        `GT SI ${ids(liveGt.siVehicles)} · Core SI ${ids(liveAnalysis.groups.si.members)} · routes ${routeSummary(liveAnalysis)} · notes ${noteSummary(liveAnalysis)}`,
+      );
+
+      // Deterministic pre-transition Server-3 timestamp. This test is expressly
+      // about articulated Double+Single grouping, so it must not drift into the
+      // scenario's later SO→SI transition merely because wall-clock time changed.
+      const server3Center = new Date("2026-09-06T11:58:00.000Z");
+      const server3Dataset = generateSimulationDataset({ serverId: "3", from: new Date(server3Center.getTime() - 12 * 60_000), to: server3Center, grouping, windMode: "gusty", targetPoints: 2600 });
+      const server3Analysis = await analyzeNavigationDataset(server3Dataset, options);
+      const server3Gt = simulatorGroundTruthAt("3", server3Center, grouping);
+      analysisCount += 1;
+      add(
+        "שרת 3 · Double+Single מזוהים כקבוצת SO",
+        "Simulator→NAV→Python Core→GT",
+        server3Gt.routeKinds[611] === "double" && server3Gt.routeKinds[613] === "single" && ids(server3Gt.soVehicles) === ids(server3Analysis.groups.so.members),
+        `GT SO ${ids(server3Gt.soVehicles)} · Core SO ${ids(server3Analysis.groups.so.members)} · routes ${routeSummary(server3Analysis)} · notes ${noteSummary(server3Analysis)}`,
+      );
 
       const valid = await checkSoPairCompatibility(
         { kind: "single", center: { x: 0, y: 0 }, radius: 25, legLength: 100, rotationDeg: 0 },
@@ -129,9 +159,6 @@ export function V12SystemTests() {
       const monthAgain = generateSimulationDataset({ serverId: "2", from: bounds.from, to: bounds.to, grouping, windMode: "gusty", targetPoints: 6500 });
       add("30 יום · שליפה דטרמיניסטית", "Historical NAV", month.samples.length > 0 && month.samples.length === monthAgain.samples.length && month.samples[0]?.timestamp === monthAgain.samples[0]?.timestamp && month.samples.at(-1)?.timestamp === monthAgain.samples.at(-1)?.timestamp, `${month.samples.length} דגימות · ${month.provenance.from} → ${month.provenance.to}`);
 
-      // Six hours remain a real raw-NAV historical replay. Forty-eight frames
-      // are enough to exercise event segmentation while keeping the interactive
-      // E2E button within its runtime budget on ordinary operator hardware/CI.
       const sixHours = generateSimulationDataset({ serverId: "3", from: new Date(now.getTime() - 6 * 60 * 60_000), to: now, grouping, windMode: "gusty", targetPoints: 4200 });
       const historyEnvelope = await analyzeNavigationHistory(sixHours, options, 48, 12);
       analysisCount += historyEnvelope.history.length;
@@ -157,10 +184,6 @@ export function V12SystemTests() {
       for (let index = 0; index < stress; index += 1) {
         const serverId = String(index % 3 + 1);
         const center = new Date(now.getTime() - (index * 173 % 30_000) * 60_000);
-        // Stress validates numerical stability across many true production-path
-        // analyses; it does not need the high-density route-fit fixture used by
-        // the semantic GT cases above. Keep 180/1000 real windows but sample
-        // each six-minute window sparsely enough for an interactive test run.
         const data = generateSimulationDataset({ serverId, from: new Date(center.getTime() - 6 * 60_000), to: center, grouping, windMode: index % 4 === 0 ? "off" : index % 4 === 1 ? "steady" : index % 4 === 2 ? "gusty" : "crosswind", targetPoints: 160 });
         const analysis = await analyzeNavigationDataset(data, options);
         analysisCount += 1;
