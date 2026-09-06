@@ -23,7 +23,7 @@ from enum import Enum
 from typing import Any, Mapping
 
 from . import CORE_API_VERSION, IMPLEMENTATION_LANGUAGE, __version__
-from .application_analysis import (
+from .application_analysis_v18 import (
     analyze_navigation_dataset,
     build_analysis_history,
     derive_events,
