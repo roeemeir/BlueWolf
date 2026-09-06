@@ -9,10 +9,11 @@ export type DataLoadResult = { dataset: NavigationDataset; error: string | null 
 
 /**
  * Load one navigation source. Real Influx server selection uses the canonical
- * server_id identity; no TTAG is part of the source contract or Join key.
+ * server_id identity. Historical callers may still carry a legacy serverTag
+ * property while persisted workspaces migrate; it is deliberately ignored.
  */
 export async function loadNavigationDataset({ mode, serverId, from, to, grouping, windMode, influx, targetPoints = 9_000 }: {
-  mode: "simulation" | "influx"; serverId: string; from: Date; to: Date; grouping: SoGroupingSettings; windMode: WindMode; influx: InfluxSettings; targetPoints?: number;
+  mode: "simulation" | "influx"; serverId: string; serverTag?: string; from: Date; to: Date; grouping: SoGroupingSettings; windMode: WindMode; influx: InfluxSettings; targetPoints?: number;
 }): Promise<DataLoadResult> {
   if (mode === "simulation") return { dataset: generateSimulationDataset({ serverId, from, to, grouping, windMode, targetPoints }), error: null };
   if (!influx.url || !influx.organization || !influx.token) {
