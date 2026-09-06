@@ -1,8 +1,8 @@
 """Stateful live application analysis around the canonical CoreSession.
 
 The browser/service contract sends one warm-up NavigationDataset and then only
-new five-second NAV batches.  This module keeps a bounded in-memory NAV window
-for display analysis while CoreSession owns the durable algorithm state.  The
+new five-second NAV batches. This module keeps a bounded in-memory NAV window
+for display analysis while CoreSession owns the durable algorithm state. The
 NAV window is intentionally not part of the checkpoint; after restart it is
 rehydrated by replay from InfluxDB.
 
@@ -13,11 +13,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 from . import __version__
 from .application_analysis_v18 import (
     analyze_navigation_dataset,
+    build_analysis_history,
     derive_events,
     provenance_from_samples,
 )
@@ -112,7 +113,30 @@ def app_config_to_core_config(raw: Mapping[str, Any]) -> CoreConfig:
 
 
 def _sample_key(sample: Mapping[str, Any]) -> tuple[str, int, str]:
-    return str(sample.get("serverId", sample.get("server_id", "0"))), int(sample.get("vehicleId", sample.get("vehicle_identifier", 0))), str(sample.get("timestamp", sample.get("sample_time_utc", "")))
+    return (
+        str(sample.get("serverId", sample.get("server_id", "0"))),
+        int(sample.get("vehicleId", sample.get("vehicle_identifier", 0))),
+        str(sample.get("timestamp", sample.get("sample_time_utc", ""))),
+    )
+
+
+def _bounded_dataset(
+    samples: list[dict[str, Any]],
+    provenance: Mapping[str, Any],
+    start: datetime,
+    end: datetime,
+) -> dict[str, Any]:
+    source = str(provenance.get("source", "simulation"))
+    server_id = str(provenance.get("serverId", "1"))
+    normalized = provenance_from_samples(
+        source,
+        server_id,
+        start,
+        end,
+        samples,
+        provenance.get("warnings", []),
+    )
+    return {"samples": samples, "provenance": normalized}
 
 
 @dataclass(slots=True)
@@ -143,6 +167,63 @@ class LiveAnalysisSession:
             algorithm_version=self.algorithm_version,
         )
 
+    def _analysis_envelope(
+        self,
+        provenance: Mapping[str, Any],
+        *,
+        accepted_samples: int,
+        core_batch: Any | None,
+        bootstrap_history: bool,
+    ) -> LiveAnalysisEnvelope:
+        latest_raw = provenance.get("to") or provenance.get("latestSampleAt")
+        latest = _parse_time(str(latest_raw)) if latest_raw else None
+        if latest is None and self.samples:
+            latest = max(_parse_time(str(sample["timestamp"])) for sample in self.samples)
+        if latest is not None:
+            cutoff = latest - timedelta(seconds=self.retention_seconds)
+            self.samples = [sample for sample in self.samples if _parse_time(str(sample["timestamp"])) >= cutoff]
+            self._seen = {_sample_key(sample) for sample in self.samples}
+
+        if self.samples:
+            start = min(_parse_time(str(sample["timestamp"])) for sample in self.samples)
+            end = latest or max(_parse_time(str(sample["timestamp"])) for sample in self.samples)
+        else:
+            end = latest or datetime.now(tz=UTC)
+            start = end
+        dataset = _bounded_dataset(self.samples, provenance, start, end)
+        analysis = analyze_navigation_dataset(dataset, self.app_config)
+
+        if bootstrap_history and self.samples and (end - start).total_seconds() >= 60:
+            self.history = build_analysis_history(
+                dataset,
+                self.app_config,
+                max_frames=min(self.max_history_frames, 36),
+                lookback_minutes=12,
+            )
+        else:
+            timestamp = dataset["provenance"].get("latestSampleAt") or dataset["provenance"].get("to")
+            if timestamp and (not self.history or self.history[-1]["timestamp"] != timestamp):
+                history_start = max(start, end - timedelta(minutes=12))
+                history_samples = [
+                    sample for sample in self.samples
+                    if _parse_time(str(sample["timestamp"])) >= history_start
+                ]
+                history_dataset = _bounded_dataset(history_samples, provenance, history_start, end)
+                self.history.append({
+                    "timestamp": timestamp,
+                    "analysis": analyze_navigation_dataset(history_dataset, self.app_config),
+                })
+                if len(self.history) > self.max_history_frames:
+                    self.history = self.history[-self.max_history_frames:]
+
+        return LiveAnalysisEnvelope(
+            analysis=analysis,
+            history=list(self.history),
+            events=derive_events(self.history, self.app_config.get("thresholds", {})),
+            accepted_samples=accepted_samples,
+            core_batch=core_batch,
+        )
+
     def ingest(self, dataset: Mapping[str, Any]) -> LiveAnalysisEnvelope:
         provenance = dict(dataset.get("provenance", {}))
         incoming = [dict(sample) for sample in dataset.get("samples", []) if isinstance(sample, Mapping)]
@@ -165,46 +246,11 @@ class LiveAnalysisSession:
                 observed_until_utc=observed,
             )
 
-        latest = observed
-        if latest is None and self.samples:
-            latest = max(_parse_time(str(sample["timestamp"])) for sample in self.samples)
-        if latest is not None:
-            cutoff = latest - timedelta(seconds=self.retention_seconds)
-            self.samples = [sample for sample in self.samples if _parse_time(str(sample["timestamp"])) >= cutoff]
-            self._seen = {_sample_key(sample) for sample in self.samples}
-
-        if self.samples:
-            start = min(_parse_time(str(sample["timestamp"])) for sample in self.samples)
-            end = latest or max(_parse_time(str(sample["timestamp"])) for sample in self.samples)
-        else:
-            end = latest or datetime.now(tz=UTC)
-            start = end
-        source = str(provenance.get("source", "simulation"))
-        server_id = str(provenance.get("serverId", "1"))
-        normalized_provenance = provenance_from_samples(
-            source,
-            server_id,
-            start,
-            end,
-            self.samples,
-            provenance.get("warnings", []),
-        )
-        analysis = analyze_navigation_dataset(
-            {"samples": self.samples, "provenance": normalized_provenance},
-            self.app_config,
-        )
-        timestamp = normalized_provenance.get("latestSampleAt") or normalized_provenance.get("to")
-        if timestamp and (not self.history or self.history[-1]["timestamp"] != timestamp):
-            self.history.append({"timestamp": timestamp, "analysis": analysis})
-            if len(self.history) > self.max_history_frames:
-                self.history = self.history[-self.max_history_frames:]
-        events = derive_events(self.history, self.app_config.get("thresholds", {}))
-        return LiveAnalysisEnvelope(
-            analysis=analysis,
-            history=list(self.history),
-            events=events,
+        return self._analysis_envelope(
+            provenance,
             accepted_samples=len(accepted),
             core_batch=core_batch,
+            bootstrap_history=not self.history,
         )
 
     def checkpoint(self) -> bytes:
@@ -228,43 +274,40 @@ class LiveAnalysisSession:
             max_history_frames=max_history_frames,
         )
         recovery_samples = [dict(sample) for sample in recovery_dataset.get("samples", []) if isinstance(sample, Mapping)]
+        wire_samples = [_vehicle_sample(sample) for sample in recovery_samples]
         session.core = CoreSession.from_checkpoint(
             checkpoint,
             config=app_config_to_core_config(app_config),
             algorithm_version=algorithm_version,
-            recovery_samples=[_vehicle_sample(sample) for sample in recovery_samples],
+            recovery_samples=wire_samples,
         )
-        # The CoreSession has already consumed recovery_samples. Seed only the
-        # display-analysis buffer, then run the envelope without re-feeding Core.
+
+        frontier = session.core.processed_until_utc
+        post_frontier = [
+            sample for sample, wire in zip(recovery_samples, wire_samples, strict=True)
+            if frontier is None or wire.sample_time_utc > frontier
+        ]
+        post_wire = [
+            wire for wire in wire_samples
+            if frontier is None or wire.sample_time_utc > frontier
+        ]
+        provenance = dict(recovery_dataset.get("provenance", {}))
+        observed_raw = provenance.get("to") or provenance.get("latestSampleAt")
+        observed = _parse_time(str(observed_raw)) if observed_raw else None
+        core_batch = None
+        if post_wire or (observed is not None and (frontier is None or observed > frontier)):
+            core_batch = session.core.process_batch(post_wire, observed_until_utc=observed)
+
+        # Seed the reconstructible display window with the replay range. Samples
+        # at/before frontier hydrated route state; samples after frontier were
+        # just processed normally above. None of this NAV is persisted in the
+        # compact checkpoint itself.
         session.samples = recovery_samples
         session._seen = {_sample_key(sample) for sample in recovery_samples}
-        provenance = dict(recovery_dataset.get("provenance", {}))
-        if recovery_samples:
-            latest = max(_parse_time(str(sample["timestamp"])) for sample in recovery_samples)
-            cutoff = latest - timedelta(seconds=session.retention_seconds)
-            session.samples = [sample for sample in recovery_samples if _parse_time(str(sample["timestamp"])) >= cutoff]
-            session._seen = {_sample_key(sample) for sample in session.samples}
-            start = min(_parse_time(str(sample["timestamp"])) for sample in session.samples)
-            normalized = provenance_from_samples(
-                str(provenance.get("source", "influx")),
-                str(provenance.get("serverId", "1")),
-                start,
-                latest,
-                session.samples,
-                provenance.get("warnings", []),
-            )
-        else:
-            now = _parse_time(str(provenance.get("to"))) if provenance.get("to") else datetime.now(tz=UTC)
-            normalized = provenance_from_samples(str(provenance.get("source", "influx")), str(provenance.get("serverId", "1")), now, now, [], provenance.get("warnings", []))
-        analysis = analyze_navigation_dataset({"samples": session.samples, "provenance": normalized}, app_config)
-        timestamp = normalized.get("latestSampleAt") or normalized.get("to")
-        if timestamp:
-            session.history = [{"timestamp": timestamp, "analysis": analysis}]
-        envelope = LiveAnalysisEnvelope(
-            analysis=analysis,
-            history=list(session.history),
-            events=derive_events(session.history, app_config.get("thresholds", {})),
-            accepted_samples=0,
-            core_batch=None,
+        envelope = session._analysis_envelope(
+            provenance,
+            accepted_samples=len(post_frontier),
+            core_batch=core_batch,
+            bootstrap_history=True,
         )
         return session, envelope
