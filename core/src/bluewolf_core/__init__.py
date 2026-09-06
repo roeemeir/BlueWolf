@@ -1,4 +1,4 @@
-"""Public contract for the Blue Wolf algorithmic core.
+"""Public contract for the canonical Blue Wolf Python algorithm core.
 
 Only symbols imported here are considered part of the stable envelope used by
 the surrounding application. The package intentionally has no knowledge of
@@ -83,9 +83,17 @@ from .sync_v08 import (
     so_turn_weighted_error,
 )
 
+# Stable application/Core envelope. This is intentionally independent from the
+# implementation version so the Python implementation can evolve internally
+# without forcing UI/DB changes when the public contract remains compatible.
+CORE_API_VERSION = "1.0.0"
+IMPLEMENTATION_LANGUAGE = "python"
+
 RouteLifecycleV08 = RouteLifecycle
 
 __all__ = [
+    "CORE_API_VERSION",
+    "IMPLEMENTATION_LANGUAGE",
     "ChangeKind",
     "CheckpointCompatibilityError",
     "ClosedRoute",
