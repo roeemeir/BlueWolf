@@ -153,14 +153,47 @@ export function doubleHippodromeLoop(
   return points;
 }
 
+/**
+ * Figure-8 SO = one normal hippodrome whose two straight legs are crossed.
+ * The two end turns remain ordinary outward semicircles; only the connections
+ * between them are swapped, producing exactly one self-intersection at center.
+ */
 export function figureEightLoop(center: Point, radius: number, legLength: number, rotationDeg = 0, samples = 160): Point[] {
-  const sx = Math.max(radius * 1.45, legLength / 2 + radius);
-  const sy = Math.max(radius * 0.9, 18);
-  return Array.from({ length: samples }, (_, index) => {
-    const t = index / samples * TAU;
-    const local = { x: sx * Math.sin(t), y: sy * Math.sin(2 * t) };
-    return rotate(add(center, local), center, rotationDeg);
-  });
+  const r = Math.max(4, radius);
+  const leg = Math.max(r * 2.2, legLength);
+  const u = unitFromAngle(rotationDeg);
+  const n = { x: -u.y, y: u.x };
+  const a = add(center, scale(u, -leg / 2));
+  const b = add(center, scale(u, leg / 2));
+  const topA = add(a, scale(n, r));
+  const bottomA = add(a, scale(n, -r));
+  const topB = add(b, scale(n, r));
+  const bottomB = add(b, scale(n, -r));
+  const lineCount = Math.max(12, Math.round(samples * 0.24));
+  const arcCount = Math.max(20, Math.round(samples * 0.26));
+  const points: Point[] = [];
+
+  // Crossed leg 1: top-left -> bottom-right.
+  points.push(...lineSamples(topA, bottomB, lineCount));
+  // Normal right U-turn: bottom-right -> top-right.
+  for (let index = 1; index < arcCount; index += 1) {
+    const angle = -Math.PI / 2 + Math.PI * index / (arcCount - 1);
+    points.push({
+      x: b.x + u.x * r * Math.cos(angle) + n.x * r * Math.sin(angle),
+      y: b.y + u.y * r * Math.cos(angle) + n.y * r * Math.sin(angle),
+    });
+  }
+  // Crossed leg 2: top-right -> bottom-left.
+  points.push(...lineSamples(topB, bottomA, lineCount, true));
+  // Normal left U-turn: bottom-left -> top-left.
+  for (let index = 1; index < arcCount; index += 1) {
+    const angle = -Math.PI / 2 + Math.PI * index / (arcCount - 1);
+    points.push({
+      x: a.x - u.x * r * Math.cos(angle) + n.x * r * Math.sin(angle),
+      y: a.y - u.y * r * Math.cos(angle) + n.y * r * Math.sin(angle),
+    });
+  }
+  return points;
 }
 
 export function svgClosedPath(points: Point[]) {
