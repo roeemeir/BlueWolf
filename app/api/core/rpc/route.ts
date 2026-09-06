@@ -1,5 +1,10 @@
 const DEFAULT_CORE_URL = "http://127.0.0.1:8765";
 
+type CoreRpcRequest = {
+  command?: string;
+  dataset?: { provenance?: { source?: string; serverId?: string; sampleCount?: number; latestSampleAt?: string | null } };
+};
+
 function coreBaseUrl() {
   const raw = (process.env.BLUEWOLF_PYTHON_CORE_URL ?? DEFAULT_CORE_URL).trim();
   const parsed = new URL(raw);
@@ -19,9 +24,8 @@ function commandTimeoutMs(command: unknown) {
   return 30_000;
 }
 
-function ciLiveDiagnostic(command: unknown, body: unknown, payload: unknown) {
+function ciLiveDiagnostic(command: unknown, body: CoreRpcRequest, payload: unknown) {
   if (!process.env.CI || (command !== "create_analysis_session" && command !== "process_analysis_batch")) return;
-  const requestBody = body as { dataset?: { provenance?: { source?: string; serverId?: string; sampleCount?: number; latestSampleAt?: string | null } } };
   const responseBody = payload as {
     ok?: boolean;
     analysis?: {
@@ -29,7 +33,7 @@ function ciLiveDiagnostic(command: unknown, body: unknown, payload: unknown) {
       routes?: Array<{ vehicleId?: number; kind?: string }>;
     };
   };
-  const provenance = requestBody.dataset?.provenance;
+  const provenance = body.dataset?.provenance;
   const analysis = responseBody.analysis;
   console.info("[bluewolf-live-core]", JSON.stringify({
     command,
@@ -63,8 +67,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  let body: CoreRpcRequest | null = null;
   try {
-    const body = await request.json() as { command?: string };
+    body = await request.json() as CoreRpcRequest;
     const response = await fetch(`${coreBaseUrl()}/rpc`, {
       method: "POST",
       cache: "no-store",
@@ -76,6 +81,17 @@ export async function POST(request: Request) {
     ciLiveDiagnostic(body.command, body, payload);
     return Response.json(payload, { status: response.status });
   } catch (error) {
+    if (process.env.CI) {
+      const provenance = body?.dataset?.provenance;
+      console.error("[bluewolf-core-rpc-error]", JSON.stringify({
+        command: body?.command ?? "unknown",
+        source: provenance?.source,
+        serverId: provenance?.serverId,
+        sampleCount: provenance?.sampleCount,
+        latestSampleAt: provenance?.latestSampleAt,
+        message: error instanceof Error ? error.message : "Python Core unavailable",
+      }));
+    }
     return Response.json({
       ok: false,
       error: "python_core_unavailable",
