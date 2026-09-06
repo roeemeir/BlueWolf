@@ -22,7 +22,9 @@ test("template switch is group-contextual and score trail colorbar is multicolor
   await page.setViewportSize({ width: 1360, height: 950 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await expect(page.getByRole("button", { name: "החלפת תבנית לקבוצה" })).toHaveCount(0);
-  await page.locator(".v10-group-card").first().click();
+  const detectedGroup = page.locator(".v10-group-card:has(.v10-compact-scores)").first();
+  await expect(detectedGroup).toBeVisible({ timeout: 20_000 });
+  await detectedGroup.click();
   await expect(page.getByRole("button", { name: "החלפת תבנית לקבוצה" })).toBeVisible();
   await page.getByRole("button", { name: "החלפת תבנית לקבוצה" }).click();
   await expect(page.locator(".v09-template-sheet")).toBeVisible();
@@ -79,6 +81,7 @@ test("in-app System Tests execute production Core and compare Figure-8 to extern
   await expect(page.locator(".v09-test-grid")).toContainText("Core contract");
   await expect(page.locator(".v09-test-grid")).toContainText("Simulator→NAV→Python Core→GT");
   await expect(page.locator(".v09-test-grid")).toContainText("שמינייה = היפודרום עם legs מוצלבים");
+  await expect(page.locator(".v09-test-grid")).toContainText("הפרעת NAV מוזרקת מול estimate");
   await expect(page.locator(".v09-test-grid")).toContainText("30 יום");
   await expect(page.locator(".v09-test-grid")).toContainText("Influx adapter");
   expect(runtime, runtime.join("\n")).toEqual([]);
