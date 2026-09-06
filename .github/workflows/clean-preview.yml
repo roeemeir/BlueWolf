@@ -99,7 +99,21 @@ jobs:
 
       - name: Verify public login, authenticated app, API and assets
         run: |
-          curl --retry 15 --retry-all-errors --retry-delay 2 -fsS "$PREVIEW_URL/" -o /tmp/public-login.html
+          HOST=${PREVIEW_URL#https://}
+          PUBLIC_READY=0
+          for attempt in $(seq 1 60); do
+            if getent ahostsv4 "$HOST" >/dev/null 2>&1 && curl -fsS --connect-timeout 5 --max-time 15 "$PREVIEW_URL/" -o /tmp/public-login.html; then
+              PUBLIC_READY=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$PUBLIC_READY" -ne 1 ]; then
+            echo "Public tunnel never became DNS/reachability ready: $PREVIEW_URL"
+            getent ahostsv4 "$HOST" || true
+            tail -n 120 /tmp/cloudflared.log || true
+            exit 1
+          fi
           grep -q "Protected validation preview" /tmp/public-login.html
           curl --retry 10 --retry-all-errors --retry-delay 2 -fsS -c /tmp/bluewolf-preview.cookies -D /tmp/bluewolf-login.headers -o /dev/null -X POST --data-urlencode "password=$PREVIEW_PASSWORD" "$PREVIEW_URL/__bluewolf_login"
           grep -q "303" /tmp/bluewolf-login.headers
