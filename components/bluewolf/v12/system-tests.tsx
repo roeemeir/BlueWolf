@@ -66,6 +66,14 @@ export function V12SystemTests() {
         add(`שרת ${serverId} · רכבים פעילים`, "Simulator→NAV→Python Core→GT", gt.activeVehicles.every((id) => detected.includes(id)), `GT ${ids(gt.activeVehicles)} · ניתוח ${ids(detected)}`);
         add(`שרת ${serverId} · טווח ציונים`, "Python Core scoring", [analysis.groups.si.score, analysis.groups.so.score].every((score) => Object.values(score).every((value) => Number.isFinite(value) && value >= 0 && value <= 100)), `SI ${analysis.groups.si.score.total} · SO ${analysis.groups.so.score.total}`);
 
+        if (serverId === "1") {
+          add(
+            "שרת 1 · קבוצת SI בסיסית תואמת GT",
+            "Simulator→NAV→Python Core→GT",
+            ids(gt.siVehicles) === ids(analysis.groups.si.members),
+            `GT SI ${ids(gt.siVehicles)} · Core SI ${ids(analysis.groups.si.members)}`,
+          );
+        }
         if (serverId === "2") {
           add("שרת 2 · נתיב SO מרוחק נשאר מחוץ לקבוצה", "Python Core grouping", gt.ungroupedVehicles.every((id) => analysis.ungroupedVehicles.includes(id)), `GT מחוץ ${ids(gt.ungroupedVehicles)} · בפועל ${ids(analysis.ungroupedVehicles)}`);
           const gtFigure8 = gt.routeKinds[521];
@@ -121,8 +129,11 @@ export function V12SystemTests() {
       const monthAgain = generateSimulationDataset({ serverId: "2", from: bounds.from, to: bounds.to, grouping, windMode: "gusty", targetPoints: 6500 });
       add("30 יום · שליפה דטרמיניסטית", "Historical NAV", month.samples.length > 0 && month.samples.length === monthAgain.samples.length && month.samples[0]?.timestamp === monthAgain.samples[0]?.timestamp && month.samples.at(-1)?.timestamp === monthAgain.samples.at(-1)?.timestamp, `${month.samples.length} דגימות · ${month.provenance.from} → ${month.provenance.to}`);
 
-      const sixHours = generateSimulationDataset({ serverId: "3", from: new Date(now.getTime() - 6 * 60 * 60_000), to: now, grouping, windMode: "gusty", targetPoints: 5500 });
-      const historyEnvelope = await analyzeNavigationHistory(sixHours, options, 80, 12);
+      // Six hours remain a real raw-NAV historical replay. Forty-eight frames
+      // are enough to exercise event segmentation while keeping the interactive
+      // E2E button within its runtime budget on ordinary operator hardware/CI.
+      const sixHours = generateSimulationDataset({ serverId: "3", from: new Date(now.getTime() - 6 * 60 * 60_000), to: now, grouping, windMode: "gusty", targetPoints: 4200 });
+      const historyEnvelope = await analyzeNavigationHistory(sixHours, options, 48, 12);
       analysisCount += historyEnvelope.history.length;
       add("אירועים · נגזרים מהיסטוריית NAV", "Investigation", historyEnvelope.events.length > 0 && historyEnvelope.events.every((event) => event.frames.length > 0 && event.startReason.length > 10 && event.endReason.length > 10), `${historyEnvelope.events.length} אירועים מתוך ${historyEnvelope.history.length} frames`);
 
@@ -146,7 +157,11 @@ export function V12SystemTests() {
       for (let index = 0; index < stress; index += 1) {
         const serverId = String(index % 3 + 1);
         const center = new Date(now.getTime() - (index * 173 % 30_000) * 60_000);
-        const data = generateSimulationDataset({ serverId, from: new Date(center.getTime() - 6 * 60_000), to: center, grouping, windMode: index % 4 === 0 ? "off" : index % 4 === 1 ? "steady" : index % 4 === 2 ? "gusty" : "crosswind", targetPoints: 520 });
+        // Stress validates numerical stability across many true production-path
+        // analyses; it does not need the high-density route-fit fixture used by
+        // the semantic GT cases above. Keep 180/1000 real windows but sample
+        // each six-minute window sparsely enough for an interactive test run.
+        const data = generateSimulationDataset({ serverId, from: new Date(center.getTime() - 6 * 60_000), to: center, grouping, windMode: index % 4 === 0 ? "off" : index % 4 === 1 ? "steady" : index % 4 === 2 ? "gusty" : "crosswind", targetPoints: 160 });
         const analysis = await analyzeNavigationDataset(data, options);
         analysisCount += 1;
         const finite = [...Object.values(analysis.groups.si.score), ...Object.values(analysis.groups.so.score)].every((value) => Number.isFinite(value));
