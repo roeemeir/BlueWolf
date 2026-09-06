@@ -43,6 +43,13 @@ export type SimulatorGroundTruth = {
   routeKinds: Record<number, NavigationRouteKind>; routeKeys: Record<number, string>;
 };
 
+export type SimulatorInjectedDisturbance = {
+  speedKnots: number;
+  bearingDeg: number;
+  velocityNorth: number;
+  velocityEast: number;
+};
+
 export const SIMULATION_HISTORY_DAYS = 30;
 const SIM_ORIGIN_LAT = 31.7045;
 const SIM_ORIGIN_LON = 34.8435;
@@ -86,6 +93,23 @@ function sampleAt(serverId: string, timestamp: Date, grouping: SoGroupingSetting
     out.push({ source: "simulation", serverId, timestamp: timestamp.toISOString(), vehicleId, active: true, latitude: geo.latitude, longitude: geo.longitude, altitude: 35 + (vehicleId % 7) * 1.5, velocityNorth, velocityEast, x: point.x, y: point.y });
   }
   return out;
+}
+
+/**
+ * Simulator-only GT for the disturbance that is actually observable in NAV.
+ * It is derived from the exact same scenario at the exact same timestamp with
+ * wind enabled versus wind disabled. It is never supplied to production Core.
+ */
+export function simulatorInjectedDisturbanceAt(serverId: string, timestamp: Date, grouping: SoGroupingSettings, vehicleId: number, windMode: WindMode): SimulatorInjectedDisturbance | null {
+  const windy = sampleAt(serverId, timestamp, grouping, windMode).find((sample) => sample.vehicleId === vehicleId);
+  const calm = sampleAt(serverId, timestamp, grouping, "off").find((sample) => sample.vehicleId === vehicleId);
+  if (!windy || !calm) return null;
+  const velocityEast = windy.velocityEast - calm.velocityEast;
+  const velocityNorth = windy.velocityNorth - calm.velocityNorth;
+  const speedMps = Math.hypot(velocityEast, velocityNorth);
+  const speedKnots = speedMps * 1.9438444924406;
+  const bearingDeg = speedMps < 0.05 ? 0 : ((Math.atan2(velocityEast, velocityNorth) * 180 / Math.PI % 360) + 360) % 360;
+  return { speedKnots, bearingDeg, velocityNorth, velocityEast };
 }
 
 export function simulatorGroundTruthAt(serverId: string, timestamp: Date, grouping: SoGroupingSettings): SimulatorGroundTruth {
