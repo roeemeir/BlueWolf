@@ -4,7 +4,7 @@ import math
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from bluewolf_core.live_analysis import LiveAnalysisSession
+from bluewolf_core.live_analysis import LiveAnalysisSession, _core_bootstrap_samples
 
 
 START = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
@@ -94,6 +94,22 @@ class LiveAnalysisV18Tests(unittest.TestCase):
         self.assertEqual(len(incremental.history), 2)
         self.assertEqual(sorted(incremental.analysis["groups"]["si"]["members"]), [101, 201, 301])
         self.assertEqual(incremental.analysis["provenance"]["latestSampleAt"], (START + timedelta(seconds=185)).isoformat(timespec="milliseconds").replace("+00:00", "Z"))
+
+    def test_long_warmup_retains_full_display_nav_but_bounds_streaming_bootstrap(self) -> None:
+        dataset = _dataset(0, 1800)
+        observed = START + timedelta(seconds=1800)
+        bootstrap = _core_bootstrap_samples(dataset["samples"], observed)
+        self.assertEqual(len(bootstrap), 601 * 3)
+        self.assertEqual(bootstrap[0]["timestamp"], (START + timedelta(seconds=1200)).isoformat().replace("+00:00", "Z"))
+
+        session = LiveAnalysisSession(_config(), retention_seconds=30 * 60)
+        envelope = session.ingest(dataset)
+        self.assertEqual(envelope.accepted_samples, 1801 * 3)
+        self.assertEqual(len(session.samples), 1801 * 3)
+        self.assertIsNotNone(envelope.core_batch)
+        self.assertEqual(len(envelope.core_batch.frames), 601 * 3)
+        self.assertEqual(session.core.processed_until_utc, observed)
+        self.assertEqual(sorted(envelope.analysis["groups"]["si"]["members"]), [101, 201, 301])
 
     def test_incremental_analysis_matches_same_final_navigation_window(self) -> None:
         incremental = LiveAnalysisSession(_config())
