@@ -116,6 +116,22 @@ class LiveAnalysisV18Tests(unittest.TestCase):
         self.assertTrue(envelope.analysis["available"])
         self.assertLess(len(restored.samples), len(session.samples))
 
+    def test_restore_replays_samples_after_checkpoint_frontier(self) -> None:
+        original = LiveAnalysisSession(_config())
+        original.ingest(_dataset(0, 360))
+        checkpoint = original.checkpoint()
+        uninterrupted = original.ingest(_dataset(361, 365))
+
+        restored, recovered = LiveAnalysisSession.restore(
+            checkpoint,
+            app_config=_config(),
+            recovery_dataset=_dataset(300, 365),
+        )
+        self.assertEqual(restored.core.processed_until_utc, START + timedelta(seconds=365))
+        self.assertEqual(recovered.accepted_samples, 5 * 3)
+        self.assertEqual(recovered.analysis["groups"], uninterrupted.analysis["groups"])
+        self.assertEqual(recovered.analysis["current"], uninterrupted.analysis["current"])
+
 
 if __name__ == "__main__":
     unittest.main()
