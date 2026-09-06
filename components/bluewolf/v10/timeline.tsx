@@ -1,7 +1,8 @@
 "use client";
 
-import { v09ScoreSeries } from "../v09/simulator";
+import { getV09Scenario, v09ScoreSeries } from "../v09/simulator";
 import { GROUP_COLORS, type V10GroupKey } from "./map";
+import { applyWindPenalty, averageWindPenalty, type WindMode } from "./wind";
 
 export type TimelineLayer = "total" | "sync" | "route";
 
@@ -17,8 +18,28 @@ function formatClock(minuteAgo: number) {
   return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
 }
 
-export function V10Timeline({ serverId, windowMinutes, layers, groups, cursor, onCursor }: { serverId: string; windowMinutes: 30 | 60 | 90 | 120; layers: TimelineLayer[]; groups: V10GroupKey[]; cursor: number; onCursor: (value: number) => void }) {
-  const full = v09ScoreSeries(serverId, 120);
+function disturbedSeries(serverId: string, windMode: WindMode, syncWeightPct: number) {
+  return v09ScoreSeries(serverId, 120).map((item) => {
+    if (windMode === "off") return item;
+    const historicalTick = item.minute * 60;
+    const scenario = getV09Scenario(serverId, historicalTick);
+    const disturb = (group: V10GroupKey) => {
+      const base = item[group];
+      const penalty = averageWindPenalty(
+        serverId,
+        historicalTick,
+        scenario.groups[group].members.map((member) => member.id),
+        windMode,
+      );
+      const adjusted = applyWindPenalty(base.sync, base.route, syncWeightPct, penalty);
+      return { ...base, sync: adjusted.sync, total: adjusted.total };
+    };
+    return { ...item, si: disturb("si"), so: disturb("so") };
+  });
+}
+
+export function V10Timeline({ serverId, windowMinutes, layers, groups, cursor, onCursor, windMode = "off", syncWeightPct = 75 }: { serverId: string; windowMinutes: 30 | 60 | 90 | 120; layers: TimelineLayer[]; groups: V10GroupKey[]; cursor: number; onCursor: (value: number) => void; windMode?: WindMode; syncWeightPct?: number }) {
+  const full = disturbedSeries(serverId, windMode, syncWeightPct);
   const visible = full.slice(full.length - (windowMinutes + 1));
   const left = 56; const right = 1040; const top = 24; const bottom = 246;
   const x = (index: number) => left + index / Math.max(1, visible.length - 1) * (right - left);
@@ -41,6 +62,6 @@ export function V10Timeline({ serverId, windowMinutes, layers, groups, cursor, o
       <g transform="translate(62 296)" className="v09-group-legend"><circle cx="7" cy="0" r="6" fill={GROUP_COLORS.si} /><text x="20" y="4">קבוצת SI</text><circle cx="115" cy="0" r="6" fill={GROUP_COLORS.so} /><text x="128" y="4">קבוצת SO</text></g>
       <g transform="translate(390 296)" className="v09-style-legend">{layers.map((layer, index) => <g key={layer} transform={`translate(${index * 170} 0)`}><line x1="0" x2="34" y1="0" y2="0" stroke="currentColor" strokeWidth={STYLE[layer].width} strokeDasharray={STYLE[layer].dash} /><text x="44" y="4">{STYLE[layer].label}</text></g>)}</g>
     </svg>
-    <div className="v09-timeline-caption"><span>חלון מוצג בפועל: {windowMinutes} דקות</span><span>קבוצות מוצגות: {groups.map((group) => group.toUpperCase()).join(" + ")}</span></div>
+    <div className="v09-timeline-caption"><span>חלון מוצג בפועל: {windowMinutes} דקות</span><span>קבוצות מוצגות: {groups.map((group) => group.toUpperCase()).join(" + ")}</span>{windMode !== "off" && <span>הפרעת רוח: {windMode} · משוקללת ב־Sync ובציון הכולל</span>}</div>
   </div>;
 }
