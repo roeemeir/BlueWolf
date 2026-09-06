@@ -128,7 +128,15 @@ export function provenanceFromSamples(source: NavigationSource, serverId: string
 }
 
 export function generateSimulationDataset({ serverId, from, to, grouping, windMode = "gusty", targetPoints = 9_000 }: { serverId: string; from: Date; to: Date; grouping: SoGroupingSettings; windMode?: WindMode; targetPoints?: number }): NavigationDataset {
-  const bounds = simulationHistoryBounds(to > new Date() ? to : new Date()); const safeFrom = new Date(Math.max(from.getTime(), bounds.from.getTime())); const safeTo = new Date(Math.min(to.getTime(), bounds.to.getTime()));
+  // A historical request is deterministic with respect to its explicit `to`.
+  // Only a genuinely future endpoint is clamped to the current instant. This
+  // prevents repeated requests for the same 30-day range from drifting by the
+  // milliseconds elapsed between calls.
+  const wallClockNow = new Date();
+  const availabilityTo = to.getTime() > wallClockNow.getTime() ? wallClockNow : to;
+  const bounds = simulationHistoryBounds(availabilityTo);
+  const safeFrom = new Date(Math.max(from.getTime(), bounds.from.getTime()));
+  const safeTo = new Date(Math.min(to.getTime(), bounds.to.getTime()));
   if (safeFrom >= safeTo) return { samples: [], provenance: provenanceFromSamples("simulation", serverId, safeFrom, safeTo, [], ["טווח הסימולציה המבוקש ריק או מחוץ ל־30 הימים הזמינים."]) };
   const durationSec = (safeTo.getTime() - safeFrom.getTime()) / 1000; const stepSeconds = Math.max(2, Math.ceil(durationSec * 8 / Math.max(1, targetPoints))); const samples: RawNavigationSample[] = [];
   for (let ms = safeFrom.getTime(); ms <= safeTo.getTime(); ms += stepSeconds * 1000) samples.push(...sampleAt(serverId, new Date(ms), grouping, windMode));
