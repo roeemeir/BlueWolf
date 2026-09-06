@@ -231,12 +231,154 @@ def _segments(geometry: Mapping[str, Any]) -> list[dict[str, Any]]:
     return _ORIGINAL_SEGMENTS(geometry)
 
 
+def _largest_si_component(circles: Sequence[_base._Track]) -> tuple[list[_base._Track], list[_base._Track]]:
+    """Select the strongest same-centre/same-direction SI component.
+
+    A remote route that is temporarily classified as compact/circular must not
+    invalidate every valid concentric SI route. Compatibility is therefore
+    pairwise and the largest connected component wins, mirroring the SO grouping
+    strategy. Rotation direction is part of the SI law.
+    """
+    if len(circles) <= 1:
+        return list(circles), []
+    adjacency = [set() for _ in circles]
+    for first_index in range(len(circles)):
+        first = circles[first_index]
+        for second_index in range(first_index + 1, len(circles)):
+            second = circles[second_index]
+            center_limit = max(first.fit.minor_span, second.fit.minor_span) * 0.7
+            compatible = first.direction == second.direction and _base._distance(first.fit.center, second.fit.center) <= center_limit
+            if compatible:
+                adjacency[first_index].add(second_index)
+                adjacency[second_index].add(first_index)
+    visited: set[int] = set()
+    components: list[list[int]] = []
+    for start in range(len(circles)):
+        if start in visited:
+            continue
+        stack = [start]
+        visited.add(start)
+        component: list[int] = []
+        while stack:
+            index = stack.pop()
+            component.append(index)
+            for neighbor in adjacency[index]:
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    stack.append(neighbor)
+        components.append(component)
+    components.sort(key=lambda values: (-len(values), values[0]))
+    selected = set(components[0] if components else [])
+    return (
+        [track for index, track in enumerate(circles) if index in selected],
+        [track for index, track in enumerate(circles) if index not in selected],
+    )
+
+
+def analyze_navigation_dataset(dataset: Mapping[str, Any], config: Mapping[str, Any]) -> dict[str, Any]:
+    provenance = dict(dataset.get("provenance", {}))
+    grouped = _base._group_by_vehicle(dataset.get("samples", []))
+    tracks = [track for vehicle_id, samples in grouped.items() if (track := _build_track(vehicle_id, samples, config)) is not None]
+    if not tracks:
+        groups = {"si": _base._empty_group("si"), "so": _base._empty_group("so")}
+        return {
+            "coreApiVersion": _base.CORE_API_VERSION,
+            "available": False,
+            "provenance": provenance,
+            "routes": [],
+            "groups": groups,
+            "ungroupedVehicles": [],
+            "current": {},
+            "alerts": _base._alerts(groups, [], provenance, config),
+            "groupingNotes": [],
+        }
+
+    transform = _base._display_transform(tracks)
+    circles = [track for track in tracks if track.kind == "circle"]
+    so_tracks = [track for track in tracks if track.kind != "circle" and track.geometry is not None]
+    candidate_si, discarded_si = _largest_si_component(circles)
+    si_tracks = candidate_si if len(candidate_si) >= 2 else []
+    grouping_settings = config.get("groupingSettings") or _base.DEFAULT_SO_GROUPING
+    grouped_so, _discarded_so, pair_evidence = _base._largest_compatible_component(so_tracks, grouping_settings)
+    active_so = grouped_so if len(grouped_so) >= 2 else []
+    active_ids = {track.vehicle_id for track in [*si_tracks, *active_so]}
+    ungrouped = [track.vehicle_id for track in tracks if track.vehicle_id not in active_ids]
+    grouping_notes = [f"{key}: {value['explanation']}" for key, value in pair_evidence.items()]
+    if discarded_si:
+        grouping_notes.append(f"SI outliers: {', '.join(str(track.vehicle_id) for track in discarded_si)}")
+
+    si_timing, so_timing = _base._period_stats(si_tracks), _base._period_stats(active_so)
+    si_angles = _base._si_observed_angles(si_tracks)
+    ordered_so = sorted(active_so, key=lambda track: (track.fit.center["x"], track.vehicle_id))
+    so_relations = [_base._classify_phase(ordered_so[index + 1].phase - ordered_so[index].phase) for index in range(max(0, len(ordered_so) - 1))]
+    si_route_score = _base._mean([track.route_score for track in si_tracks])
+    so_route_score = _base._mean([track.route_score for track in active_so])
+    si_route_parts, so_route_parts = _base._aggregate_route_parts(si_tracks), _base._aggregate_route_parts(active_so)
+    desired_si = list((config.get("siTemplate") or {}).get("values", []))
+    si_score = _base._si_scores(si_angles, desired_si, si_route_score, si_route_parts, si_timing["periodErrorPct"], si_timing["motionErrorPct"], config) if len(si_tracks) >= 2 else dict(_base.EMPTY_SCORE)
+    so_score = _base._so_scores(so_relations, _base._template_relations(config), so_route_score, so_route_parts, so_timing["periodErrorPct"], so_timing["motionErrorPct"], config) if len(active_so) >= 2 else dict(_base.EMPTY_SCORE)
+    groups = {
+        "si": {
+            "key": "si", "id": "SI-NAV", "name": "קבוצת SI", "family": "SI",
+            "members": [track.vehicle_id for track in si_tracks], "score": si_score,
+            "routeScore": si_route_score, "observedAngles": si_angles, "observedRelations": [],
+            "periodErrorPct": si_timing["periodErrorPct"], "motionErrorPct": si_timing["motionErrorPct"],
+            "vehicles": _base._group_vehicle_scores(si_tracks, si_score, si_timing, provenance, config),
+        },
+        "so": {
+            "key": "so", "id": "SO-NAV", "name": "קבוצת SO", "family": "SO",
+            "members": [track.vehicle_id for track in active_so], "score": so_score,
+            "routeScore": so_route_score, "observedAngles": [], "observedRelations": so_relations,
+            "periodErrorPct": so_timing["periodErrorPct"], "motionErrorPct": so_timing["motionErrorPct"],
+            "vehicles": _base._group_vehicle_scores(active_so, so_score, so_timing, provenance, config),
+        },
+    }
+    routes = []
+    current: dict[str, dict[str, Any]] = {}
+    for track in tracks:
+        radius = max(5.0, (track.fit.major_span + track.fit.minor_span) / 4.0 if track.kind == "circle" else track.fit.minor_span / 2.0)
+        routes.append({
+            "key": f"nav-{track.vehicle_id}",
+            "vehicleId": track.vehicle_id,
+            "kind": track.kind,
+            "points": _base._downsample_path(track.samples, transform),
+            "geometry": track.geometry,
+            "centerMetric": dict(track.fit.center),
+            "rotationDeg": track.fit.rotation_deg,
+            "radius": radius,
+            "legLength": max(1.0, track.fit.major_span - track.fit.minor_span),
+            "periodSec": track.period_sec,
+        })
+        display = transform(track.current)
+        current[str(track.vehicle_id)] = {
+            "x": display["x"],
+            "y": display["y"],
+            "headingDeg": _base._current_heading(track.current),
+            "latitude": float(track.current["latitude"]),
+            "longitude": float(track.current["longitude"]),
+            "timestamp": str(track.current["timestamp"]),
+        }
+    return {
+        "coreApiVersion": _base.CORE_API_VERSION,
+        "available": True,
+        "provenance": provenance,
+        "routes": routes,
+        "groups": groups,
+        "ungroupedVehicles": ungrouped,
+        "current": current,
+        "alerts": _base._alerts(groups, ungrouped, provenance, config),
+        "groupingNotes": grouping_notes,
+    }
+
+
+# Patch the stable base module's primitives once so historical replay and the
+# public v1.8 entrypoint use the exact same topology/grouping implementation.
 _base._build_track = _build_track
 _base._segments = _segments
+_base.analyze_navigation_dataset = analyze_navigation_dataset
 
 CORE_API_VERSION = _base.CORE_API_VERSION
 DEFAULT_SO_GROUPING = _base.DEFAULT_SO_GROUPING
-analyze_navigation_dataset = _base.analyze_navigation_dataset
 build_analysis_history = _base.build_analysis_history
 derive_events = _base.derive_events
 compare_membership = _base.compare_membership
