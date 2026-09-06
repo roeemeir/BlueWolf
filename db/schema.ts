@@ -17,3 +17,18 @@ export const auditEntries = sqliteTable("audit_entries", {
   detail: text("detail").notNull().default(""),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+/**
+ * Small recovery snapshots for the canonical Python CoreSession.
+ * Navigation itself is NOT stored here; Influx remains the NAV source of truth.
+ */
+export const coreCheckpoints = sqliteTable("core_checkpoints", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  workspaceId: text("workspace_id").notNull(),
+  serverId: text("server_id").notNull(),
+  coreApiVersion: text("core_api_version").notNull(),
+  algorithmVersion: text("algorithm_version").notNull(),
+  processedUntilUtc: text("processed_until_utc"),
+  checkpointBase64: text("checkpoint_base64").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
