@@ -4,44 +4,60 @@ import test from "node:test";
 
 const read = (path) => fs.readFileSync(path, "utf8");
 
-test("active dashboard declares v0.13 / SRS v1.5 and versioned core", () => {
+test("active dashboard declares v0.14 / SRS v1.7 / Python Core", () => {
   const page = read("app/page.tsx");
   const dashboard = read("components/bluewolf/dashboard-app-v12.tsx");
   assert.match(page, /DashboardAppV12/);
-  assert.match(dashboard, /v0\.13/);
-  assert.match(dashboard, /SRS v1\.5/);
+  assert.match(dashboard, /v0\.14/);
+  assert.match(dashboard, /SRS v1\.7/);
+  assert.match(dashboard, /Python Core/);
   assert.match(dashboard, /CORE_API_VERSION/);
 });
 
-test("application reaches algorithms through one adapter", () => {
+test("canonical algorithm implementation is isolated Python with language-neutral worker", () => {
+  const init = read("core/src/bluewolf_core/__init__.py");
+  const worker = read("core/src/bluewolf_core/worker.py");
+  const session = read("core/src/bluewolf_core/session_v17.py");
+  assert.match(init, /IMPLEMENTATION_LANGUAGE = "python"/);
+  assert.match(init, /CORE_API_VERSION = "1\.0\.0"/);
+  assert.match(worker, /create_session/);
+  assert.match(worker, /process_batch/);
+  assert.match(worker, /restore_session/);
+  assert.match(worker, /recoverySamples/);
+  assert.match(session, /checkpoint_schema_version/);
+  assert.match(session, /hydrate_recovery_history/);
+  assert.doesNotMatch(worker, /sqlite3|requests|httpx|react|localStorage/i);
+});
+
+test("web algorithm adapter remains a single compatibility boundary during Python migration", () => {
   const adapter = read("lib/algorithm-core-adapter.ts");
   const analyzer = read("components/bluewolf/v12/navigation-analyzer.ts");
   const history = read("components/bluewolf/v12/navigation-history.ts");
   assert.match(adapter, /packages\/bluewolf-core\/src\/index/);
   assert.match(adapter, /analyzeNavigationDataset as runCore/);
-  assert.doesNotMatch(adapter, /drizzle|localStorage|react/i);
   assert.match(analyzer, /algorithm-core-adapter/);
   assert.match(history, /algorithm-core-adapter/);
   assert.doesNotMatch(analyzer, /function pca|siScores|soPairCompatibility/);
   assert.doesNotMatch(history, /function boundaryReason|function routeSignature/);
 });
 
-test("SO grouping production law is owned by core", () => {
+test("SO grouping production law is not duplicated in legacy UI", () => {
   const legacy = read("components/bluewolf/v10/grouping.ts");
   assert.match(legacy, /packages\/bluewolf-core/);
   assert.doesNotMatch(legacy, /function segments|averageAxisDeg/);
 });
 
-test("workspace persistence and audit DB contract remain unchanged", () => {
+test("workspace persistence remains separate and compact Core checkpoints are first-class", () => {
   const schema = read("db/schema.ts");
   const route = read("app/api/workspace/route.ts");
+  const checkpoint = read("app/api/core/checkpoint/route.ts");
   const context = read("components/bluewolf/app-context.tsx");
   assert.match(schema, /sqliteTable\("workspaces"/);
-  assert.match(schema, /state: text\("state"\)/);
-  assert.match(schema, /revision: integer\("revision"\)/);
   assert.match(schema, /sqliteTable\("audit_entries"/);
+  assert.match(schema, /sqliteTable\("core_checkpoints"/);
   assert.match(route, /db\.insert\(workspaces\)/);
   assert.match(route, /db\.insert\(auditEntries\)/);
+  assert.match(checkpoint, /coreCheckpoints/);
   assert.match(context, /bluewolf-workspace-state/);
   assert.match(context, /\/api\/workspace/);
 });
@@ -55,14 +71,15 @@ test("active operator contains no old fabricated KPI literals", () => {
   assert.match(operator, /analysis\.groups\.so\.score/);
 });
 
-test("SRS v1.5 defines core replacement and single NAV truth", () => {
+test("v1.7 defines simplified source-of-truth, no TTAG and current-Core replay", () => {
   const current = read("docs/BLUE_WOLF_SRS_CURRENT.md");
-  const amendment = read("docs/BLUE_WOLF_SRS_CHANGESET_2026-09-06_V1_5.md");
-  const architecture = read("docs/BLUE_WOLF_ARCHITECTURE_V1_5.md");
-  assert.match(current, /V1_5/);
-  assert.match(amendment, /Replaceable Algorithm Core/);
-  assert.match(amendment, /Hard-coded operational demo numbers are prohibited/);
-  assert.match(architecture, /WorkspaceState/);
-  assert.match(architecture, /workspaces.*audit_entries/s);
-  assert.match(architecture, /Core replacement does \*\*not\*\* require a DB migration/);
+  const decisions = read("docs/BLUE_WOLF_ARCHITECTURE_DECISIONS_2026-09-06_V1_7.md");
+  const architecture = read("docs/BLUE_WOLF_ARCHITECTURE_V1_7_SIMPLIFIED_CANONICAL.md");
+  assert.match(current, /V1_7/);
+  assert.match(decisions, /Canonical current Core is Python/);
+  assert.match(decisions, /No TTAG/);
+  assert.match(decisions, /InfluxDB is the historical source of truth/);
+  assert.match(architecture, /Joined NAV may be kept in memory\/temporary cache only/);
+  assert.match(architecture, /current canonical Core is used for future historical analysis/);
+  assert.match(architecture, /daily backup/);
 });
