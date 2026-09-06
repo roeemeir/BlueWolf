@@ -18,6 +18,8 @@ export type AppCoreOptions = {
   siTemplate?: SyncTemplate;
   soTemplate?: SyncTemplate;
   groupingSettings: SoGroupingSettings;
+  /** Preview sessions are live-calculated but may never restore or overwrite the operational checkpoint. */
+  liveRole?: "primary" | "preview";
 };
 
 export type SoGroupingEvidence = {
@@ -92,6 +94,10 @@ function coreConfig(options: AppCoreOptions) {
     soTemplate: options.soTemplate,
     groupingSettings: options.groupingSettings,
   };
+}
+
+function isOperational(options: AppCoreOptions) {
+  return options.liveRole !== "preview";
 }
 
 async function rpc(payload: Record<string, unknown>): Promise<RpcEnvelope> {
@@ -235,7 +241,7 @@ function trimLiveSessions() {
 
 async function startLiveSession(dataset: CoreNavigationDataset, options: AppCoreOptions, spanMs: number) {
   const config = coreConfig(options);
-  const stored = await loadStoredCheckpoint(dataset);
+  const stored = isOperational(options) ? await loadStoredCheckpoint(dataset) : null;
   const { fromMs, latestMs } = datasetTimes(dataset);
   const checkpointMs = stored?.processedUntilUtc ? Date.parse(stored.processedUntilUtc) : Number.NaN;
   const canRestore = Boolean(
@@ -324,7 +330,7 @@ async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCo
       touchedAt: now,
     };
     liveSessions.set(key, updated);
-    if (dataset.provenance.source === "influx" && now - updated.lastCheckpointAt >= CHECKPOINT_INTERVAL_MS) {
+    if (isOperational(options) && dataset.provenance.source === "influx" && now - updated.lastCheckpointAt >= CHECKPOINT_INTERVAL_MS) {
       updated.lastCheckpointAt = now;
       await saveStoredCheckpoint(dataset, updated);
     }
@@ -345,10 +351,11 @@ async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCo
  *
  * Live operator windows are warmed once in a stateful Python Core session and
  * then send only samples newer than the previous five-second poll. Real Influx
- * sessions persist a compact Core checkpoint every five minutes and restore it
- * only when its frontier is covered by the newly queried NAV window. Historical
- * investigation and short E2E fixtures remain stateless current-Core replay.
- * There is deliberately no TypeScript algorithm fallback.
+ * primary sessions persist a compact Core checkpoint every five minutes and
+ * restore it only when its frontier is covered by the newly queried NAV window.
+ * Template-preview sessions are isolated from checkpoint restore/write.
+ * Historical investigation and short E2E fixtures remain stateless current-Core
+ * replay. There is deliberately no TypeScript algorithm fallback.
  */
 export async function analyzeNavigationDataset(dataset: CoreNavigationDataset, options: AppCoreOptions): Promise<CoreAnalysis> {
   if (isLiveWindow(dataset)) return (await ensureLiveEnvelope(dataset, options)).analysis;
