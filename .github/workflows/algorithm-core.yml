@@ -28,10 +28,28 @@ jobs:
         run: npm run core:test
       - name: Verify core boundary stays pure
         run: |
-          if grep -RInE 'from ["'"'](react|next|drizzle-orm|@/)|\b(window|document|localStorage)\b|fetch\s*\(' packages/bluewolf-core/src; then
-            echo "Algorithm core crossed the application/runtime boundary"
-            exit 1
-          fi
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          const root = 'packages/bluewolf-core/src';
+          const forbidden = [
+            /from\s+["'](?:react|next|drizzle-orm|@\/)/,
+            /\b(?:window|document|localStorage)\b/,
+            /\bfetch\s*\(/,
+          ];
+          const files = fs.readdirSync(root).filter((name) => name.endsWith('.ts'));
+          const violations = [];
+          for (const file of files) {
+            const source = fs.readFileSync(path.join(root, file), 'utf8');
+            for (const rule of forbidden) if (rule.test(source)) violations.push(`${file}: ${rule}`);
+          }
+          if (violations.length) {
+            console.error('Algorithm core crossed the application/runtime boundary:');
+            console.error(violations.join('\n'));
+            process.exit(1);
+          }
+          console.log(`Core boundary clean across ${files.length} source files.`);
+          NODE
       - name: Core contract summary
         run: |
           echo "Core API: $(grep -Eo 'CORE_API_VERSION = \"[^\"]+' packages/bluewolf-core/src/contracts.ts | head -1)"
