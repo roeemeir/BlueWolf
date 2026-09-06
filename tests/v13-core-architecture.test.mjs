@@ -51,6 +51,8 @@ test("active Web adapter sends only live NAV deltas after Python warmup and has 
   assert.match(proxy, /BLUEWOLF_PYTHON_CORE_URL/);
   assert.match(proxy, /\/health/);
   assert.match(proxy, /\/rpc/);
+  assert.match(proxy, /status: response\.status/);
+  assert.match(proxy, /python_core_unavailable/);
   assert.match(analyzer, /algorithm-core-adapter/);
   assert.match(history, /algorithm-core-adapter/);
   assert.match(operator, /לא מתבצע חישוב חלופי ב־TypeScript/);
@@ -97,6 +99,21 @@ test("Figure-8 is exercised by simulator GT and the SO Template Builder", () => 
   assert.match(builder, /figure8Count/);
   assert.match(builder, /figure8Counts:\{generic:figure8Count\}/);
   assert.match(builder, /figureEightLoop/);
+});
+
+test("simulator wind GT measures the disturbance actually injected into NAV", () => {
+  const nav = read("components/bluewolf/v12/navigation-data.ts");
+  const systemTests = read("components/bluewolf/v12/system-tests.tsx");
+  const service = read("core/service/http_service.py");
+  assert.match(nav, /simulatorInjectedDisturbanceAt/);
+  assert.match(nav, /sampleAt\(serverId, timestamp, grouping, windMode\)/);
+  assert.match(nav, /sampleAt\(serverId, timestamp, grouping, "off"\)/);
+  assert.match(nav, /windy\.velocityEast - calm\.velocityEast/);
+  assert.match(nav, /windy\.velocityNorth - calm\.velocityNorth/);
+  assert.match(systemTests, /simulatorInjectedDisturbanceAt/);
+  assert.doesNotMatch(systemTests, /windForVehicle/);
+  assert.match(systemTests, /הפרעת NAV מוזרקת מול estimate/);
+  assert.match(service, /core rpc error \[\{command\}\]/);
 });
 
 test("SO grouping production law is implemented in canonical Python analysis", () => {
