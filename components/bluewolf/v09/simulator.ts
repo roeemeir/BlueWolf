@@ -1,16 +1,17 @@
 import type { SoRelation } from "@/lib/bluewolf";
-import { doubleHippodromeLoop, hippodromeLoop, type Point } from "./geometry";
+import { doubleHippodromeLoop, figureEightLoop, hippodromeLoop, type Point } from "./geometry";
 import { DEFAULT_SO_GROUPING, largestCompatibleComponent, type SoGeometryDescriptor, type SoGroupingSettings } from "../v10/grouping";
 
 export type V09Vehicle = { id: number; typeId: string; phase: number; routeKey: string; ring?: "inner" | "middle" | "outer"; confidence: number };
 export type V09Group = { key: "si" | "so"; id: string; name: string; family: "SI" | "SO"; members: V09Vehicle[]; observedAngles?: number[]; observedRelations?: SoRelation[]; routeScore: number; periodErrorPct: number; motionErrorPct: number; reason: string };
-export type V09RouteShape = { key: string; kind: "circle" | "single" | "double"; points: Point[]; typeId: string; geometry?: SoGeometryDescriptor };
+export type V09RouteShape = { key: string; kind: "circle" | "single" | "double" | "figure8"; points: Point[]; typeId: string; geometry?: SoGeometryDescriptor };
 export type V09Scenario = { id: string; title: string; subtitle: string; groups: { si: V09Group; so: V09Group }; routes: V09RouteShape[]; eventNote: string; ungroupedMembers?: V09Vehicle[]; groupingNotes?: string[] };
 
 const TYPE_IDS = ["storm", "lightning", "thunder"];
 const circleRoute = (key: string, center: Point, radius: number, typeId: string): V09RouteShape => ({ key, kind: "circle", points: hippodromeLoop(center, radius, 0), typeId });
 const singleRoute = (key: string, center: Point, radius: number, legLength: number, rotationDeg: number, typeId: string): V09RouteShape => ({ key, kind: "single", points: hippodromeLoop(center, radius, legLength, rotationDeg), typeId, geometry: { kind: "single", center, radius, legLength, rotationDeg } });
 const doubleRoute = (key: string, center: Point, radius: number, leftLeg: number, rightLeg: number, bendDeg: number, rotationDeg: number, typeId: string): V09RouteShape => ({ key, kind: "double", points: doubleHippodromeLoop(center, radius, leftLeg, rightLeg, bendDeg, rotationDeg), typeId, geometry: { kind: "double", center, radius, legLength: leftLeg, secondLegLength: rightLeg, bendDeg, rotationDeg } });
+const figure8Route = (key: string, center: Point, radius: number, legLength: number, rotationDeg: number, typeId: string): V09RouteShape => ({ key, kind: "figure8", points: figureEightLoop(center, radius, legLength, rotationDeg), typeId, geometry: { kind: "figure8", center, radius, legLength, rotationDeg, crossedLegs: true } });
 
 function groupSoCandidates(routes: V09RouteShape[], vehicles: V09Vehicle[], settings: SoGroupingSettings) {
   const candidates = routes.filter((route): route is V09RouteShape & { geometry: SoGeometryDescriptor } => Boolean(route.geometry));
@@ -69,7 +70,7 @@ function serverTwo(tick: number, settings: SoGroupingSettings): V09Scenario {
     circleRoute("s2-si-a", { x: 230, y: 275 }, 108, TYPE_IDS[0]), circleRoute("s2-si-b", { x: 230, y: 275 }, 58, TYPE_IDS[0]), circleRoute("s2-si-c", { x: 230, y: 275 }, 82, TYPE_IDS[2]),
     singleRoute("s2-so-a", { x: 635, y: 310 }, 28, 150, -8, TYPE_IDS[0]),
     singleRoute("s2-so-b", { x: 635, y: 310 }, 36, 150, -8, TYPE_IDS[1]),
-    singleRoute("s2-so-c", { x: 880, y: 240 }, 26, 120, 32, TYPE_IDS[2]),
+    figure8Route("s2-so-c", { x: 880, y: 240 }, 26, 120, 32, TYPE_IDS[2]),
   ];
   const candidates: V09Vehicle[] = [
     { id: 321, typeId: TYPE_IDS[0], phase: p + .02, routeKey: "s2-so-a", confidence: 90 },
@@ -78,12 +79,12 @@ function serverTwo(tick: number, settings: SoGroupingSettings): V09Scenario {
   ];
   const grouping = groupSoCandidates(routes, candidates, settings);
   return {
-    id: "2", title: "תרחיש חברות וקיבוץ", subtitle: "הצטרפות/יציאה + שני SO חופפים חוקיים + היפודרום מרוחק שאינו מקובץ",
+    id: "2", title: "תרחיש חברות וקיבוץ", subtitle: "הצטרפות/יציאה + שני SO חופפים חוקיים + שמיניית SO מרוחקת שאינה מקובצת",
     groups: {
       si: { key: "si", id: "SI-02", name: "SI בדיקת הצטרפות", family: "SI", members: siMembers, observedAngles: joined ? [90, 90] : [180], routeScore: 84, periodErrorPct: 7, motionErrorPct: 9, reason: joined ? "רכב חדש נמצא בחלון האישור לפני שינוי חברות" : "קבוצה בת שני רכבים יציבה" },
-      so: { key: "so", id: "SO-02", name: "SO חופפים", family: "SO", members: grouping.grouped, observedRelations: ["same"], routeScore: disconnected ? 62 : 80, periodErrorPct: disconnected ? 16 : 8, motionErrorPct: 11, reason: disconnected ? "קיים פער נתונים זמני; נשמרת חברות לפי זמן ההחזקה" : "רק ההיפודרומים החופפים עומדים בחוקיות הקבוצה" },
+      so: { key: "so", id: "SO-02", name: "SO חופפים", family: "SO", members: grouping.grouped, observedRelations: ["same"], routeScore: disconnected ? 62 : 80, periodErrorPct: disconnected ? 16 : 8, motionErrorPct: 11, reason: disconnected ? "קיים פער נתונים זמני; נשמרת חברות לפי זמן ההחזקה" : "רק ההיפודרומים החופפים עומדים בחוקיות הקבוצה; השמינייה המרוחקת נשארת ישות SO נפרדת" },
     }, routes, ungroupedMembers: grouping.ungrouped, groupingNotes: grouping.notes,
-    eventNote: disconnected ? "רכב 421 מנותק זמנית; חלון שמירת החברות עדיין פעיל." : joined ? "רכב 303 הצטרף; חלון האישור פעיל." : "לפני הצטרפות הרכב הנוסף.",
+    eventNote: disconnected ? "רכב 421 מנותק זמנית; חלון שמירת החברות עדיין פעיל." : joined ? "רכב 303 הצטרף; חלון האישור פעיל." : "לפני הצטרפות הרכב הנוסף; רכב 521 נע על שמיניית SO נפרדת.",
   };
 }
 
