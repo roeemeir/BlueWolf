@@ -143,7 +143,7 @@ export function V12SystemTests() {
 
   const passed = results.filter((item) => item.pass).length;
   return <div>
-    <header className="v09-section-header"><div><p className="eyebrow">E2E SYSTEM TESTS · SRS v1.5</p><h2>בדיקות מערכת אמיתיות</h2><p>ה־GT נבדק רק אחרי שה־Core סיים. הליבה אינה מקבלת GT, React או DB כקלט.</p></div><div className="v09-actions"><button disabled={running} onClick={() => void run(180)}><PlayCircle />{running ? "רץ..." : "הרץ E2E"}</button><button className="primary" disabled={running} onClick={() => void run(1000)}><ShieldCheck />Stress 1000</button></div></header>
+    <header className="v09-section-header"><div><p className="eyebrow">E2E SYSTEM TESTS · SRS v1.7</p><h2>בדיקות מערכת אמיתיות</h2><p>ה־GT נבדק רק אחרי שה־Core סיים. הליבה אינה מקבלת GT, React או DB כקלט.</p></div><div className="v09-actions"><button disabled={running} onClick={() => void run(180)}><PlayCircle />{running ? "רץ..." : "הרץ E2E"}</button><button className="primary" disabled={running} onClick={() => void run(1000)}><ShieldCheck />Stress 1000</button></div></header>
     {results.length ? <><div className="v09-test-kpis"><b className={passed === results.length ? "good" : "low"}>{passed}/{results.length}</b><span>{analyses} ניתוחי Core · {elapsed?.toFixed(0)} ms</span></div><div className="v09-test-grid">{results.map((result, index) => <article key={`${result.name}-${index}`}><header><b>{result.name}</b><span className={result.pass ? "pass" : "fail"}>{result.pass ? "PASS" : "FAIL"}</span></header><small>{result.category}</small><p>{result.detail}</p></article>)}</div></> : <div className="v09-empty-tests"><ShieldCheck /><b>טרם הורץ</b><p>הבדיקות מייצרות ניווט, מנתחות אותו דרך ה־Core ומשוות ל־GT חיצוני.</p></div>}
   </div>;
 }
