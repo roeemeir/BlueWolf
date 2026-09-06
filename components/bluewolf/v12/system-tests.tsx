@@ -7,11 +7,10 @@ import { checkSoPairCompatibility, CORE_API_VERSION } from "@/lib/algorithm-core
 import { normalizeInfluxRecords, type InfluxMappedRecord } from "@/lib/influx-navigation";
 import { useWorkspace } from "../app-context";
 import { DEFAULT_SO_GROUPING } from "../v10/grouping";
-import { windForVehicle } from "../v10/wind";
 import { generateUniqueSoLayouts } from "../v10/template-builder";
 import { analyzeNavigationDataset } from "./navigation-analyzer";
 import { analyzeNavigationHistory } from "./navigation-history";
-import { generateSimulationDataset, simulationHistoryBounds, simulationTickAt, simulatorGroundTruthAt } from "./navigation-data";
+import { generateSimulationDataset, simulationHistoryBounds, simulatorGroundTruthAt, simulatorInjectedDisturbanceAt } from "./navigation-data";
 
 type Result = { name: string; category: string; pass: boolean; detail: string };
 
@@ -83,8 +82,17 @@ export function V12SystemTests() {
         const gtVehicle = gt.activeVehicles.find((id) => analysis.groups.so.vehicles[id] || analysis.groups.si.vehicles[id]);
         if (gtVehicle) {
           const evidence = analysis.groups.so.vehicles[gtVehicle] ?? analysis.groups.si.vehicles[gtVehicle];
-          const truth = windForVehicle(serverId, simulationTickAt(center), gtVehicle, "gusty");
-          add(`שרת ${serverId} · שערוך רוח מול GT`, "Estimator only", Math.abs(evidence.wind.speedKnots - truth.trueKnots) <= 12 && bearingDiff(evidence.wind.bearingDeg, truth.trueBearingDeg) <= 85, `GT ${truth.trueKnots.toFixed(1)} kt @ ${truth.trueBearingDeg.toFixed(0)}° · estimate ${evidence.wind.speedKnots.toFixed(1)} kt @ ${evidence.wind.bearingDeg.toFixed(0)}°`);
+          const truth = simulatorInjectedDisturbanceAt(serverId, center, grouping, gtVehicle, "gusty");
+          const speedOk = Boolean(truth) && Math.abs(evidence.wind.speedKnots - truth!.speedKnots) <= 5;
+          const bearingOk = Boolean(truth) && (truth!.speedKnots < 0.75 || bearingDiff(evidence.wind.bearingDeg, truth!.bearingDeg) <= 85);
+          add(
+            `שרת ${serverId} · הפרעת NAV מוזרקת מול estimate`,
+            "Estimator only",
+            speedOk && bearingOk,
+            truth
+              ? `GT NAV ${truth.speedKnots.toFixed(1)} kt @ ${truth.bearingDeg.toFixed(0)}° · estimate ${evidence.wind.speedKnots.toFixed(1)} kt @ ${evidence.wind.bearingDeg.toFixed(0)}°`
+              : "לא ניתן לגזור GT הפרעה מהסימולטור",
+          );
         }
       }
 
@@ -105,8 +113,8 @@ export function V12SystemTests() {
       );
       add("חוק קיבוץ · Single/Figure-8/invalid", "Python Core grouping", valid.valid && validFigure8.valid && !invalid.valid, `single=${valid.explanation} | figure8=${validFigure8.explanation} | invalid=${invalid.explanation}`);
 
-      const layouts = generateUniqueSoLayouts(2, 2).map((layout) => layout.join("-"));
-      add("SO layout · ללא תמונות מראה כפולות", "Template builder", new Set(layouts).size === layouts.length && layouts.length > 0, `${layouts.length} layouts ייחודיים`);
+      const layouts = generateUniqueSoLayouts(2, 1, 1).map((layout) => layout.join("-"));
+      add("SO layout · Single/Double/Figure-8 ללא תמונות מראה כפולות", "Template builder", new Set(layouts).size === layouts.length && layouts.length > 0 && layouts.some((layout) => layout.includes("figure8")), `${layouts.length} layouts ייחודיים`);
 
       const bounds = simulationHistoryBounds(now);
       const month = generateSimulationDataset({ serverId: "2", from: bounds.from, to: bounds.to, grouping, windMode: "gusty", targetPoints: 6500 });
@@ -157,7 +165,7 @@ export function V12SystemTests() {
 
   const passed = results.filter((item) => item.pass).length;
   return <div>
-    <header className="v09-section-header"><div><p className="eyebrow">E2E SYSTEM TESTS · SRS v1.7 · PYTHON</p><h2>בדיקות מערכת אמיתיות</h2><p>ה־GT נבדק רק אחרי שה־Python Core סיים. הליבה אינה מקבלת GT, React או DB כקלט.</p></div><div className="v09-actions"><button disabled={running} onClick={() => void run(180)}><PlayCircle />{running ? "רץ..." : "הרץ E2E"}</button><button className="primary" disabled={running} onClick={() => void run(1000)}><ShieldCheck />Stress 1000</button></div></header>
+    <header className="v09-section-header"><div><p className="eyebrow">E2E SYSTEM TESTS · SRS v1.8 · PYTHON</p><h2>בדיקות מערכת אמיתיות</h2><p>ה־GT נבדק רק אחרי שה־Python Core סיים. הליבה אינה מקבלת GT, React או DB כקלט.</p></div><div className="v09-actions"><button disabled={running} onClick={() => void run(180)}><PlayCircle />{running ? "רץ..." : "הרץ E2E"}</button><button className="primary" disabled={running} onClick={() => void run(1000)}><ShieldCheck />Stress 1000</button></div></header>
     {results.length ? <><div className="v09-test-kpis"><b className={passed === results.length ? "good" : "low"}>{passed}/{results.length}</b><span>{analyses} ניתוחי Core · {elapsed?.toFixed(0)} ms</span></div><div className="v09-test-grid">{results.map((result, index) => <article key={`${result.name}-${index}`}><header><b>{result.name}</b><span className={result.pass ? "pass" : "fail"}>{result.pass ? "PASS" : "FAIL"}</span></header><small>{result.category}</small><p>{result.detail}</p></article>)}</div></> : <div className="v09-empty-tests"><ShieldCheck /><b>טרם הורץ</b><p>הבדיקות מייצרות ניווט, מנתחות אותו דרך Python Core ומשוות ל־GT חיצוני.</p></div>}
   </div>;
 }
