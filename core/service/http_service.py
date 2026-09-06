@@ -18,6 +18,7 @@ from bluewolf_core.worker import CoreWorker
 
 class Handler(BaseHTTPRequestHandler):
     worker = CoreWorker()
+    protocol_version = "HTTP/1.1"
 
     def _json(self, status: int, payload: Mapping[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -25,8 +26,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "keep-alive")
         self.end_headers()
         self.wfile.write(body)
+        self.wfile.flush()
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
