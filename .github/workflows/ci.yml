@@ -58,7 +58,7 @@ jobs:
         run: npm test
 
   browser:
-    name: Browser QA v1.7 NAV truth + Python Core
+    name: Browser QA v1.8 NAV truth + Python Core
     runs-on: ubuntu-latest
     timeout-minutes: 35
     needs: [python-core, web]
