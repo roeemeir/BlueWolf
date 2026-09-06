@@ -4,6 +4,7 @@ import { windOffsetPx, type WindMode } from "../v10/wind";
 import type { SoGroupingSettings } from "../v10/grouping";
 
 export type NavigationSource = "simulation" | "influx";
+export type NavigationRouteKind = "circle" | "single" | "double" | "figure8";
 
 export type RawNavigationSample = {
   source: NavigationSource;
@@ -13,7 +14,7 @@ export type RawNavigationSample = {
   active: boolean;
   latitude: number;
   longitude: number;
-  altitude: number;
+  altitude: number | null;
   velocityNorth: number;
   velocityEast: number;
   /** Local metric EN coordinates. x=east metres, y=north metres. */
@@ -39,7 +40,7 @@ export type NavigationDataset = { samples: RawNavigationSample[]; provenance: Na
 
 export type SimulatorGroundTruth = {
   timestamp: string; serverId: string; activeVehicles: number[]; siVehicles: number[]; soVehicles: number[]; ungroupedVehicles: number[];
-  routeKinds: Record<number, "circle" | "single" | "double">; routeKeys: Record<number, string>;
+  routeKinds: Record<number, NavigationRouteKind>; routeKeys: Record<number, string>;
 };
 
 export const SIMULATION_HISTORY_DAYS = 30;
@@ -67,7 +68,7 @@ function metricToGeo(x: number, y: number) { return { latitude: SIM_ORIGIN_LAT +
 function snapshotLocal(serverId: string, timestamp: Date, grouping: SoGroupingSettings, windMode: WindMode) {
   const tick = simulationTickAt(timestamp); const scenario = getV09Scenario(serverId, tick, grouping);
   const members = [...scenario.groups.si.members, ...scenario.groups.so.members, ...(scenario.ungroupedMembers ?? [])];
-  const points = new Map<number, { x: number; y: number; routeKey: string; kind: "circle" | "single" | "double" }>();
+  const points = new Map<number, { x: number; y: number; routeKey: string; kind: NavigationRouteKind }>();
   for (const member of members) {
     const route = scenario.routes.find((item) => item.key === member.routeKey); if (!route) continue;
     const ideal = pointOnClosed(route.points, member.phase); const noise = deterministicNoise(serverId, tick, member.id); const wind = windOffsetPx(serverId, tick, member.id, windMode);
