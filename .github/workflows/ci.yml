@@ -58,12 +58,15 @@ jobs:
         run: npm test
 
   browser:
-    name: Browser QA v1.7 NAV truth + migration compatibility
+    name: Browser QA v1.7 NAV truth + Python Core
     runs-on: ubuntu-latest
     timeout-minutes: 35
     needs: [python-core, web]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -75,7 +78,20 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Verify production build
         run: npm run build
+      - name: Start canonical Python Core service
+        run: |
+          PYTHONPATH=core/src python core/service/http_service.py --host 127.0.0.1 --port 8765 > /tmp/bluewolf-python-core.log 2>&1 &
+          echo $! > /tmp/bluewolf-python-core.pid
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8765/health >/dev/null; then exit 0; fi
+            if ! kill -0 $(cat /tmp/bluewolf-python-core.pid) 2>/dev/null; then cat /tmp/bluewolf-python-core.log; exit 1; fi
+            sleep 1
+          done
+          cat /tmp/bluewolf-python-core.log
+          exit 1
       - name: Start application runtime
+        env:
+          BLUEWOLF_PYTHON_CORE_URL: http://127.0.0.1:8765
         run: |
           npm run dev -- --host 127.0.0.1 --port 3000 > /tmp/bluewolf-server.log 2>&1 &
           echo $! > /tmp/bluewolf-server.pid
@@ -86,10 +102,17 @@ jobs:
           done
           cat /tmp/bluewolf-server.log
           exit 1
+      - name: Verify Web proxy reaches Python Core
+        run: |
+          curl -fsS http://127.0.0.1:3000/api/core/rpc | grep -q '"implementationLanguage":"python"'
       - name: Provenance, history, GT and mobile acceptance
         env:
           BLUEWOLF_BASE_URL: http://127.0.0.1:3000
         run: npx playwright test tests/browser-v12.spec.mjs --reporter=line --workers=1
-      - name: Application runtime log
+      - name: Runtime logs
         if: always()
-        run: tail -n 250 /tmp/bluewolf-server.log || true
+        run: |
+          echo "--- Python Core ---"
+          tail -n 150 /tmp/bluewolf-python-core.log || true
+          echo "--- Web ---"
+          tail -n 250 /tmp/bluewolf-server.log || true
