@@ -2,98 +2,22 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-const read = (path) => fs.readFileSync(path, "utf8");
+const read=(path)=>fs.readFileSync(path,"utf8");
 
-test("official SRS includes latest-wins v1.2 amendment", () => {
-  const current = read("docs/BLUE_WOLF_SRS_CURRENT.md");
-  const amendment = read("docs/BLUE_WOLF_SRS_CHANGESET_2026-09-06_V1_2.md");
-  assert.match(current, /V1_2/);
-  assert.match(current, /v1\.2 overrides v1\.1/);
-  assert.match(amendment, /vehicle type is not a semantic dimension/i);
-  assert.match(amendment, /\+20°/);
-  assert.match(amendment, /Double supports four logical vehicle slots/);
-});
+test("official SRS points to v1.4 newest-wins contract",()=>{const current=read("docs/BLUE_WOLF_SRS_CURRENT.md"),amendment=read("docs/BLUE_WOLF_SRS_CHANGESET_2026-09-06_V1_4.md");assert.match(current,/V1_4/);assert.match(current,/single-navigation-truth/i);assert.match(amendment,/No operational, investigation, PDF or test result may display/);assert.match(amendment,/30 days of historical data/);assert.match(amendment,/never silently fall back to simulator/i);});
 
-test("SO builder is generic, smile-based, directional and duplicate-aware", () => {
-  const source = read("components/bluewolf/v10/template-builder.tsx");
-  assert.match(source, /const stepWidth = .*\? 1 : 2/);
-  assert.match(source, /steps\[index\] \* 20/);
-  assert.match(source, /const capacity = .*\? 2 : 4/);
-  assert.match(source, /flipDirection/);
-  assert.match(source, /canonicalSo/);
-  assert.match(source, /נמצאה תבנית זהה/);
-  assert.match(source, /החלף קיימת/);
-  assert.match(source, /ללא תלות בסוג רכב/);
-  assert.doesNotMatch(source, /relation-editors/);
-});
+test("active dashboard uses v12 source-driven screens and has no static notification feed",()=>{const page=read("app/page.tsx"),shell=read("components/bluewolf/dashboard-app-v12.tsx");assert.match(page,/DashboardAppV12/);assert.match(shell,/OperatorViewV12/);assert.match(shell,/InvestigationViewV12/);assert.match(shell,/DeveloperViewV12/);assert.doesNotMatch(shell,/Wind estimate/);assert.doesNotMatch(shell,/notifications\s*=/);});
 
-test("live map uses group identity and continuous score colorbar", () => {
-  const map = read("components/bluewolf/v10/map.tsx");
-  const operator = read("components/bluewolf/v10/operator.tsx");
-  assert.match(map, /GROUP_COLORS\[item\.groupKey\]/);
-  assert.match(map, /GROUP_COLORS\[group\]/);
-  assert.match(map, /v10-score-gradient/);
-  assert.match(map, /continuousScoreColor/);
-  assert.match(operator, /trailHistoryMinutes \?\? 30/);
-  assert.match(operator, /v10-group-stack/);
-  assert.match(operator, /visibleGroups/);
-  assert.match(operator, /V10Timeline/);
-});
+test("operator scores, quality and wind are derived from dataset provenance",()=>{const source=read("components/bluewolf/v12/operator.tsx");assert.match(source,/loadNavigationDataset/);assert.match(source,/analyzeNavigationDataset/);assert.match(source,/buildAnalysisHistory/);assert.match(source,/completenessPct/);assert.match(source,/samplingMedianSeconds/);assert.match(source,/groups\.si\.score\.total/);assert.match(source,/wind\.speedKnots/);assert.doesNotMatch(source,/>96%</);assert.doesNotMatch(source,/>4\.2s/);assert.match(source,/אין fallback/);});
 
-test("investigation includes event-specific evidence, centroid labels and detailed Hebrew causes", () => {
-  const source = read("components/bluewolf/v10/investigation.tsx");
-  assert.match(source, /EVENT_COLORS/);
-  assert.match(source, /centroid/);
-  assert.match(source, /samples\.reduce/);
-  assert.match(source, /סיבת התחלה/);
-  assert.match(source, /סיבת סיום/);
-  assert.match(source, /64\.2.*78\.3.*22\.0%/s);
-  assert.match(source, /96 מ׳.*70 מ׳.*42 שניות/s);
-});
+test("raw simulator provides deterministic 30-day timestamped navigation",()=>{const source=read("components/bluewolf/v12/navigation-data.ts");assert.match(source,/SIMULATION_HISTORY_DAYS = 30/);assert.match(source,/timestamp: timestamp\.toISOString/);assert.match(source,/velocityNorth/);assert.match(source,/velocityEast/);assert.match(source,/simulatorGroundTruthAt/);assert.match(source,/generateSimulationDataset/);});
 
-test("wind estimation and deterministic disturbance are end-to-end", () => {
-  const ui = read("components/bluewolf/v10/wind.ts");
-  const map = read("components/bluewolf/v10/map.tsx");
-  const timeline = read("components/bluewolf/v10/timeline.tsx");
-  const operator = read("components/bluewolf/v10/operator.tsx");
-  const coreEstimator = read("core/src/bluewolf_core/wind.py");
-  const coreSimulator = read("core/src/bluewolf_core/simulator.py");
-  const estimatorTests = read("core/tests/test_wind.py");
-  const simulatorTests = read("core/tests/test_simulator.py");
+test("production analyzer derives route sync total wind and alerts from raw samples",()=>{const source=read("components/bluewolf/v12/navigation-analyzer.ts");assert.match(source,/groupByVehicle\(dataset\.samples\)/);assert.match(source,/siTemplateScores/);assert.match(source,/soTemplateScores/);assert.match(source,/routeEvidence/);assert.match(source,/windEstimate/);assert.match(source,/alertsFromAnalysis/);assert.match(source,/largestCompatibleComponent/);assert.doesNotMatch(source,/getV09Scenario/);assert.doesNotMatch(source,/windForVehicle/);});
 
-  assert.match(ui, /estimatedKnots/);
-  assert.match(ui, /estimatedBearingDeg/);
-  assert.match(ui, /syncPenalty/);
-  assert.match(ui, /windOffsetPx/);
-  assert.match(ui, /applyWindPenalty/);
+test("Influx mode performs a real query and shared normalization without simulator fallback",()=>{const route=read("app/api/influx/query/route.ts"),loader=read("components/bluewolf/v12/data-source.ts"),normalizer=read("lib/influx-navigation.ts");assert.match(route,/\/api\/v2\/query/);assert.match(route,/normalizeInfluxRecords/);assert.match(normalizer,/uniqueVehicleId/);assert.match(normalizer,/latitude/);assert.match(normalizer,/velocityNorth/);assert.match(loader,/\/api\/influx\/query/);assert.match(loader,/אין fallback לסימולטור/);assert.doesNotMatch(loader,/generateSimulationDataset\(.*mode === "influx"/s);});
 
-  assert.match(map, /windMode/);
-  assert.match(map, /windOffsetPx/);
-  assert.match(map, /historicalTick/);
-  assert.match(map, /הפרעת רוח פעילה/);
-  assert.match(timeline, /averageWindPenalty/);
-  assert.match(timeline, /applyWindPenalty/);
-  assert.match(timeline, /windMode/);
-  assert.match(operator, /windMode=\{effectiveWindMode\}/);
-  assert.match(operator, /syncWeightPct=\{state\.weights\.total\.sync\}/);
+test("historical investigation uses selected source range and navigation-derived events",()=>{const source=read("components/bluewolf/v12/investigation.tsx"),history=read("components/bluewolf/v12/navigation-history.ts");assert.match(source,/new Date\(from\)/);assert.match(source,/new Date\(to\)/);assert.match(source,/loadNavigationDataset/);assert.match(source,/deriveEvents/);assert.match(source,/30 ימים/);assert.match(source,/EventEvidenceMap events=\{events\} selected=\{selected\}/);assert.match(history,/compareMembership/);assert.match(history,/routeSignature/);assert.match(history,/periodErrorPct/);});
 
-  assert.match(coreEstimator, /KNOTS_PER_MPS/);
-  assert.match(coreEstimator, /estimate_wind_from_navigation/);
-  assert.match(estimatorTests, /known_east_wind/);
-  assert.match(coreSimulator, /class SimulatedWind/);
-  assert.match(coreSimulator, /gust_amplitude_mps/);
-  assert.match(coreSimulator, /wind_response_gain/);
-  assert.match(simulatorTests, /gust_component_is_deterministic/);
-  assert.match(simulatorTests, /wind_disturbance_changes_navigation_and_sync_geometry/);
-});
+test("system tests execute production data path against separate simulator GT",()=>{const source=read("components/bluewolf/v12/system-tests.tsx");assert.match(source,/simulatorGroundTruthAt/);assert.match(source,/generateSimulationDataset/);assert.match(source,/analyzeNavigationDataset/);assert.match(source,/deriveEvents/);assert.match(source,/normalizeInfluxRecords/);assert.match(source,/Stress 1000/);assert.match(source,/GT/);});
 
-test("GT exposes map layers, live angle and ruler", () => {
-  const source = read("components/bluewolf/v10/gt.tsx");
-  assert.match(source, /mapMode/);
-  assert.match(source, /realMaps/);
-  assert.match(source, /v10-live-angle/);
-  assert.match(source, /correctedAngle\.toFixed\(1\)/);
-  assert.match(source, /rulerPoints/);
-  assert.match(source, /distance\(rulerPoints/);
-  assert.match(source, /bearing\(rulerPoints/);
-});
+test("SO count-first builder and engineering map fixes remain active",()=>{const builder=read("components/bluewolf/v10/template-builder.tsx"),css=read("app/v11.css");assert.match(builder,/generateUniqueSoLayouts/);assert.match(builder,/singleCount/);assert.match(builder,/doubleCount/);assert.match(builder,/clickSlot/);assert.match(css,/v09-gt-map pattern path/);assert.match(css,/fill:none!important/);});
