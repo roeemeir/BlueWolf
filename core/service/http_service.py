@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Mapping
@@ -33,6 +34,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload = self.worker.handle({"command": "hello"})
                 self._json(HTTPStatus.OK, {"ok": True, **payload})
             except Exception as exc:  # pragma: no cover - transport boundary
+                print(f"core health error: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
                 self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": type(exc).__name__, "message": str(exc)})
             return
         self._json(HTTPStatus.NOT_FOUND, {"ok": False, "message": "not found"})
@@ -41,15 +43,21 @@ class Handler(BaseHTTPRequestHandler):
         if self.path != "/rpc":
             self._json(HTTPStatus.NOT_FOUND, {"ok": False, "message": "not found"})
             return
+        command = "unknown"
         try:
             size = int(self.headers.get("Content-Length", "0"))
             request = json.loads(self.rfile.read(size).decode("utf-8"))
             if not isinstance(request, Mapping):
                 raise ValueError("request must be a JSON object")
+            command = str(request.get("command", "unknown"))
             payload = self.worker.handle(request)
             self._json(HTTPStatus.OK, {"ok": True, "id": request.get("id"), **payload})
         except Exception as exc:
-            self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": type(exc).__name__, "message": str(exc)})
+            print(f"core rpc error [{command}]: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+            try:
+                self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": type(exc).__name__, "message": str(exc), "command": command})
+            except (BrokenPipeError, ConnectionResetError) as transport_exc:  # pragma: no cover - client transport boundary
+                print(f"core rpc response transport error [{command}]: {type(transport_exc).__name__}: {transport_exc}", file=sys.stderr, flush=True)
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         return
@@ -61,6 +69,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server.daemon_threads = True
     try:
         server.serve_forever()
     except KeyboardInterrupt:
