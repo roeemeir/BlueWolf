@@ -2,7 +2,8 @@
 
 **Date:** 2026-09-06  
 **Branch:** `bluewolf-v07-clean`  
-**Status:** Protected-preview release candidate
+**Status:** Protected-preview release candidate  
+**Preview reissued:** 2026-09-06 15:42 Asia/Jerusalem
 
 ## Scope closed in this candidate
 
