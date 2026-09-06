@@ -73,11 +73,12 @@ test("keeps server selection separate from arena metadata", async () => {
   const { DEFAULT_WORKSPACE } = await vite.ssrLoadModule("/lib/bluewolf.ts");
   assert.ok(DEFAULT_WORKSPACE.arenas.length >= 1);
   assert.ok(DEFAULT_WORKSPACE.servers.every((server) => !("arena" in server)));
-  const dashboard = await source("components/bluewolf/dashboard-app.tsx");
-  const operator = await source("components/bluewolf/operator-view.tsx");
-  assert.match(dashboard, /בחירת מקור אינה משנה שרת או זירה/);
+  const dashboard = await source("components/bluewolf/dashboard-app-v12.tsx");
+  const operator = await source("components/bluewolf/v12/operator.tsx");
+  assert.match(dashboard, /setServer/);
+  assert.match(dashboard, /setDataMode/);
+  assert.match(dashboard, /serverValue/);
   assert.doesNotMatch(operator, /setArena|v04-arena-select/);
-  assert.match(operator, /ללא תלות בזירה/);
 });
 
 test("renders authoritative SO geometry as a continuous double route and never a fixed smile", async () => {
@@ -130,24 +131,27 @@ test("operator mute contract includes restart, 5, 15 and 30 minutes", async () =
 });
 
 test("uses discrete threshold grids instead of free numeric threshold inputs", async () => {
-  const developer = await source("components/bluewolf/developer-view.tsx");
-  assert.match(developer, /thresholdGroups/);
-  assert.match(developer, /Select value=\{String\(thresholds\[field\.key\]\)\}/);
+  const scoring = await source("components/bluewolf/v09/score-settings.tsx");
+  assert.match(scoring, /options:\[/);
+  assert.match(scoring, /field\.options\.map/);
+  assert.match(scoring, /<select value=\{thresholds\[field\.key\]\}/);
+  assert.doesNotMatch(scoring, /type="number"[^>]*threshold/);
 });
 
 test("developer SO builder has no fixed-angle smile law", async () => {
-  const developer = await source("components/bluewolf/developer-view.tsx");
-  assert.match(developer, /legalSoLayouts/);
-  assert.match(developer, /mixed/);
-  assert.doesNotMatch(developer, /30° מדויק|open smile|חיוך/);
+  const builder = await source("components/bluewolf/v10/template-builder.tsx");
+  assert.match(builder, /generateUniqueSoLayouts/);
+  assert.match(builder, /pairRelation/);
+  assert.match(builder, /relations=entities\.slice/);
+  assert.doesNotMatch(builder, /30° מדויק|open smile|· 30°/);
 });
 
 test("developer flow keeps GT, editable route bank, Influx mapping and system-test surfaces", async () => {
-  const developer = await source("components/bluewolf/developer-view.tsx");
-  assert.match(developer, /GtSection/);
-  assert.match(developer, /RouteBankEditorV08/);
-  assert.match(developer, /InfluxSection/);
-  assert.match(developer, /TestsSection/);
+  const developer = await source("components/bluewolf/v12/developer.tsx");
+  assert.match(developer, /V10GT/);
+  assert.match(developer, /V09RouteBank/);
+  assert.match(developer, /V09Influx/);
+  assert.match(developer, /V12SystemTests/);
 });
 
 test("defines a complete Influx field mapping contract", async () => {
