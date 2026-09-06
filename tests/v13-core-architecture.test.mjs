@@ -56,6 +56,15 @@ test("active Web adapter sends only live NAV deltas after Python warmup and has 
   assert.match(operator, /לא מתבצע חישוב חלופי ב־TypeScript/);
 });
 
+test("only Operator history-backed live sessions may restore or persist checkpoints", () => {
+  const adapter = read("lib/algorithm-core-adapter.ts");
+  assert.match(adapter, /operationalLiveKeys = new Set/);
+  assert.match(adapter, /ensureLiveEnvelope\(dataset, options, true\)/);
+  assert.match(adapter, /options\.liveRole === "preview"/);
+  assert.match(adapter, /isOperationalLiveKey\(key, options\) \? await loadStoredCheckpoint/);
+  assert.match(adapter, /isOperationalLiveKey\(key, options\).*CHECKPOINT_INTERVAL_MS/s);
+});
+
 test("Figure-8 is an SO hippodrome with crossed legs and single-hippodrome external grouping", () => {
   const contracts = read("packages/bluewolf-core/src/contracts.ts");
   const grouping = read("packages/bluewolf-core/src/grouping.ts");
