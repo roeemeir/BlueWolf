@@ -4,13 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "blue-wolf"
-version = "0.1.0"
-description = "Blue Wolf vehicle-route and synchronization analysis core"
+version = "0.8.0"
+description = "Blue Wolf canonical Python vehicle-route and synchronization analysis core"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }
 authors = [{ name = "Blue Wolf" }]
 dependencies = []
+
+[project.scripts]
+bluewolf-core-worker = "bluewolf_core.worker:main"
 
 [project.optional-dependencies]
 dev = [
@@ -41,4 +44,3 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 strict = true
 packages = ["bluewolf_core"]
-
