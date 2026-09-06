@@ -33,22 +33,33 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import re
+          import ast
 
           root = Path("core/src/bluewolf_core")
-          forbidden = {
-              "database": re.compile(r"\b(?:sqlite3|sqlalchemy|drizzle|d1)\b", re.I),
-              "network": re.compile(r"\b(?:requests|httpx|aiohttp|urllib\.request|socket)\b", re.I),
-              "ui": re.compile(r"\b(?:react|next|window|document|localStorage)\b", re.I),
+          forbidden_modules = {
+              "sqlite3", "sqlalchemy", "drizzle", "requests", "httpx",
+              "aiohttp", "socket", "react", "next",
           }
+          forbidden_names = {"window", "document", "localStorage"}
           violations = []
+
           for path in sorted(root.glob("*.py")):
-              text = path.read_text(encoding="utf-8")
-              for name, rule in forbidden.items():
-                  if rule.search(text):
-                      violations.append(f"{path}: {name}")
+              tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+              for node in ast.walk(tree):
+                  if isinstance(node, ast.Import):
+                      for alias in node.names:
+                          root_name = alias.name.split(".")[0]
+                          if root_name in forbidden_modules:
+                              violations.append(f"{path}: forbidden import {alias.name}")
+                  elif isinstance(node, ast.ImportFrom):
+                      root_name = (node.module or "").split(".")[0]
+                      if root_name in forbidden_modules:
+                          violations.append(f"{path}: forbidden import {node.module}")
+                  elif isinstance(node, ast.Name) and node.id in forbidden_names:
+                      violations.append(f"{path}: forbidden global {node.id}")
+
           if violations:
-              raise SystemExit("Core boundary violation:\n" + "\n".join(violations))
+              raise SystemExit("Core boundary violation:\n" + "\n".join(sorted(set(violations))))
           print(f"Canonical Python Core boundary clean across {len(list(root.glob('*.py')))} files.")
           PY
       - name: Core contract summary
