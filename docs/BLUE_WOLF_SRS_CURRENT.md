@@ -10,14 +10,14 @@ The official, mandatory product specification is the union of:
 6. `docs/BLUE_WOLF_SRS_CHANGESET_2026-09-06_V1_5.md` — replaceable-Core/data-truth amendment.
 7. `docs/BLUE_WOLF_SRS_CHANGESET_2026-09-06_V1_6_WORKMODE_ARCHITECTURE.md` — restored Work Mode architecture baseline.
 8. `docs/BLUE_WOLF_ARCHITECTURE_DECISIONS_2026-09-06_V1_7.md` — explicit user-approved simplified architecture decisions.
-9. `docs/BLUE_WOLF_SRS_CHANGESET_2026-09-06_V1_8.md` — crossed-leg Figure-8 + incremental live Python Core amendment.
+9. `docs/BLUE_WOLF_SRS_CHANGESET_2026-09-07_V1_8.md` — crossed-leg Figure-8 + incremental Live Python Core + checkpoint-isolation amendment.
 
 Current mandatory architecture:
 - `docs/BLUE_WOLF_ARCHITECTURE_V1_7_SIMPLIFIED_CANONICAL.md`, as amended by SRS v1.8.
 
 ## Precedence rule
 
-- **Architecture / infrastructure:** v1.7 canonical architecture + approved ADR decisions + v1.8 live-session amendment are authoritative.
+- **Architecture / infrastructure:** v1.7 canonical architecture + approved ADR decisions + v1.8 live-session/checkpoint amendment are authoritative.
 - **Product functionality / UX:** the newest functional requirement is authoritative. Historical DR examples do not roll back newer Template Builder, SO semantics, map/timeline, Investigation/PDF, GT, wind-estimation or navigation-truth behavior.
 
 All non-conflicting older requirements remain mandatory.
@@ -31,10 +31,12 @@ All non-conflicting older requirements remain mandatory.
 - Python `CoreSession` is the current canonical algorithm implementation.
 - Live Operator performs one bounded warm-up and then passes only new ordered NAV samples on the default 5-second batch cadence.
 - Checkpoint every 5 minutes enables fast restart/replay; the compact checkpoint does not contain the reconstructible NAV display window.
+- Only the primary Operator Analysis + History/Timeline live flow is checkpoint-authoritative; temporary template-preview sessions may not restore or overwrite that checkpoint.
 - Blue Wolf DB stores only non-reconstructible product state: Workspace/config, templates, GT, route bank, user edits, audit and checkpoints.
 - Automatic historical Scores/Events are recomputed with the current canonical Core and may be cached/discarded.
 - TTAG is not required anywhere in the architecture.
-- Figure-8 is an **SO hippodrome with crossed legs**: one normal SO period, self-crossing arc-length phase, and single-hippodrome external grouping semantics.
+- Figure-8 is an **SO hippodrome with crossed straight legs**: two normal end turns, one normal SO period, self-crossing arc-length phase, and single-hippodrome external grouping semantics.
+- The SO Template Builder supports Single, Double and Figure-8 as explicit count-first entities.
 
 ## Release truth rule
 
