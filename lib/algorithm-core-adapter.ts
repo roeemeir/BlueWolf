@@ -4,6 +4,7 @@ import type {
   CoreAnalysis,
   DerivedEvent,
   NavigationDataset as CoreNavigationDataset,
+  SoGeometryDescriptor,
   SoGroupingSettings,
 } from "@/packages/bluewolf-core/src/contracts";
 
@@ -19,6 +20,18 @@ export type AppCoreOptions = {
   groupingSettings: SoGroupingSettings;
 };
 
+export type SoGroupingEvidence = {
+  valid: boolean;
+  angleDiffDeg: number;
+  parallelDistance: number;
+  lateralDistance: number;
+  meanLeg: number;
+  parallelLegs: number;
+  lateralLegs: number;
+  axisDeg: number;
+  explanation: string;
+};
+
 type RpcEnvelope = {
   ok?: boolean;
   error?: string;
@@ -26,6 +39,7 @@ type RpcEnvelope = {
   analysis?: CoreAnalysis;
   history?: AnalysisFrame[];
   events?: DerivedEvent[];
+  evidence?: SoGroupingEvidence;
 };
 
 function coreConfig(options: AppCoreOptions) {
@@ -86,4 +100,10 @@ export async function analyzeNavigationHistory(
 
 export async function buildAnalysisHistory(dataset: CoreNavigationDataset, options: AppCoreOptions, maxFrames = 61, lookbackMinutes = 12): Promise<AnalysisFrame[]> {
   return (await analyzeNavigationHistory(dataset, options, maxFrames, lookbackMinutes)).history;
+}
+
+export async function checkSoPairCompatibility(first: SoGeometryDescriptor, second: SoGeometryDescriptor, settings: SoGroupingSettings): Promise<SoGroupingEvidence> {
+  const body = await rpc({ command: "so_pair_compatibility", first, second, settings });
+  if (!body.evidence) throw new Error("Python Core response did not include SO grouping evidence");
+  return body.evidence;
 }
