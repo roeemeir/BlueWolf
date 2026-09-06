@@ -36,11 +36,43 @@ type RpcEnvelope = {
   ok?: boolean;
   error?: string;
   message?: string;
+  sessionId?: string;
   analysis?: CoreAnalysis;
   history?: AnalysisFrame[];
   events?: DerivedEvent[];
   evidence?: SoGroupingEvidence;
+  acceptedSamples?: number;
+  coreBatchResult?: unknown;
+  checkpointBase64?: string;
+  processedUntilUtc?: string | null;
+  recoveryHistoryStartUtc?: string | null;
 };
+
+type LiveEnvelope = {
+  analysis: CoreAnalysis;
+  history: AnalysisFrame[];
+  events: DerivedEvent[];
+  acceptedSamples: number;
+};
+
+type LiveSessionEntry = {
+  sessionId: string;
+  latestMs: number;
+  windowSpanMs: number;
+  envelope: LiveEnvelope;
+  touchedAt: number;
+};
+
+type PendingLive = {
+  latestMs: number;
+  promise: Promise<LiveEnvelope>;
+};
+
+const liveSessions = new Map<string, LiveSessionEntry>();
+const livePending = new Map<string, PendingLive>();
+const LIVE_MIN_WINDOW_MS = 20 * 60_000;
+const LIVE_MAX_WINDOW_MS = 2 * 60 * 60_000 + 5_000;
+const LIVE_SESSION_LIMIT = 12;
 
 function coreConfig(options: AppCoreOptions) {
   return {
@@ -66,16 +98,162 @@ async function rpc(payload: Record<string, unknown>): Promise<RpcEnvelope> {
   return body;
 }
 
+function datasetTimes(dataset: CoreNavigationDataset) {
+  const fromMs = Date.parse(dataset.provenance.from);
+  const toMs = Date.parse(dataset.provenance.to);
+  const sampleLatestMs = dataset.samples.reduce((latest, sample) => Math.max(latest, Date.parse(sample.timestamp) || 0), 0);
+  const provenanceLatestMs = dataset.provenance.latestSampleAt ? Date.parse(dataset.provenance.latestSampleAt) : 0;
+  const latestMs = Math.max(sampleLatestMs, provenanceLatestMs || 0);
+  return {
+    fromMs,
+    toMs,
+    latestMs,
+    spanMs: Number.isFinite(fromMs) && Number.isFinite(toMs) ? Math.max(0, toMs - fromMs) : 0,
+  };
+}
+
+function stableConfigKey(options: AppCoreOptions) {
+  const raw = JSON.stringify(coreConfig(options));
+  let hash = 2166136261;
+  for (let index = 0; index < raw.length; index += 1) {
+    hash ^= raw.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function liveSessionKey(dataset: CoreNavigationDataset, options: AppCoreOptions) {
+  const { spanMs } = datasetTimes(dataset);
+  const windowSeconds = Math.round(spanMs / 1000);
+  return `${dataset.provenance.source}:${dataset.provenance.serverId}:${windowSeconds}:${stableConfigKey(options)}`;
+}
+
+function isLiveWindow(dataset: CoreNavigationDataset) {
+  const { spanMs, latestMs } = datasetTimes(dataset);
+  return latestMs > 0 && spanMs >= LIVE_MIN_WINDOW_MS && spanMs <= LIVE_MAX_WINDOW_MS;
+}
+
+function requireLiveEnvelope(body: RpcEnvelope): LiveEnvelope {
+  if (!body.analysis || !body.history || !body.events) {
+    throw new Error("Python Core live response did not include analysis/history/events");
+  }
+  return {
+    analysis: body.analysis,
+    history: body.history,
+    events: body.events,
+    acceptedSamples: body.acceptedSamples ?? 0,
+  };
+}
+
+function deltaDataset(dataset: CoreNavigationDataset, afterMs: number): CoreNavigationDataset {
+  const samples = dataset.samples.filter((sample) => Date.parse(sample.timestamp) > afterMs);
+  const first = samples[0]?.timestamp ?? dataset.provenance.to;
+  const vehicles = new Set(samples.map((sample) => sample.vehicleId));
+  return {
+    samples,
+    provenance: {
+      ...dataset.provenance,
+      from: first,
+      sampleCount: samples.length,
+      vehicleCount: vehicles.size,
+      latestSampleAt: samples.at(-1)?.timestamp ?? dataset.provenance.latestSampleAt,
+    },
+  };
+}
+
+async function closeLiveSession(entry: LiveSessionEntry | undefined) {
+  if (!entry?.sessionId) return;
+  try {
+    await rpc({ command: "close_analysis_session", sessionId: entry.sessionId });
+  } catch {
+    // Session cleanup is best-effort; failure must never trigger an algorithm fallback.
+  }
+}
+
+function trimLiveSessions() {
+  if (liveSessions.size <= LIVE_SESSION_LIMIT) return;
+  const oldest = [...liveSessions.entries()].sort((a, b) => a[1].touchedAt - b[1].touchedAt)[0];
+  if (!oldest) return;
+  liveSessions.delete(oldest[0]);
+  void closeLiveSession(oldest[1]);
+}
+
+async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCoreOptions): Promise<LiveEnvelope> {
+  const key = liveSessionKey(dataset, options);
+  const { latestMs, spanMs } = datasetTimes(dataset);
+  const pending = livePending.get(key);
+  if (pending && pending.latestMs === latestMs) return pending.promise;
+
+  const promise = (async () => {
+    let entry = liveSessions.get(key);
+    const movedBackwards = entry ? latestMs < entry.latestMs : false;
+    if (movedBackwards) {
+      liveSessions.delete(key);
+      await closeLiveSession(entry);
+      entry = undefined;
+    }
+
+    if (!entry) {
+      const body = await rpc({
+        command: "create_analysis_session",
+        config: coreConfig(options),
+        dataset,
+        retentionSeconds: Math.max(12 * 60, Math.ceil(spanMs / 1000)),
+        maxHistoryFrames: 72,
+      });
+      if (!body.sessionId) throw new Error("Python Core did not return live sessionId");
+      const envelope = requireLiveEnvelope(body);
+      liveSessions.set(key, {
+        sessionId: body.sessionId,
+        latestMs,
+        windowSpanMs: spanMs,
+        envelope,
+        touchedAt: Date.now(),
+      });
+      trimLiveSessions();
+      return envelope;
+    }
+
+    if (latestMs <= entry.latestMs) {
+      entry.touchedAt = Date.now();
+      return entry.envelope;
+    }
+
+    const delta = deltaDataset(dataset, entry.latestMs);
+    const body = await rpc({
+      command: "process_analysis_batch",
+      sessionId: entry.sessionId,
+      dataset: delta,
+    });
+    const envelope = requireLiveEnvelope(body);
+    liveSessions.set(key, {
+      ...entry,
+      latestMs,
+      envelope,
+      touchedAt: Date.now(),
+    });
+    return envelope;
+  })();
+
+  livePending.set(key, { latestMs, promise });
+  try {
+    return await promise;
+  } finally {
+    const current = livePending.get(key);
+    if (current?.promise === promise) livePending.delete(key);
+  }
+}
+
 /**
  * Single production application/Core boundary.
  *
- * The browser never imports or executes an algorithm implementation. It sends
- * the normalized NavigationDataset + configuration to the same-origin API,
- * which proxies the canonical Python Core service. There is deliberately no
- * TypeScript algorithm fallback: an unavailable Python Core is an explicit
- * integration/no-analysis state.
+ * Live operator windows are warmed once in a stateful Python Core session and
+ * then send only samples newer than the previous five-second poll. Historical
+ * investigation and short E2E fixtures remain stateless current-Core replay.
+ * There is deliberately no TypeScript algorithm fallback.
  */
 export async function analyzeNavigationDataset(dataset: CoreNavigationDataset, options: AppCoreOptions): Promise<CoreAnalysis> {
+  if (isLiveWindow(dataset)) return (await ensureLiveEnvelope(dataset, options)).analysis;
   const body = await rpc({ command: "analyze_dataset", dataset, config: coreConfig(options) });
   if (!body.analysis) throw new Error("Python Core response did not include analysis");
   return body.analysis;
@@ -87,6 +265,10 @@ export async function analyzeNavigationHistory(
   maxFrames = 61,
   lookbackMinutes = 12,
 ): Promise<{ history: AnalysisFrame[]; events: DerivedEvent[] }> {
+  if (maxFrames <= 40 && isLiveWindow(dataset)) {
+    const envelope = await ensureLiveEnvelope(dataset, options);
+    return { history: envelope.history, events: envelope.events };
+  }
   const body = await rpc({
     command: "analyze_history",
     dataset,
