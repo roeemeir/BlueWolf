@@ -82,7 +82,7 @@ export async function POST(request: Request) {
       active: item.active,
       latitude: item.latitude,
       longitude: item.longitude,
-      altitude: item.altitude ?? 0,
+      altitude: item.altitude ?? null,
       velocityNorth: item.velocityNorth,
       velocityEast: item.velocityEast,
       x: (item.longitude - origin.lon) * metresLon,
