@@ -70,6 +70,7 @@ test("Figure-8 is an SO hippodrome with crossed legs and single-hippodrome exter
   const grouping = read("packages/bluewolf-core/src/grouping.ts");
   const analysis = read("core/src/bluewolf_core/application_analysis_v18.py");
   const topologyTest = read("core/tests/test_route_topology_v08.py");
+  const geometry = read("components/bluewolf/v09/geometry.ts");
   assert.match(contracts, /RouteKind = "circle" \| "single" \| "double" \| "figure8"/);
   assert.match(contracts, /crossedLegs\?: boolean/);
   assert.match(grouping, /geometry\.kind === "single" \|\| geometry\.kind === "figure8"/);
@@ -77,6 +78,25 @@ test("Figure-8 is an SO hippodrome with crossed legs and single-hippodrome exter
   assert.match(analysis, /geometry\["crossedLegs"\] = True/);
   assert.match(topologyTest, /hippodrome whose two straight legs cross/);
   assert.match(topologyTest, /RouteTopology\.SELF_CROSSING/);
+  assert.match(geometry, /topA, bottomB/);
+  assert.match(geometry, /topB, bottomA/);
+  assert.doesNotMatch(geometry, /sy \* Math\.sin\(2 \* t\)/);
+});
+
+test("Figure-8 is exercised by simulator GT and the SO Template Builder", () => {
+  const simulator = read("components/bluewolf/v09/simulator.ts");
+  const nav = read("components/bluewolf/v12/navigation-data.ts");
+  const systemTests = read("components/bluewolf/v12/system-tests.tsx");
+  const builder = read("components/bluewolf/v10/template-builder.tsx");
+  assert.match(simulator, /figure8Route\("s2-so-c"/);
+  assert.match(simulator, /crossedLegs: true/);
+  assert.match(nav, /NavigationRouteKind = "circle" \| "single" \| "double" \| "figure8"/);
+  assert.match(systemTests, /gtFigure8 === "figure8"/);
+  assert.match(systemTests, /detectedFigure8\?\.kind === "figure8"/);
+  assert.match(builder, /SoKind="single"\|"double"\|"figure8"/);
+  assert.match(builder, /figure8Count/);
+  assert.match(builder, /figure8Counts:\{generic:figure8Count\}/);
+  assert.match(builder, /figureEightLoop/);
 });
 
 test("SO grouping production law is implemented in canonical Python analysis", () => {
@@ -107,9 +127,11 @@ test("workspace persistence remains separate and compact Core checkpoints are fi
 test("Influx missing altitude remains missing instead of becoming a fabricated zero", () => {
   const route = read("app/api/influx/query/route.ts");
   const contracts = read("packages/bluewolf-core/src/contracts.ts");
+  const navigation = read("components/bluewolf/v12/navigation-data.ts");
   assert.match(route, /altitude: item\.altitude \?\? null/);
   assert.doesNotMatch(route, /altitude: item\.altitude \?\? 0/);
   assert.match(contracts, /altitude: number \| null/);
+  assert.match(navigation, /altitude: number \| null/);
 });
 
 test("active operator contains no old fabricated KPI literals", () => {
@@ -121,11 +143,16 @@ test("active operator contains no old fabricated KPI literals", () => {
   assert.match(operator, /analysis\.groups\.so\.score/);
 });
 
-test("v1.7 defines simplified source-of-truth, no TTAG and current-Core replay", () => {
+test("v1.8 amends v1.7 with crossed-leg Figure-8 and stateful Live truth", () => {
   const current = read("docs/BLUE_WOLF_SRS_CURRENT.md");
+  const amendment = read("docs/BLUE_WOLF_SRS_CHANGESET_2026-09-07_V1_8.md");
   const decisions = read("docs/BLUE_WOLF_ARCHITECTURE_DECISIONS_2026-09-06_V1_7.md");
   const architecture = read("docs/BLUE_WOLF_ARCHITECTURE_V1_7_SIMPLIFIED_CANONICAL.md");
-  assert.match(current, /V1_7/);
+  assert.match(current, /2026-09-07_V1_8/);
+  assert.match(amendment, /two straight legs are crossed/);
+  assert.match(amendment, /five-second incremental batches/);
+  assert.match(amendment, /Template-preview analysis is non-operational/);
+  assert.match(amendment, /altitude = 0/);
   assert.match(decisions, /Canonical current Core is Python/);
   assert.match(decisions, /No TTAG/);
   assert.match(decisions, /InfluxDB is the historical source of truth/);
