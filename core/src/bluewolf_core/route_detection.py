@@ -279,14 +279,21 @@ def _fit_shape(
     *,
     robust: bool,
 ) -> _Shape:
-    center = CanonicalPoint(
-        statistics.median(point.x_m for point in points)
-        if robust
-        else statistics.fmean(point.x_m for point in points),
-        statistics.median(point.y_m for point in points)
-        if robust
-        else statistics.fmean(point.y_m for point in points),
-    )
+    if robust:
+        # A coordinate median follows sample density. A suffix containing a
+        # non-integer number of cycles therefore moves the fitted center toward
+        # the over-sampled phase even when the physical route did not move.
+        # Closed SI/SO shapes are centrally symmetric, so the midpoint of their
+        # robust spatial extents estimates center from geometry instead.
+        center = CanonicalPoint(
+            _extent_midpoint(tuple(point.x_m for point in points)),
+            _extent_midpoint(tuple(point.y_m for point in points)),
+        )
+    else:
+        center = CanonicalPoint(
+            statistics.fmean(point.x_m for point in points),
+            statistics.fmean(point.y_m for point in points),
+        )
 
     xx = statistics.fmean((point.x_m - center.x_m) ** 2 for point in points)
     yy = statistics.fmean((point.y_m - center.y_m) ** 2 for point in points)
@@ -454,12 +461,19 @@ def _to_closed_route(
         origin_latitude_deg,
         origin_longitude_deg,
     )
+    canonical_points = tuple(
+        CanonicalPoint(
+            point.x_m - shape.center.x_m,
+            point.y_m - shape.center.y_m,
+        )
+        for point in shape.canonical_points
+    )
     return ClosedRoute(
         route_id=route_id,
         family=shape.family,
         subtype=shape.subtype,
         topology=shape.topology,
-        canonical_points=shape.canonical_points,
+        canonical_points=canonical_points,
         center_latitude_deg=center_latitude,
         center_longitude_deg=center_longitude,
         length_m=shape.length_m,
@@ -688,6 +702,11 @@ def _travelled_distance(points: Sequence[CanonicalPoint]) -> float:
 
 def _distance(first: CanonicalPoint, second: CanonicalPoint) -> float:
     return math.hypot(second.x_m - first.x_m, second.y_m - first.y_m)
+
+
+def _extent_midpoint(values: Sequence[float]) -> float:
+    """Center a closed symmetric extent without weighting repeated phases."""
+    return (_quantile(values, 0.01) + _quantile(values, 0.99)) / 2.0
 
 
 def _quantile(values: Sequence[float], fraction: float) -> float:
