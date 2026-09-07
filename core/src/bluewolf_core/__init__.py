@@ -38,7 +38,7 @@ from .models import (
 from .route_detection import RouteDetection, detect_closed_route
 from .scoring import aggregate_group_scores, score_error, score_vehicle
 from .session import CheckpointCompatibilityError
-from .session_v23 import CoreSession
+from .session_v25 import CoreSession
 from .templates import (
     MemberTemplateFit,
     NoLegalTemplateAssignment,
