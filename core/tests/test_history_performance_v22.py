@@ -5,7 +5,7 @@ import time
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from bluewolf_core.application_analysis_v22 import build_analysis_history, derive_events
+from bluewolf_core.application_analysis_v23 import build_analysis_history, derive_events
 
 
 START = datetime(2026, 9, 6, 0, 0, tzinfo=UTC)
@@ -89,14 +89,14 @@ def _dataset_24h() -> dict:
     }
 
 
-class HistoricalReplayPerformanceV22Tests(unittest.TestCase):
-    def test_24h_69k_points_120_frames_stays_within_core_budget(self) -> None:
+class HistoricalReplayPerformanceV23Tests(unittest.TestCase):
+    def test_24h_69k_points_120_frames_40min_route_history_stays_within_core_budget(self) -> None:
         dataset = _dataset_24h()
         self.assertGreaterEqual(len(dataset["samples"]), 69_000)
         self.assertLessEqual(len(dataset["samples"]), 70_000)
 
         started = time.perf_counter()
-        history = build_analysis_history(dataset, _config(), max_frames=120, lookback_minutes=12)
+        history = build_analysis_history(dataset, _config(), max_frames=120, lookback_minutes=40)
         events = derive_events(history, _config()["thresholds"])
         elapsed = time.perf_counter() - started
 
@@ -105,9 +105,9 @@ class HistoricalReplayPerformanceV22Tests(unittest.TestCase):
         self.assertEqual(history[-1]["timestamp"], dataset["provenance"]["latestSampleAt"])
         self.assertTrue(all(frame["analysis"]["available"] for frame in history[-5:]))
         self.assertIsInstance(events, list)
-        # Leaves at least ~35 s of the user's 60 s end-to-end budget for
-        # Influx query + CSV parsing + Join + HTTP/UI on a CI-class machine.
-        self.assertLess(elapsed, 25.0, f"24h Core replay took {elapsed:.2f}s")
+        # Reserve at least ~35 s of the 60 s end-to-end budget for the source
+        # query, CSV parsing, Join, HTTP serialization and UI rendering.
+        self.assertLess(elapsed, 25.0, f"24h Core replay with 40m lookback took {elapsed:.2f}s")
 
 
 if __name__ == "__main__":
