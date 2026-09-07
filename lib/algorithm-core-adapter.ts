@@ -27,11 +27,19 @@ export type SoGroupingEvidence = {
   angleDiffDeg: number;
   parallelDistance: number;
   lateralDistance: number;
+  turnDistance?: number;
   meanLeg: number;
   parallelLegs: number;
   lateralLegs: number;
+  turnDistanceLegs?: number;
   axisDeg: number;
+  frontAligned?: boolean;
   explanation: string;
+};
+
+type EvidenceDataset = CoreNavigationDataset & {
+  coreEvidenceSamples?: CoreNavigationDataset["samples"];
+  coreEvidenceProvenance?: CoreNavigationDataset["provenance"];
 };
 
 type RpcEnvelope = {
@@ -82,10 +90,11 @@ type StoredCheckpoint = {
 const liveSessions = new Map<string, LiveSessionEntry>();
 const livePending = new Map<string, PendingLive>();
 const operationalLiveKeys = new Set<string>();
-const LIVE_MIN_WINDOW_MS = 20 * 60_000;
+const LIVE_MIN_WINDOW_MS = 40 * 60_000;
 const LIVE_MAX_WINDOW_MS = 2 * 60 * 60_000 + 5_000;
 const LIVE_SESSION_LIMIT = 12;
 const CHECKPOINT_INTERVAL_MS = 5 * 60_000;
+const CORE_ROUTE_HISTORY_SECONDS = 40 * 60;
 
 function coreConfig(options: AppCoreOptions) {
   return {
@@ -94,6 +103,15 @@ function coreConfig(options: AppCoreOptions) {
     siTemplate: options.siTemplate,
     soTemplate: options.soTemplate,
     groupingSettings: options.groupingSettings,
+  };
+}
+
+function datasetForCore(dataset: CoreNavigationDataset): CoreNavigationDataset {
+  const extended = dataset as EvidenceDataset;
+  if (!extended.coreEvidenceSamples?.length || !extended.coreEvidenceProvenance) return dataset;
+  return {
+    samples: extended.coreEvidenceSamples,
+    provenance: extended.coreEvidenceProvenance,
   };
 }
 
@@ -243,8 +261,6 @@ function isOperationalLiveKey(key: string, options: AppCoreOptions) {
 }
 
 async function startLiveSession(dataset: CoreNavigationDataset, options: AppCoreOptions, spanMs: number, key: string) {
-  // Yield once so Operator's sibling History request can promote this key before
-  // checkpoint restore is decided. Template preview calls do not request History.
   await Promise.resolve();
   const config = coreConfig(options);
   const stored = isOperationalLiveKey(key, options) ? await loadStoredCheckpoint(dataset) : null;
@@ -265,7 +281,7 @@ async function startLiveSession(dataset: CoreNavigationDataset, options: AppCore
         checkpointBase64: stored!.checkpointBase64,
         config,
         recoveryDataset: dataset,
-        retentionSeconds: Math.max(12 * 60, Math.ceil(spanMs / 1000)),
+        retentionSeconds: Math.max(CORE_ROUTE_HISTORY_SECONDS, Math.ceil(spanMs / 1000)),
         maxHistoryFrames: 72,
       });
     } catch {
@@ -278,7 +294,7 @@ async function startLiveSession(dataset: CoreNavigationDataset, options: AppCore
     command: "create_analysis_session",
     config,
     dataset,
-    retentionSeconds: Math.max(12 * 60, Math.ceil(spanMs / 1000)),
+    retentionSeconds: Math.max(CORE_ROUTE_HISTORY_SECONDS, Math.ceil(spanMs / 1000)),
     maxHistoryFrames: 72,
   });
 }
@@ -290,14 +306,10 @@ async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCo
   const pending = livePending.get(key);
   if (pending) {
     if (pending.latestMs === latestMs) return pending.promise;
-    // A later cutoff must never start a second Python session while the warm-up
-    // or previous delta for the same key is still running. Wait for that frontier
-    // to settle; then the request below continues as a normal incremental batch.
     try {
       await pending.promise;
     } catch {
-      // If the previous request failed, retry the newer cutoff from the current
-      // session map (or a clean warm-up) rather than spawning concurrent sessions.
+      // Retry from the settled frontier rather than opening a concurrent session.
     }
   }
 
@@ -367,16 +379,15 @@ async function ensureLiveEnvelope(dataset: CoreNavigationDataset, options: AppCo
 /**
  * Single production application/Core boundary.
  *
- * Live operator windows are warmed once in a stateful Python Core session and
- * then send only samples newer than the previous five-second poll. A live key
- * becomes operational only when the Operator History/Timeline request promotes
- * it; therefore template-only preview sessions cannot restore or overwrite the
- * five-minute Influx checkpoint. Historical investigation and short E2E fixtures
- * remain stateless current-Core replay. There is no TypeScript algorithm fallback.
+ * A visible 30-minute Operator dataset may carry a separate 40-minute evidence
+ * window. Session identity, recovery and Python analysis use that evidence;
+ * rendering components continue receiving only visible samples. After warm-up,
+ * only samples newer than the previous poll are sent. No TypeScript fallback.
  */
 export async function analyzeNavigationDataset(dataset: CoreNavigationDataset, options: AppCoreOptions): Promise<CoreAnalysis> {
-  if (isLiveWindow(dataset)) return (await ensureLiveEnvelope(dataset, options)).analysis;
-  const body = await rpc({ command: "analyze_dataset", dataset, config: coreConfig(options) });
+  const coreDataset = datasetForCore(dataset);
+  if (isLiveWindow(coreDataset)) return (await ensureLiveEnvelope(coreDataset, options)).analysis;
+  const body = await rpc({ command: "analyze_dataset", dataset: coreDataset, config: coreConfig(options) });
   if (!body.analysis) throw new Error("Python Core response did not include analysis");
   return body.analysis;
 }
@@ -385,15 +396,16 @@ export async function analyzeNavigationHistory(
   dataset: CoreNavigationDataset,
   options: AppCoreOptions,
   maxFrames = 61,
-  lookbackMinutes = 12,
+  lookbackMinutes = 40,
 ): Promise<{ history: AnalysisFrame[]; events: DerivedEvent[] }> {
-  if (maxFrames <= 40 && isLiveWindow(dataset)) {
-    const envelope = await ensureLiveEnvelope(dataset, options, true);
+  const coreDataset = datasetForCore(dataset);
+  if (maxFrames <= 40 && isLiveWindow(coreDataset)) {
+    const envelope = await ensureLiveEnvelope(coreDataset, options, true);
     return { history: envelope.history, events: envelope.events };
   }
   const body = await rpc({
     command: "analyze_history",
-    dataset,
+    dataset: coreDataset,
     config: coreConfig(options),
     maxFrames,
     lookbackMinutes,
@@ -402,7 +414,7 @@ export async function analyzeNavigationHistory(
   return { history: body.history, events: body.events };
 }
 
-export async function buildAnalysisHistory(dataset: CoreNavigationDataset, options: AppCoreOptions, maxFrames = 61, lookbackMinutes = 12): Promise<AnalysisFrame[]> {
+export async function buildAnalysisHistory(dataset: CoreNavigationDataset, options: AppCoreOptions, maxFrames = 61, lookbackMinutes = 40): Promise<AnalysisFrame[]> {
   return (await analyzeNavigationHistory(dataset, options, maxFrames, lookbackMinutes)).history;
 }
 
