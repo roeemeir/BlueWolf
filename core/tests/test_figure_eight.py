@@ -53,6 +53,30 @@ class FigureEightDetectionTests(unittest.TestCase):
         self.assertGreaterEqual(detected.fit_fraction, 0.90)
         self.assertEqual(detected.coverage_fraction, 1.0)
 
+    def test_noisy_two_second_sampling_still_confirms_self_crossing(self) -> None:
+        samples = generate_figure_eight_samples(
+            start_time_utc=START,
+            duration_seconds=184,
+            vehicles=(SimulatedVehicle(7, 707, 0),),
+            long_extent_m=110,
+            short_extent_m=55,
+            period_seconds=180,
+            orientation_deg=68,
+            sample_interval_seconds=2,
+            position_noise_std_m=1.5,
+            seed=17,
+        )
+
+        detected = detect_figure_eight(samples)
+
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertEqual(detected.effective.subtype, RouteSubtype.FIGURE_EIGHT)
+        self.assertEqual(detected.effective.topology, RouteTopology.SELF_CROSSING)
+        self.assertAlmostEqual(detected.effective.estimated_period_s, 180.0, delta=8.0)
+        self.assertAlmostEqual(detected.effective.orientation_deg, 68.0, delta=8.0)
+        self.assertGreaterEqual(detected.fit_fraction, 0.85)
+
     def test_one_lobe_is_not_enough_to_confirm_figure_eight(self) -> None:
         samples = generate_figure_eight_samples(
             start_time_utc=START,
