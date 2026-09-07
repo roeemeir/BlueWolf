@@ -95,6 +95,34 @@ def _topology_kind_v22(samples: Sequence[Mapping[str, Any]], fit: Any) -> str:
 _v18._topology_kind = _topology_kind_v22
 
 
+def _selected_history_times(unique_wire_times: Sequence[str], max_frames: int) -> list[str]:
+    """Uniformly select at most max_frames timestamps, always including endpoints."""
+    if not unique_wire_times:
+        return []
+    safe_max_frames = max(1, int(max_frames))
+    if len(unique_wire_times) <= safe_max_frames:
+        return list(unique_wire_times)
+    if safe_max_frames == 1:
+        return [unique_wire_times[-1]]
+    last_index = len(unique_wire_times) - 1
+    indices = [round(index * last_index / (safe_max_frames - 1)) for index in range(safe_max_frames)]
+    # Rounding can theoretically duplicate an index on tiny inputs; preserve
+    # order and the strict cap while keeping the final timestamp mandatory.
+    selected: list[str] = []
+    seen: set[int] = set()
+    for index in indices:
+        if index in seen:
+            continue
+        seen.add(index)
+        selected.append(unique_wire_times[index])
+    if selected[-1] != unique_wire_times[-1]:
+        if len(selected) >= safe_max_frames:
+            selected[-1] = unique_wire_times[-1]
+        else:
+            selected.append(unique_wire_times[-1])
+    return selected
+
+
 def build_analysis_history(
     dataset: Mapping[str, Any],
     config: Mapping[str, Any],
@@ -107,7 +135,8 @@ def build_analysis_history(
     frame and reparsed every timestamp on each scan. For a 24-hour investigation
     with 120 frames that multiplied otherwise cheap window selection work by
     roughly 120. Here timestamps are parsed exactly once for the index and each
-    frame is sliced with bisect in O(log N + window_size).
+    frame is sliced with bisect in O(log N + window_size). `max_frames` is also
+    now a real upper bound rather than an approximate stride target.
     """
     samples = [sample for sample in dataset.get("samples", []) if isinstance(sample, Mapping)]
     if not samples:
@@ -119,20 +148,13 @@ def build_analysis_history(
     )
     indexed_times = [item[0] for item in indexed]
 
-    # Preserve legacy frame-selection semantics: unique wire timestamps,
-    # chronologically ordered, sampled with floor(len/max_frames) stride and
-    # always including the final timestamp.
     unique_wire_times = sorted(
         {str(sample["timestamp"]) for sample in samples},
         key=_parse_time,
     )
-    if not unique_wire_times:
+    selected = _selected_history_times(unique_wire_times, max_frames)
+    if not selected:
         return []
-    safe_max_frames = max(1, int(max_frames))
-    step = max(1, len(unique_wire_times) // safe_max_frames)
-    selected = [value for index, value in enumerate(unique_wire_times) if index % step == 0]
-    if selected[-1] != unique_wire_times[-1]:
-        selected.append(unique_wire_times[-1])
 
     provenance = dataset.get("provenance", {})
     source = str(provenance.get("source", "simulation"))
