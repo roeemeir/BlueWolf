@@ -41,9 +41,9 @@ def _config() -> dict:
 
 
 def _dataset_24h() -> dict:
-    """About 14k NAV points, matching the investigation target-point budget."""
+    """About 69k NAV points: 8 vehicles at ten-second historical fidelity."""
     duration_seconds = 24 * 60 * 60
-    step_seconds = 50
+    step_seconds = 10
     radius = 100.0
     period = 240.0
     vehicle_ids = tuple(range(101, 109))
@@ -90,10 +90,10 @@ def _dataset_24h() -> dict:
 
 
 class HistoricalReplayPerformanceV22Tests(unittest.TestCase):
-    def test_24h_14k_points_120_frames_stays_within_core_budget(self) -> None:
+    def test_24h_69k_points_120_frames_stays_within_core_budget(self) -> None:
         dataset = _dataset_24h()
-        self.assertGreaterEqual(len(dataset["samples"]), 13_000)
-        self.assertLessEqual(len(dataset["samples"]), 15_000)
+        self.assertGreaterEqual(len(dataset["samples"]), 69_000)
+        self.assertLessEqual(len(dataset["samples"]), 70_000)
 
         started = time.perf_counter()
         history = build_analysis_history(dataset, _config(), max_frames=120, lookback_minutes=12)
