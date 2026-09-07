@@ -21,11 +21,18 @@ is found, its own period becomes the latest-cycle reference for revision checks.
 confirmation, `route_state.candidate` is intentionally retained as the fixed
 revision baseline. This prevents a real slow geometry drift from disappearing
 because the active fit follows it in many individually sub-threshold steps.
+
+Clean Live startup also separates memory from computation: recent suffixes are
+used to reconstruct current state, then the full retained 40-minute NAV window is
+hydrated as route-history evidence without replaying every historical sample
+through every lifecycle transition.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
+from typing import Iterable
 
 from . import session as _legacy
 from .cycle_window_v25 import latest_cycle_vehicle_samples
@@ -36,6 +43,43 @@ from .session_v23 import CoreSession as _V23CoreSession, ROUTE_HISTORY_SECONDS
 
 class CoreSession(_V23CoreSession):
     """Canonical streaming session using the last completed cycle for active fit."""
+
+    def _recent_closed_detection(
+        self,
+        history: list[VehicleSample],
+        reference_time: datetime,
+    ) -> RouteDetection | None:
+        """Return the first valid closed route found in recent expanding suffixes.
+
+        Window expansion is purely temporal and bounded by retained evidence; no
+        route-shape assumption is used. The detector still enforces closure, fit
+        quality and completed-cycle evidence.
+        """
+        if len(history) < 12:
+            return None
+        available = max(0.0, (history[-1].sample_time_utc - history[0].sample_time_utc).total_seconds())
+        if available <= 0:
+            return None
+        maximum = min(float(ROUTE_HISTORY_SECONDS), available)
+        window = min(maximum, max(1.0, float(self.config.detection.known_route_candidate_seconds)))
+        windows: list[float] = []
+        while window < maximum:
+            windows.append(window)
+            window = min(maximum, window * 2.0)
+        windows.append(maximum)
+
+        probe_config = replace(self.config.detection, new_route_observation_seconds=0)
+        seen: set[int] = set()
+        for seconds in windows:
+            rounded = max(1, int(round(seconds)))
+            if rounded in seen:
+                continue
+            seen.add(rounded)
+            recent = _legacy._samples_since(history, reference_time, float(rounded))
+            detection = detect_closed_route(recent, probe_config)
+            if detection is not None:
+                return detection
+        return None
 
     def _latest_cycle_detection(
         self,
@@ -56,21 +100,70 @@ class CoreSession(_V23CoreSession):
         )
         return detect_closed_route(cycle, cycle_config)
 
+    def bootstrap_from_history(
+        self,
+        samples: Iterable[VehicleSample],
+        *,
+        observed_until_utc: datetime | None = None,
+    ):
+        """Reconstruct current state cheaply while retaining up to 40m evidence.
+
+        Each stream is first inspected by the generic detector using expanding
+        recent suffixes. If a period is found, only roughly two cycles plus the
+        existing candidate-stability interval are replayed through the lifecycle.
+        The full bounded NAV window is hydrated afterwards as evidence. If no
+        closed route is discoverable, only a short recent suffix is replayed to
+        establish current vehicle/data state; the full history is still retained.
+        """
+        ordered = sorted(
+            samples,
+            key=lambda item: (
+                item.sample_time_utc,
+                item.server_id,
+                item.vehicle_identifier,
+                item.vehicle_number,
+            ),
+        )
+        if not ordered:
+            return self.process_batch((), observed_until_utc=observed_until_utc)
+
+        by_key: dict[tuple[int, int], list[VehicleSample]] = {}
+        for sample in ordered:
+            by_key.setdefault(sample.stream_key, []).append(sample)
+
+        replay: list[VehicleSample] = []
+        for stream in by_key.values():
+            latest = stream[-1].sample_time_utc
+            detection = self._recent_closed_detection(stream, latest)
+            if detection is not None:
+                replay_seconds = max(
+                    2.0 * max(detection.effective.estimated_period_s, 1.0)
+                    + float(self.config.detection.known_route_candidate_seconds),
+                    2.0 * float(self.config.detection.known_route_candidate_seconds),
+                )
+            else:
+                replay_seconds = 2.0 * float(self.config.detection.known_route_candidate_seconds)
+            replay.extend(_legacy._samples_since(stream, latest, min(float(ROUTE_HISTORY_SECONDS), replay_seconds)))
+
+        replay.sort(
+            key=lambda item: (
+                item.sample_time_utc,
+                item.server_id,
+                item.vehicle_identifier,
+                item.vehicle_number,
+            )
+        )
+        result = self.process_batch(replay, observed_until_utc=observed_until_utc)
+        self.hydrate_recovery_history(ordered)
+        return result
+
     def _generic_change_probe(
         self,
         sample: VehicleSample,
         route_state,
         baseline: ClosedRoute,
     ) -> RouteDetection | None:
-        """Find a changed closed route without assuming its new period or shape.
-
-        The active fit never leaves latest-cycle semantics. This probe exists only
-        to discover a materially changed route when the old period no longer spans
-        a complete new cycle. It examines recent suffixes from short to longer,
-        bounded by the retained 40-minute evidence. No centre/axis/turn/family
-        assumption is introduced; every suffix is passed to the same closed-route
-        detector and must satisfy its closure/fit/completed-cycle requirements.
-        """
+        """Find a changed closed route without assuming its new period or shape."""
         history = route_state.history
         if len(history) < 12:
             return None
@@ -84,7 +177,7 @@ class CoreSession(_V23CoreSession):
         # Two baseline cycles are a natural first probe: one current-period slice
         # is already used by the active fit, while a second cycle gives a changed
         # period room to close without imposing a geometric model. The 180-second
-        # floor reuses the existing revision/candidate timing, not a new route law.
+        # floor reuses existing revision/candidate timing, not a new route law.
         base_seconds = max(
             2.0 * max(baseline.estimated_period_s, 1.0),
             float(_legacy._ROUTE_REVISION_CONFIRM_SECONDS + self.config.detection.known_route_candidate_seconds),
@@ -114,16 +207,11 @@ class CoreSession(_V23CoreSession):
 
     def _update_initial_route(self, sample: VehicleSample, route_state) -> list[StateChange]:
         changes: list[StateChange] = []
-        candidate_config = replace(
-            self.config.detection,
-            new_route_observation_seconds=self.config.detection.known_route_candidate_seconds,
-        )
 
-        # Before a reference exists we must use generic closed-route evidence.
-        # The detector itself requires closure, fit quality and a completed cycle,
-        # so this does not claim a route merely because 60 seconds elapsed.
+        # Before a reference exists, search recent suffixes generically rather than
+        # re-fitting the entire 40-minute buffer every five seconds.
         if route_state.candidate is None:
-            candidate_detection = detect_closed_route(route_state.history, candidate_config)
+            candidate_detection = self._recent_closed_detection(route_state.history, sample.sample_time_utc)
             if candidate_detection is None:
                 return changes
             route_state.candidate = candidate_detection.effective
@@ -158,8 +246,6 @@ class CoreSession(_V23CoreSession):
 
         confirmed = replace(latest, route_id=f"{latest.route_id}:r0")
         route_state.confirmed = confirmed
-        # From this point candidate is the fixed revision baseline. It is updated
-        # only when a revision is approved, never by ordinary latest-cycle refresh.
         route_state.candidate = confirmed
         route_state.pending_revision = None
         route_state.pending_since_utc = None
@@ -179,8 +265,6 @@ class CoreSession(_V23CoreSession):
         confirmed = route_state.confirmed
         baseline = route_state.candidate or confirmed
 
-        # Once a revision candidate exists, evaluate exactly its latest cycle.
-        # This prevents the old route period from controlling new-route stability.
         if route_state.pending_revision is not None:
             detection = self._latest_cycle_detection(route_state, route_state.pending_revision)
             if detection is None:
@@ -215,17 +299,12 @@ class CoreSession(_V23CoreSession):
                 )
             ]
 
-        # Normal operation: current geometry is always the latest completed cycle
-        # under the currently active period, but change is measured against the
-        # fixed approved baseline so gradual drift cannot hide.
         detection = self._latest_cycle_detection(route_state, confirmed)
         if detection is not None:
             observed = detection.effective
             if not _legacy._material_route_change(baseline, observed):
                 route_state.confirmed = replace(observed, route_id=confirmed.route_id)
                 return []
-            # A valid, materially different full cycle is already sufficient to
-            # start the revision stability clock.
             route_state.pending_revision = observed
             route_state.pending_since_utc = sample.sample_time_utc
             return [
@@ -238,9 +317,6 @@ class CoreSession(_V23CoreSession):
                 )
             ]
 
-        # If the active period no longer yields a complete cycle, discover the new
-        # route from a bounded generic suffix. This path is only entered during
-        # suspected change, so stable-route cost remains proportional to one cycle.
         change_detection = self._generic_change_probe(sample, route_state, baseline)
         if change_detection is None:
             return []
