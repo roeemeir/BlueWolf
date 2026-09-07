@@ -138,7 +138,10 @@ export function generateSimulationDataset({ serverId, from, to, grouping, windMo
   const safeFrom = new Date(Math.max(from.getTime(), bounds.from.getTime()));
   const safeTo = new Date(Math.min(to.getTime(), bounds.to.getTime()));
   if (safeFrom >= safeTo) return { samples: [], provenance: provenanceFromSamples("simulation", serverId, safeFrom, safeTo, [], ["טווח הסימולציה המבוקש ריק או מחוץ ל־30 הימים הזמינים."]) };
-  const durationSec = (safeTo.getTime() - safeFrom.getTime()) / 1000; const stepSeconds = Math.max(2, Math.ceil(durationSec * 8 / Math.max(1, targetPoints))); const samples: RawNavigationSample[] = [];
+  const durationSec = (safeTo.getTime() - safeFrom.getTime()) / 1000;
+  const plannedStepSeconds = Math.max(2, Math.ceil(durationSec * 8 / Math.max(1, targetPoints)));
+  const stepSeconds = durationSec <= 24 * 60 * 60 ? Math.min(10, plannedStepSeconds) : plannedStepSeconds;
+  const samples: RawNavigationSample[] = [];
   for (let ms = safeFrom.getTime(); ms <= safeTo.getTime(); ms += stepSeconds * 1000) samples.push(...sampleAt(serverId, new Date(ms), grouping, windMode));
   if (samples.length === 0 || new Date(samples.at(-1)!.timestamp).getTime() < safeTo.getTime() - stepSeconds * 1000) samples.push(...sampleAt(serverId, safeTo, grouping, windMode));
   return { samples, provenance: provenanceFromSamples("simulation", serverId, safeFrom, safeTo, samples, [`סימולציה דטרמיניסטית · צעד דגימה ${stepSeconds}s · היסטוריה זמינה ${SIMULATION_HISTORY_DAYS} ימים.`]) };
