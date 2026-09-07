@@ -40,15 +40,19 @@ export type CoreTemplate = {
 };
 
 export type SoGroupingSettings = {
+  /** Legacy/template-builder display decomposition. Not a production angle gate. */
   maxParallelLegs: number;
   maxLateralLegs: number;
   maxAngleDeg: number;
+  /** Production turn-to-turn connection threshold. Defaults to 1.5 leg lengths. */
+  maxTurnDistanceLegs?: number;
 };
 
 export const DEFAULT_SO_GROUPING: SoGroupingSettings = {
   maxParallelLegs: 1.5,
   maxLateralLegs: 0.35,
   maxAngleDeg: 20,
+  maxTurnDistanceLegs: 1.5,
 };
 
 export type SoGeometryDescriptor = {
@@ -61,6 +65,8 @@ export type SoGeometryDescriptor = {
   secondLegLength?: number;
   bendDeg?: number;
   crossedLegs?: boolean;
+  /** Direction/front inferred from NAV; production SO grouping requires consistency. */
+  direction?: 1 | -1;
 };
 
 export type RawNavigationSample = {
@@ -176,7 +182,10 @@ export type CoreAnalysis = {
   available: boolean;
   provenance: NavigationProvenance;
   routes: DerivedRoute[];
+  /** Largest group of each family, retained for backward-compatible screens. */
   groups: { si: DerivedGroup; so: DerivedGroup };
+  /** All independent groups, sorted largest-first inside each family. */
+  groupSets: { si: DerivedGroup[]; so: DerivedGroup[] };
   ungroupedVehicles: number[];
   current: Record<number, { x: number; y: number; headingDeg: number; latitude: number; longitude: number; timestamp: string }>;
   alerts: DerivedAlert[];
