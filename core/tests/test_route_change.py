@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from bluewolf_core import Direction, detect_closed_route
+from bluewolf_core import ChangeKind, CoreSession, Direction, detect_closed_route
 from bluewolf_core.config import DetectionConfig
 from bluewolf_core.route_change import compare_routes, estimate_change_onset
 from bluewolf_core.simulator import SimulatedVehicle, generate_si_circle_samples
@@ -78,6 +78,68 @@ class AdaptiveRouteChangeTests(unittest.TestCase):
         self.assertGreaterEqual(onset, transition)
         self.assertLessEqual(onset, transition + timedelta(seconds=3))
         self.assertLess(onset, evidence_start)
+
+    def test_session_replaces_confirmed_route_without_fixed_change_timer(self) -> None:
+        _, old_samples = _detected_circle(radius_m=100, period_s=120)
+        transition = START + timedelta(seconds=241)
+        _, new_samples = _detected_circle(
+            radius_m=140,
+            period_s=120,
+            start=transition,
+        )
+
+        result = CoreSession().process_batch(old_samples + new_samples)
+        confirmations = [
+            change
+            for change in result.changes
+            if change.kind is ChangeKind.ROUTE_CONFIRMED
+        ]
+        replacements = [
+            change for change in confirmations if bool(change.details.get("replacement"))
+        ]
+
+        self.assertGreaterEqual(len(confirmations), 2)
+        self.assertEqual(len(replacements), 1)
+        replacement = replacements[0]
+        self.assertGreaterEqual(replacement.change_time_utc, transition)
+        self.assertLessEqual(
+            replacement.change_time_utc,
+            transition + timedelta(seconds=5),
+        )
+        self.assertTrue(bool(replacement.details["retroactive_onset"]))
+        self.assertIn("long_axis", replacement.details["change_reasons"])
+        self.assertIn("short_axis", replacement.details["change_reasons"])
+        detection_time = datetime.fromisoformat(
+            str(replacement.details["detection_time_utc"]).replace("Z", "+00:00")
+        )
+        self.assertGreater(detection_time, replacement.change_time_utc)
+        # Evidence determines latency: no legacy 120-second change hold is used.
+        self.assertLess(
+            (detection_time - transition).total_seconds(),
+            180.0,
+        )
+
+    def test_stable_confirmed_route_does_not_emit_replacement(self) -> None:
+        stable = generate_si_circle_samples(
+            start_time_utc=START,
+            duration_seconds=480,
+            vehicles=VEHICLE,
+            radius_m=100,
+            period_seconds=120,
+            direction=Direction.COUNTERCLOCKWISE,
+            position_noise_std_m=1.0,
+            seed=4242,
+        )
+
+        result = CoreSession().process_batch(stable)
+        replacements = [
+            change
+            for change in result.changes
+            if change.kind is ChangeKind.ROUTE_CONFIRMED
+            and bool(change.details.get("replacement"))
+        ]
+
+        self.assertEqual(replacements, [])
 
 
 if __name__ == "__main__":
