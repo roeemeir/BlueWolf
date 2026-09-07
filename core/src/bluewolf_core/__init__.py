@@ -27,12 +27,14 @@ from .models import (
     PrimitiveMetrics,
     RouteFamily,
     RouteSubtype,
+    RouteTopology,
     StateChange,
     VehicleFrameResult,
     VehicleSample,
     VehicleScores,
 )
 from .route_detection import RouteDetection, detect_closed_route
+from .double_hippodrome import DoubleHippodromeDetection, detect_double_hippodrome
 from .scoring import aggregate_group_scores, score_error, score_vehicle
 from .session import CheckpointCompatibilityError, CoreSession
 from .templates import (
@@ -53,6 +55,7 @@ __all__ = [
     "CoreConfig",
     "CoreSession",
     "Direction",
+    "DoubleHippodromeDetection",
     "FieldQuality",
     "MemberTemplateFit",
     "NoLegalTemplateAssignment",
@@ -62,6 +65,7 @@ __all__ = [
     "RouteDetection",
     "RouteFamily",
     "RouteSubtype",
+    "RouteTopology",
     "StateChange",
     "SynchronizationTemplate",
     "TemplateFit",
@@ -74,6 +78,7 @@ __all__ = [
     "closed_polyline_length",
     "curvature_at_phase",
     "detect_closed_route",
+    "detect_double_hippodrome",
     "fit_template",
     "normalized_curvature_error",
     "point_at_phase",
