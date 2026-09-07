@@ -212,9 +212,10 @@ def _find_connection_triplet(
         first_heading = _velocity(samples[first_index])
         if first_heading is None:
             continue
-        opposite_visits: list[int] = []
+        opposite_visits: list[tuple[int, float]] = []
         for index in range(first_index + _MIN_LOBE_SAMPLES, len(samples)):
-            if _distance(points[first_index], points[index]) > position_tolerance:
+            revisit_distance = _distance(points[first_index], points[index])
+            if revisit_distance > position_tolerance:
                 continue
             heading = _velocity(samples[index])
             if heading is None:
@@ -232,12 +233,13 @@ def _find_connection_triplet(
             if elapsed < minimum_half_seconds:
                 continue
             if error >= 120.0:
-                opposite_visits.append(index)
+                opposite_visits.append((index, revisit_distance))
                 continue
-            if error > 35.0:
+            if error > 35.0 or index - first_index < 2 * _MIN_LOBE_SAMPLES:
                 continue
 
-            for middle_index in reversed(opposite_visits):
+            candidates: list[tuple[float, float, int]] = []
+            for middle_index, middle_distance in opposite_visits:
                 if index - middle_index < _MIN_LOBE_SAMPLES:
                     continue
                 first_half = (
@@ -256,7 +258,12 @@ def _find_connection_triplet(
                     _EPSILON,
                 )
                 if balance_error <= 0.25:
-                    return first_index, middle_index, index
+                    candidates.append(
+                        (balance_error, middle_distance / position_tolerance, middle_index)
+                    )
+            if candidates:
+                _, _, best_middle = min(candidates)
+                return first_index, best_middle, index
     return None
 
 
