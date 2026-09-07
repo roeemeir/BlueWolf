@@ -36,7 +36,18 @@ export type NavigationProvenance = {
   warnings: string[];
 };
 
-export type NavigationDataset = { samples: RawNavigationSample[]; provenance: NavigationProvenance };
+export type NavigationDataset = {
+  /** Samples visible to the current screen/window. */
+  samples: RawNavigationSample[];
+  provenance: NavigationProvenance;
+  /**
+   * Optional longer evidence window used only by the canonical Core. For a
+   * 30-minute Operator trail this carries up to 40 minutes of route evidence
+   * without forcing the map to display the extra ten minutes.
+   */
+  coreEvidenceSamples?: RawNavigationSample[];
+  coreEvidenceProvenance?: NavigationProvenance;
+};
 
 export type SimulatorGroundTruth = {
   timestamp: string; serverId: string; activeVehicles: number[]; siVehicles: number[]; soVehicles: number[]; ungroupedVehicles: number[];
@@ -78,73 +89,33 @@ function snapshotLocal(serverId: string, timestamp: Date, grouping: SoGroupingSe
   const points = new Map<number, { x: number; y: number; routeKey: string; kind: NavigationRouteKind }>();
   for (const member of members) {
     const route = scenario.routes.find((item) => item.key === member.routeKey); if (!route) continue;
-    const ideal = pointOnClosed(route.points, member.phase); const noise = deterministicNoise(serverId, tick, member.id); const wind = windOffsetPx(serverId, tick, member.id, windMode);
-    const metric = displayToMetric(ideal.x + noise.x + wind.x, ideal.y + noise.y + wind.y);
-    points.set(member.id, { x: metric.x, y: metric.y, routeKey: route.key, kind: route.kind });
+    const directed = pointOnClosed(route.points, member.phase); const metric = displayToMetric(directed.x, directed.y); const noise = deterministicNoise(serverId, tick, member.id);
+    const wind = windOffsetPx(member.id, tick, windMode); points.set(member.id, { x: metric.x + noise.x + wind.x, y: metric.y + noise.y - wind.y, routeKey: route.key, kind: route.kind });
   }
-  return { scenario, points, tick };
+  return { scenario, points };
 }
 
-function sampleAt(serverId: string, timestamp: Date, grouping: SoGroupingSettings, windMode: WindMode) {
-  const current = snapshotLocal(serverId, timestamp, grouping, windMode); const previousTime = new Date(timestamp.getTime() - 2_000); const previous = snapshotLocal(serverId, previousTime, grouping, windMode);
-  const out: RawNavigationSample[] = [];
+function sampleAt(serverId: string, timestamp: Date, grouping: SoGroupingSettings, windMode: WindMode): RawNavigationSample[] {
+  const current = snapshotLocal(serverId, timestamp, grouping, windMode); const next = snapshotLocal(serverId, new Date(timestamp.getTime() + 1000), grouping, windMode); const samples: RawNavigationSample[] = [];
   for (const [vehicleId, point] of current.points) {
-    const prev = previous.points.get(vehicleId) ?? point; const velocityEast = (point.x - prev.x) / 2; const velocityNorth = (point.y - prev.y) / 2; const geo = metricToGeo(point.x, point.y);
-    out.push({ source: "simulation", serverId, timestamp: timestamp.toISOString(), vehicleId, active: true, latitude: geo.latitude, longitude: geo.longitude, altitude: 35 + (vehicleId % 7) * 1.5, velocityNorth, velocityEast, x: point.x, y: point.y });
+    const after = next.points.get(vehicleId) ?? point; const geo = metricToGeo(point.x, point.y);
+    samples.push({ source: "simulation", serverId, timestamp: timestamp.toISOString(), vehicleId, active: true, latitude: geo.latitude, longitude: geo.longitude, altitude: 100 + (vehicleId % 17), velocityNorth: after.y - point.y, velocityEast: after.x - point.x, x: point.x, y: point.y });
   }
-  return out;
+  return samples;
 }
 
-/**
- * Simulator-only GT for the disturbance that is actually observable in NAV.
- * It is derived from the exact same scenario at the exact same timestamp with
- * wind enabled versus wind disabled. It is never supplied to production Core.
- */
-export function simulatorInjectedDisturbanceAt(serverId: string, timestamp: Date, grouping: SoGroupingSettings, vehicleId: number, windMode: WindMode): SimulatorInjectedDisturbance | null {
-  const windy = sampleAt(serverId, timestamp, grouping, windMode).find((sample) => sample.vehicleId === vehicleId);
-  const calm = sampleAt(serverId, timestamp, grouping, "off").find((sample) => sample.vehicleId === vehicleId);
-  if (!windy || !calm) return null;
-  const velocityEast = windy.velocityEast - calm.velocityEast;
-  const velocityNorth = windy.velocityNorth - calm.velocityNorth;
-  const speedMps = Math.hypot(velocityEast, velocityNorth);
-  const speedKnots = speedMps * 1.9438444924406;
-  const bearingDeg = speedMps < 0.05 ? 0 : ((Math.atan2(velocityEast, velocityNorth) * 180 / Math.PI % 360) + 360) % 360;
-  return { speedKnots, bearingDeg, velocityNorth, velocityEast };
-}
-
-export function simulatorGroundTruthAt(serverId: string, timestamp: Date, grouping: SoGroupingSettings): SimulatorGroundTruth {
-  const scenario = getV09Scenario(serverId, simulationTickAt(timestamp), grouping); const routeKinds: SimulatorGroundTruth["routeKinds"] = {}; const routeKeys: Record<number, string> = {};
-  const all = [...scenario.groups.si.members, ...scenario.groups.so.members, ...(scenario.ungroupedMembers ?? [])];
-  for (const member of all) { const route = scenario.routes.find((item) => item.key === member.routeKey); if (route) routeKinds[member.id] = route.kind; routeKeys[member.id] = member.routeKey; }
-  return { timestamp: timestamp.toISOString(), serverId, activeVehicles: all.map((item) => item.id).sort((a, b) => a - b), siVehicles: scenario.groups.si.members.map((item) => item.id).sort((a, b) => a - b), soVehicles: scenario.groups.so.members.map((item) => item.id).sort((a, b) => a - b), ungroupedVehicles: (scenario.ungroupedMembers ?? []).map((item) => item.id).sort((a, b) => a - b), routeKinds, routeKeys };
-}
-
-function median(values: number[]) { if (!values.length) return null; const sorted = [...values].sort((a, b) => a - b); return sorted[Math.floor(sorted.length / 2)]; }
 export function provenanceFromSamples(source: NavigationSource, serverId: string, from: Date, to: Date, samples: RawNavigationSample[], warnings: string[] = []): NavigationProvenance {
-  const vehicles = new Set(samples.map((sample) => sample.vehicleId)); const times = [...new Set(samples.map((sample) => new Date(sample.timestamp).getTime()))].sort((a, b) => a - b);
-  const gaps = times.slice(1).map((value, index) => (value - times[index]) / 1000).filter((value) => value > 0); const med = median(gaps); const latestMs = times.at(-1) ?? null;
-  const expected = med && med > 0 ? Math.max(1, Math.round((to.getTime() - from.getTime()) / 1000 / med) + 1) * Math.max(1, vehicles.size) : null;
-  return { source, serverId, from: from.toISOString(), to: to.toISOString(), latestSampleAt: latestMs == null ? null : new Date(latestMs).toISOString(), sampleCount: samples.length, vehicleCount: vehicles.size, samplingMedianSeconds: med, completenessPct: expected ? Math.min(100, samples.length / expected * 100) : null, freshnessSeconds: latestMs == null ? null : Math.max(0, (to.getTime() - latestMs) / 1000), warnings };
+  const vehicles = new Set(samples.map((sample) => sample.vehicleId)); const times = [...new Set(samples.map((sample) => sample.timestamp))].sort(); const gaps = times.slice(1).map((value, index) => (Date.parse(value) - Date.parse(times[index])) / 1000).filter((value) => value > 0); const sortedGaps = gaps.slice().sort((a,b)=>a-b); const sampling = sortedGaps.length ? sortedGaps[Math.floor(sortedGaps.length/2)] : null; const latest = times.at(-1) ?? null; const expected = sampling ? Math.max(1, Math.round((to.getTime()-from.getTime())/1000/sampling)+1)*Math.max(1,vehicles.size) : null; const completeness = expected ? Math.min(100, samples.length/expected*100) : null;
+  return { source, serverId, from: from.toISOString(), to: to.toISOString(), latestSampleAt: latest, sampleCount: samples.length, vehicleCount: vehicles.size, samplingMedianSeconds: sampling, completenessPct: completeness, freshnessSeconds: latest ? Math.max(0,(to.getTime()-Date.parse(latest))/1000) : null, warnings };
 }
 
-export function generateSimulationDataset({ serverId, from, to, grouping, windMode = "gusty", targetPoints = 9_000 }: { serverId: string; from: Date; to: Date; grouping: SoGroupingSettings; windMode?: WindMode; targetPoints?: number }): NavigationDataset {
-  // A historical request is deterministic with respect to its explicit `to`.
-  // Only a genuinely future endpoint is clamped to the current instant. This
-  // prevents repeated requests for the same 30-day range from drifting by the
-  // milliseconds elapsed between calls.
-  const wallClockNow = new Date();
-  const availabilityTo = to.getTime() > wallClockNow.getTime() ? wallClockNow : to;
-  const bounds = simulationHistoryBounds(availabilityTo);
-  const safeFrom = new Date(Math.max(from.getTime(), bounds.from.getTime()));
-  const safeTo = new Date(Math.min(to.getTime(), bounds.to.getTime()));
-  if (safeFrom >= safeTo) return { samples: [], provenance: provenanceFromSamples("simulation", serverId, safeFrom, safeTo, [], ["טווח הסימולציה המבוקש ריק או מחוץ ל־30 הימים הזמינים."]) };
-  const durationSec = (safeTo.getTime() - safeFrom.getTime()) / 1000;
-  const plannedStepSeconds = Math.max(2, Math.ceil(durationSec * 8 / Math.max(1, targetPoints)));
-  const stepSeconds = durationSec <= 24 * 60 * 60 ? Math.min(10, plannedStepSeconds) : plannedStepSeconds;
-  const samples: RawNavigationSample[] = [];
-  for (let ms = safeFrom.getTime(); ms <= safeTo.getTime(); ms += stepSeconds * 1000) samples.push(...sampleAt(serverId, new Date(ms), grouping, windMode));
-  if (samples.length === 0 || new Date(samples.at(-1)!.timestamp).getTime() < safeTo.getTime() - stepSeconds * 1000) samples.push(...sampleAt(serverId, safeTo, grouping, windMode));
-  return { samples, provenance: provenanceFromSamples("simulation", serverId, safeFrom, safeTo, samples, [`סימולציה דטרמיניסטית · צעד דגימה ${stepSeconds}s · היסטוריה זמינה ${SIMULATION_HISTORY_DAYS} ימים.`]) };
+export function generateSimulationDataset({ serverId, from, to, grouping, windMode, targetPoints = 4_500 }: { serverId:string; from:Date; to:Date; grouping:SoGroupingSettings; windMode:WindMode; targetPoints?:number }): NavigationDataset {
+  const start = from.getTime(), end = to.getTime(); if (end < start) return { samples: [], provenance: provenanceFromSamples("simulation", serverId, from, to, [], ["טווח זמן לא תקין"]) };
+  const durationSeconds = Math.max(1, Math.round((end-start)/1000)); const approximateVehicles = serverId === "1" ? 7 : serverId === "2" ? 6 : 8; const maxStepForRouteFidelity = durationSeconds >= 6 * 60 * 60 ? 10 : durationSeconds >= 60 * 60 ? 5 : 2; const idealStep = Math.max(1, Math.ceil(durationSeconds * approximateVehicles / Math.max(300, targetPoints))); const step = Math.max(1, Math.min(maxStepForRouteFidelity, idealStep)); const samples: RawNavigationSample[] = [];
+  for (let ms=start; ms<=end; ms+=step*1000) samples.push(...sampleAt(serverId,new Date(ms),grouping,windMode)); if (!samples.length || samples.at(-1)?.timestamp !== new Date(end).toISOString()) samples.push(...sampleAt(serverId,new Date(end),grouping,windMode));
+  return { samples, provenance: provenanceFromSamples("simulation",serverId,from,to,samples) };
 }
 
-export function simulationFixtureDataset(serverId: string, center: Date, grouping: SoGroupingSettings, windMode: WindMode = "gusty", minutes = 12) { return generateSimulationDataset({ serverId, from: new Date(center.getTime() - minutes * 60_000), to: center, grouping, windMode, targetPoints: 3_500 }); }
+export function simulatorGroundTruthAt(serverId:string,timestamp:Date,grouping:SoGroupingSettings):SimulatorGroundTruth{const scenario=getV09Scenario(serverId,simulationTickAt(timestamp),grouping);const si=scenario.groups.si.members.map((item)=>item.id),so=scenario.groups.so.members.map((item)=>item.id),ungrouped=(scenario.ungroupedMembers??[]).map((item)=>item.id);return{timestamp:timestamp.toISOString(),serverId,activeVehicles:[...si,...so,...ungrouped].sort((a,b)=>a-b),siVehicles:si.sort((a,b)=>a-b),soVehicles:so.sort((a,b)=>a-b),ungroupedVehicles:ungrouped.sort((a,b)=>a-b),routeKinds:Object.fromEntries(scenario.routes.flatMap((route)=>[...scenario.groups.si.members,...scenario.groups.so.members,...(scenario.ungroupedMembers??[])].filter((member)=>member.routeKey===route.key).map((member)=>[member.id,route.kind]))),routeKeys:Object.fromEntries([...scenario.groups.si.members,...scenario.groups.so.members,...(scenario.ungroupedMembers??[])].map((member)=>[member.id,member.routeKey]))};}
+
+export function simulatorInjectedDisturbanceAt(serverId:string,timestamp:Date,vehicleId:number,grouping:SoGroupingSettings,windMode:WindMode):SimulatorInjectedDisturbance|null{const windy=sampleAt(serverId,timestamp,grouping,windMode).find((sample)=>sample.vehicleId===vehicleId),calm=sampleAt(serverId,timestamp,grouping,"off").find((sample)=>sample.vehicleId===vehicleId);if(!windy||!calm)return null;const velocityEast=windy.velocityEast-calm.velocityEast,velocityNorth=windy.velocityNorth-calm.velocityNorth,speedMps=Math.hypot(velocityEast,velocityNorth);return{velocityEast,velocityNorth,speedKnots:speedMps*1.9438444924406,bearingDeg:speedMps<1e-9?0:(Math.atan2(velocityEast,velocityNorth)*180/Math.PI+360)%360};}
