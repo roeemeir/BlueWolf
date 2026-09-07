@@ -85,6 +85,93 @@ def generate_si_circle_samples(
     return tuple(output)
 
 
+def generate_figure_eight_samples(
+    *,
+    start_time_utc: datetime,
+    duration_seconds: int,
+    vehicles: tuple[SimulatedVehicle, ...],
+    server_id: int = 1,
+    center_latitude_deg: float = 31.8,
+    center_longitude_deg: float = 34.8,
+    long_extent_m: float = 100.0,
+    short_extent_m: float = 50.0,
+    period_seconds: float = 180.0,
+    orientation_deg: float = 0.0,
+    sample_interval_seconds: int = 1,
+    position_noise_std_m: float = 0.0,
+    seed: int = 1,
+) -> tuple[VehicleSample, ...]:
+    """Generate a smooth self-crossing SO figure-eight trajectory.
+
+    The geometry is a Gerono-style lemniscate ``x=a*sin(t), y=b*sin(2t)``.
+    It crosses the same physical center halfway through every cycle with a
+    different tangent direction, which distinguishes a true self-crossing from
+    the opposite-heading shared connection used by Double Hippodrome. The full
+    traversal of both lobes is one route cycle; synchronization semantics remain
+    ordinary SO/Single semantics and do not gain a separate rule set.
+    """
+
+    if start_time_utc.tzinfo is None:
+        raise ValueError("start_time_utc must be timezone-aware")
+    if duration_seconds < 0 or sample_interval_seconds <= 0:
+        raise ValueError("duration and interval must be positive")
+    if long_extent_m <= 0 or short_extent_m <= 0:
+        raise ValueError("figure-eight extents must be positive")
+    if period_seconds <= 0:
+        raise ValueError("period_seconds must be positive")
+
+    omega = 2.0 * math.pi / period_seconds
+    orientation = math.radians(orientation_deg)
+    center_lat_rad = math.radians(center_latitude_deg)
+    rng = random.Random(seed)
+    output: list[VehicleSample] = []
+    quality = _original_quality()
+
+    for second in range(0, duration_seconds + 1, sample_interval_seconds):
+        timestamp = start_time_utc.astimezone(UTC) + timedelta(seconds=second)
+        for vehicle in vehicles:
+            theta = math.radians(vehicle.phase_offset_deg) + omega * second
+            local_point = (
+                long_extent_m * math.sin(theta),
+                short_extent_m * math.sin(2.0 * theta),
+            )
+            local_velocity = (
+                long_extent_m * omega * math.cos(theta),
+                2.0 * short_extent_m * omega * math.cos(2.0 * theta),
+            )
+            point = _rotate(local_point, orientation)
+            velocity = _rotate(local_velocity, orientation)
+            east_m, north_m = point
+            if position_noise_std_m:
+                east_m += rng.gauss(0.0, position_noise_std_m)
+                north_m += rng.gauss(0.0, position_noise_std_m)
+
+            latitude = center_latitude_deg + math.degrees(north_m / EARTH_RADIUS_M)
+            longitude = center_longitude_deg + math.degrees(
+                east_m / (EARTH_RADIUS_M * math.cos(center_lat_rad))
+            )
+            output.append(
+                VehicleSample(
+                    sample_time_utc=timestamp,
+                    server_id=server_id,
+                    vehicle_number=vehicle.vehicle_number,
+                    vehicle_identifier=vehicle.vehicle_identifier,
+                    active=True,
+                    latitude_deg=latitude,
+                    longitude_deg=longitude,
+                    velocity_north_mps=velocity[1],
+                    velocity_east_mps=velocity[0],
+                    reliability=1.0,
+                    field_quality=quality,
+                )
+            )
+
+    output.sort(
+        key=lambda item: (item.sample_time_utc, item.server_id, item.vehicle_identifier)
+    )
+    return tuple(output)
+
+
 def generate_double_hippodrome_samples(
     *,
     start_time_utc: datetime,
