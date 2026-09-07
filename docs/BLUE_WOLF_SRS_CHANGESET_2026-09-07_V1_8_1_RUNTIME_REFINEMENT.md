@@ -122,3 +122,24 @@ The independent Core suite SHALL include a deterministic concurrency regression 
 - no backward public operational timestamp;
 - correct retention of accepted Raw NAV evidence;
 - final Core frontier equal to the newest valid processed batch.
+
+## 11. Structural Figure-8 topology evidence
+A Figure-8 is a **structural crossed-leg hippodrome**, not merely any sampled closed trace that contains a segment intersection.
+
+The topology classifier SHALL treat geometric self-intersection as necessary evidence for Figure-8, but a self-intersection alone is not sufficient. Repeated passes, navigation noise, short excursions or sampling artifacts on an otherwise Single or articulated Double route may create incidental segment crossings without changing the physical route topology.
+
+For Figure-8 classification, the Core SHALL additionally require evidence consistent with two oppositely oriented lobes. The current canonical implementation uses material cancellation of signed enclosed area, normalized by closed-path length, as that structural discriminator. An equivalent future topology invariant MAY replace this implementation detail if it preserves the same semantics and passes the independent Core gate.
+
+Accordingly:
+- a true crossed-leg hippodrome with structural lobe-area cancellation SHALL remain `kind = "figure8"`;
+- its public geometry SHALL continue to expose `crossedLegs = true` when geometry evidence is available;
+- an incidental crossing on a trace with material enclosed signed area SHALL NOT, by itself, convert a Single or Double route to Figure-8;
+- when Figure-8 evidence is rejected, Single/Double classification SHALL continue from Raw NAV geometry and motion evidence;
+- the decision SHALL NOT use simulator GT, scenario labels, UI state or persisted expected route type.
+
+The independent Core suite SHALL retain deterministic regressions for all three cases:
+1. a true crossed-leg Figure-8;
+2. a non-Figure-8 elongated route containing an intentional incidental crossing;
+3. an articulated Double route that remains Double.
+
+The integrated System Test for Server 3 SHALL continue to require the production Core, using Raw NAV only, to recover the deterministic pre-transition Double+Single SO topology and membership before the separate simulator GT comparison is evaluated.
