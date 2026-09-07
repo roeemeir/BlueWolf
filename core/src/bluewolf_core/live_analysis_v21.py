@@ -17,7 +17,7 @@ import threading
 from datetime import UTC, datetime
 from typing import Any, Mapping
 
-from . import application_analysis_v20 as _application_analysis_v20  # noqa: F401
+from . import application_analysis_v21 as _application_analysis_v21  # noqa: F401
 from .live_analysis import _core_bootstrap_samples, _parse_time, _sample_key, _vehicle_sample
 from .live_analysis_v20 import LiveAnalysisEnvelope, LiveAnalysisSession as _V20LiveAnalysisSession
 
