@@ -34,6 +34,7 @@ from .route_change import (
     route_change_suspected,
 )
 from .route_detection import RouteDetection, detect_closed_route
+from .self_crossing_projection import project_self_crossing_wgs84
 
 
 CHECKPOINT_SCHEMA_VERSION = 2
@@ -89,6 +90,31 @@ def _parse_time(value: str) -> datetime:
 def _config_fingerprint(config: CoreConfig) -> str:
     payload = json.dumps(config.to_dict(), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _phase_for_sample(route: ClosedRoute, sample: VehicleSample) -> float:
+    if (
+        route.topology is RouteTopology.SELF_CROSSING
+        and sample.velocity_east_mps is not None
+        and sample.velocity_north_mps is not None
+        and math.hypot(
+            float(sample.velocity_east_mps),
+            float(sample.velocity_north_mps),
+        )
+        > 1e-9
+    ):
+        return project_self_crossing_wgs84(
+            route,
+            float(sample.latitude_deg),
+            float(sample.longitude_deg),
+            float(sample.velocity_east_mps),
+            float(sample.velocity_north_mps),
+        ).phase
+    return project_wgs84(
+        route,
+        float(sample.latitude_deg),
+        float(sample.longitude_deg),
+    ).phase
 
 
 class CoreSession:
@@ -200,11 +226,7 @@ class CoreSession:
                 and sample.longitude_deg is not None
             ):
                 route_id = confirmed.route_id
-                phase = project_wgs84(
-                    confirmed,
-                    sample.latitude_deg,
-                    sample.longitude_deg,
-                ).phase
+                phase = _phase_for_sample(confirmed, sample)
 
             frames.append(
                 VehicleFrameResult(
