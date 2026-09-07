@@ -105,10 +105,18 @@ class DetectionConfig:
     closure_direction_error_deg: float = 30
     closure_minimum_phase: float = 0.80
 
-    # Existing-route change lifecycle thresholds. Confirmation will be made
-    # evidence-driven in the next lifecycle milestone rather than timer-driven.
+    # Existing-route change lifecycle. The 20% values decide whether two
+    # confirmed fits are materially different. Period-only replacements also
+    # require that the candidate evidence window is dominated by the new speed
+    # regime, preventing a 50/50 old/new window from becoming an intermediate
+    # period and causing replacement chatter.
     geometry_change_ratio: float = 0.20
     period_change_ratio: float = 0.20
+    replacement_min_new_speed_support_fraction: float = 0.75
+    replacement_speed_decision_margin: float = 0.04
+    replacement_min_decisive_speed_samples: int = 6
+
+    # Retained only for configuration compatibility; no longer a behavior gate.
     change_confirmation_seconds: int = 120
     smoothing_seconds: int = 3
 
@@ -140,6 +148,14 @@ class DetectionConfig:
             raise ValueError("candidate fit gate cannot exceed confirmation fit gate")
         if self.candidate_coverage_fraction > self.confirmation_coverage_fraction:
             raise ValueError("candidate coverage gate cannot exceed confirmation coverage gate")
+        if not 0.5 <= self.replacement_min_new_speed_support_fraction <= 1.0:
+            raise ValueError(
+                "replacement_min_new_speed_support_fraction must be in [0.5, 1]"
+            )
+        if not 0.0 <= self.replacement_speed_decision_margin < 1.0:
+            raise ValueError("replacement_speed_decision_margin must be in [0, 1)")
+        if self.replacement_min_decisive_speed_samples < 3:
+            raise ValueError("replacement_min_decisive_speed_samples must be at least 3")
 
 
 @dataclass(frozen=True, slots=True)
