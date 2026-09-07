@@ -78,17 +78,64 @@ class ScoringConfig:
 class DetectionConfig:
     si_axis_ratio_max: float = 1.5
     canonical_point_limit: int = 64
-    new_route_observation_seconds: int = 300
-    known_route_candidate_seconds: int = 60
-    required_fit_fraction: float = 0.70
-    required_completed_cycles: int = 1
+
+    # Route acquisition is evidence-driven. These legacy timer fields are retained
+    # for configuration compatibility but are no longer used as confirmation gates.
+    new_route_observation_seconds: int = 0
+    known_route_candidate_seconds: int = 0
+
+    # 40 minutes is a hard memory/lookback ceiling, never a required wait time.
+    max_history_seconds: int = 2400
+    adaptive_min_window_seconds: int = 30
+    adaptive_window_growth_factor: float = 1.5
+    adaptive_window_refine_seconds: int = 10
+
+    # Candidate gates are intentionally permissive; confirmation remains strict.
+    candidate_fit_fraction: float = 0.68
+    candidate_coverage_fraction: float = 0.45
+    candidate_travel_fraction: float = 0.40
+    required_fit_fraction: float = 0.78
+    confirmation_coverage_fraction: float = 0.82
+    required_completed_cycles: float = 0.90
+    phase_coverage_bins: int = 32
+
     closure_distance_short_axis_ratio: float = 0.20
     closure_direction_error_deg: float = 30
     closure_minimum_phase: float = 0.80
+
+    # Existing-route change lifecycle thresholds. Confirmation will be made
+    # evidence-driven in the next lifecycle milestone rather than timer-driven.
     geometry_change_ratio: float = 0.20
     period_change_ratio: float = 0.20
     change_confirmation_seconds: int = 120
     smoothing_seconds: int = 3
+
+    def __post_init__(self) -> None:
+        if self.max_history_seconds <= 0:
+            raise ValueError("max_history_seconds must be positive")
+        if self.adaptive_min_window_seconds <= 0:
+            raise ValueError("adaptive_min_window_seconds must be positive")
+        if self.adaptive_window_growth_factor <= 1.0:
+            raise ValueError("adaptive_window_growth_factor must be greater than 1")
+        if self.adaptive_window_refine_seconds <= 0:
+            raise ValueError("adaptive_window_refine_seconds must be positive")
+        if self.phase_coverage_bins < 8:
+            raise ValueError("phase_coverage_bins must be at least 8")
+        for name in (
+            "candidate_fit_fraction",
+            "candidate_coverage_fraction",
+            "candidate_travel_fraction",
+            "required_fit_fraction",
+            "confirmation_coverage_fraction",
+            "required_completed_cycles",
+        ):
+            value = float(getattr(self, name))
+            if not 0.0 <= value <= 1.5:
+                raise ValueError(f"{name} is outside the supported range")
+        if self.candidate_fit_fraction > self.required_fit_fraction:
+            raise ValueError("candidate fit gate cannot exceed confirmation fit gate")
+        if self.candidate_coverage_fraction > self.confirmation_coverage_fraction:
+            raise ValueError("candidate coverage gate cannot exceed confirmation coverage gate")
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +170,7 @@ class TimingConfig:
 @dataclass(frozen=True, slots=True)
 class CoreConfig:
     schema_version: int = 1
-    detection_version: str = "1"
+    detection_version: str = "2-adaptive"
     scoring_version: str = "1"
     template_version: str = "1"
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
@@ -138,7 +185,7 @@ class CoreConfig:
     def from_dict(cls, raw: Mapping[str, Any]) -> CoreConfig:
         return cls(
             schema_version=int(raw.get("schema_version", 1)),
-            detection_version=str(raw.get("detection_version", "1")),
+            detection_version=str(raw.get("detection_version", "2-adaptive")),
             scoring_version=str(raw.get("scoring_version", "1")),
             template_version=str(raw.get("template_version", "1")),
             scoring=_scoring_from_dict(raw.get("scoring", {})),
@@ -194,4 +241,3 @@ def _scoring_from_dict(value: object) -> ScoringConfig:
         curvature_ratio=_band(raw, "curvature_ratio", defaults.curvature_ratio),
         **scalars,
     )
-
