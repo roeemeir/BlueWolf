@@ -127,6 +127,40 @@ class RouteDetectionTests(unittest.TestCase):
         self.assertGreaterEqual(detected.coverage_fraction, 0.82)
         self.assertTrue(bool(detected.diagnostics["closure_ok"]))
 
+    def test_center_is_stable_for_non_integer_cycle_window(self) -> None:
+        center_lat = 31.8123
+        center_lon = 34.7456
+        samples = generate_si_circle_samples(
+            start_time_utc=datetime(2026, 9, 1, tzinfo=UTC),
+            duration_seconds=150,
+            vehicles=(SimulatedVehicle(1, 101, 0),),
+            center_latitude_deg=center_lat,
+            center_longitude_deg=center_lon,
+            radius_m=100,
+            period_seconds=120,
+            direction=Direction.COUNTERCLOCKWISE,
+        )
+
+        detected = detect_closed_route(samples)
+
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        offset = wgs84_to_local_m(
+            detected.effective.center_latitude_deg,
+            detected.effective.center_longitude_deg,
+            center_lat,
+            center_lon,
+        )
+        self.assertLess(math.hypot(offset.x_m, offset.y_m), 3.0)
+        canonical_center_x = sum(
+            point.x_m for point in detected.effective.canonical_points
+        ) / len(detected.effective.canonical_points)
+        canonical_center_y = sum(
+            point.y_m for point in detected.effective.canonical_points
+        ) / len(detected.effective.canonical_points)
+        self.assertAlmostEqual(canonical_center_x, 0.0, places=6)
+        self.assertAlmostEqual(canonical_center_y, 0.0, places=6)
+
     def test_long_cycle_uses_geometry_instead_of_short_fixed_timer(self) -> None:
         samples = generate_si_circle_samples(
             start_time_utc=datetime(2026, 9, 1, tzinfo=UTC),
