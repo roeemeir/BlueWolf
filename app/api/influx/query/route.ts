@@ -32,15 +32,19 @@ function fluxString(value: string) {
  * The application target is expressed as total joined NAV points. Vehicle
  * count is not known until after the query, so use the same conservative
  * eight-vehicle planning factor as the deterministic simulator. Short/live
- * windows remain raw at one-second resolution; long history is reduced inside
- * Influx with `last`, preserving a real measurement instead of averaging a
- * route transition into a synthetic point.
+ * windows remain raw. For ranges up to 24 hours, never reduce below one real
+ * sample per ten seconds: that preserves enough temporal evidence for route
+ * topology, 120-second membership changes and the 10-second alert lifecycle.
+ * Long history is reduced inside Influx with `last`, never averaged into a
+ * synthetic route point.
  */
 function aggregateEverySeconds(from: Date, to: Date, targetPoints: number) {
   const durationSeconds = Math.max(1, (to.getTime() - from.getTime()) / 1000);
-  const target = Math.max(1_000, Math.min(50_000, Math.round(targetPoints)));
+  const target = Math.max(1_000, Math.min(100_000, Math.round(targetPoints)));
   const planned = Math.ceil(durationSeconds * 8 / target);
-  return durationSeconds <= 20 * 60 ? 1 : Math.max(1, planned);
+  if (durationSeconds <= 20 * 60) return 1;
+  if (durationSeconds <= 24 * 60 * 60) return Math.max(1, Math.min(10, planned));
+  return Math.max(1, planned);
 }
 
 async function queryMapping(
