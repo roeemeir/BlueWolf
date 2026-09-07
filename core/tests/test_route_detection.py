@@ -21,7 +21,7 @@ class RouteDetectionTests(unittest.TestCase):
         samples = list(
             generate_si_circle_samples(
                 start_time_utc=datetime(2026, 9, 1, tzinfo=UTC),
-                duration_seconds=360,
+                duration_seconds=180,
                 vehicles=(SimulatedVehicle(1, 101, 0),),
                 radius_m=100,
                 period_seconds=120,
@@ -63,7 +63,8 @@ class RouteDetectionTests(unittest.TestCase):
         self.assertAlmostEqual(detected.effective.short_axis_b_m, 100.0, delta=3.0)
         self.assertAlmostEqual(detected.effective.estimated_period_s, 120.0, delta=4.0)
         self.assertGreaterEqual(detected.fit_fraction, 0.95)
-        self.assertGreaterEqual(
+        self.assertGreaterEqual(detected.coverage_fraction, 0.90)
+        self.assertLess(
             float(detected.diagnostics["observation_seconds"]),
             300.0,
         )
@@ -92,28 +93,56 @@ class RouteDetectionTests(unittest.TestCase):
         self.assertAlmostEqual(detected.effective.short_axis_b_m, 40.0, delta=4.0)
         self.assertAlmostEqual(detected.effective.estimated_period_s, 240.0, delta=12.0)
         self.assertGreaterEqual(detected.fit_fraction, 0.90)
+        self.assertGreaterEqual(detected.coverage_fraction, 0.90)
 
-    def test_partial_route_is_not_confirmed(self) -> None:
-        samples = _hippodrome_samples(
-            long_axis_m=150,
-            short_axis_m=40,
-            period_s=240,
-            cycles=1,
-            orientation_deg=0,
-        )[:120]
-
-        self.assertIsNone(detect_closed_route(samples))
-
-    def test_full_cycle_before_five_minutes_is_not_confirmed(self) -> None:
+    def test_partial_route_is_candidate_but_not_confirmed(self) -> None:
         samples = generate_si_circle_samples(
             start_time_utc=datetime(2026, 9, 1, tzinfo=UTC),
-            duration_seconds=240,
+            duration_seconds=95,
             vehicles=(SimulatedVehicle(1, 101, 0),),
             radius_m=100,
             period_seconds=120,
         )
 
         self.assertIsNone(detect_closed_route(samples))
+        candidate = detect_closed_route(samples, require_confirmation=False)
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertGreaterEqual(candidate.coverage_fraction, 0.45)
+        self.assertFalse(bool(candidate.diagnostics["confirmation_ready"]))
+
+    def test_full_short_cycle_is_confirmed_without_five_minute_wait(self) -> None:
+        samples = generate_si_circle_samples(
+            start_time_utc=datetime(2026, 9, 1, tzinfo=UTC),
+            duration_seconds=135,
+            vehicles=(SimulatedVehicle(1, 101, 0),),
+            radius_m=100,
+            period_seconds=120,
+        )
+
+        detected = detect_closed_route(samples)
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertLess(float(detected.diagnostics["observation_seconds"]), 150.0)
+        self.assertGreaterEqual(detected.coverage_fraction, 0.82)
+        self.assertTrue(bool(detected.diagnostics["closure_ok"]))
+
+    def test_long_cycle_uses_geometry_instead_of_short_fixed_timer(self) -> None:
+        samples = generate_si_circle_samples(
+            start_time_utc=datetime(2026, 9, 1, tzinfo=UTC),
+            duration_seconds=930,
+            vehicles=(SimulatedVehicle(1, 101, 0),),
+            radius_m=100,
+            period_seconds=900,
+        )
+
+        early = tuple(samples[:300])
+        self.assertIsNone(detect_closed_route(early))
+        detected = detect_closed_route(samples)
+        self.assertIsNotNone(detected)
+        assert detected is not None
+        self.assertAlmostEqual(detected.effective.estimated_period_s, 900.0, delta=20.0)
+        self.assertGreaterEqual(detected.coverage_fraction, 0.90)
 
     def test_detector_rejects_mixed_vehicle_streams(self) -> None:
         samples = list(
