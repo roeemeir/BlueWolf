@@ -140,14 +140,15 @@ def estimate_change_onset(
     if not usable:
         return evidence_start_utc
 
-    # Search slightly before the evidence suffix as well. This recovers the
-    # beginning of a change when the shortest confirmation suffix starts after
-    # the first few new-route samples.
+    # Once the new route is confirmed, search one full route cycle before the
+    # shortest evidence suffix. This is historical attribution, not a wait: it
+    # lets the event start at the first new-geometry samples even when the
+    # confirmation suffix begins later in that cycle.
     search_margin = max(
         previous.estimated_period_s,
         current.estimated_period_s,
         float(config.adaptive_min_window_seconds),
-    ) * 0.35
+    ) * 1.10
     search_from = evidence_start_utc.timestamp() - search_margin
 
     streak_start: datetime | None = None
