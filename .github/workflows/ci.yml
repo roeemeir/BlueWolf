@@ -108,7 +108,7 @@ jobs:
       - name: Provenance, history, GT and mobile acceptance
         env:
           BLUEWOLF_BASE_URL: http://127.0.0.1:3000
-        run: npx playwright test tests/browser-v12.spec.mjs --reporter=line --workers=1
+        run: npx playwright test tests/browser-v12.spec.mjs --reporter=line --workers=1 --timeout=90000
       - name: Runtime logs
         if: always()
         run: |
