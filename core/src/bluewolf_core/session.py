@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
-from .config import CoreConfig
+from .config import CoreConfig, DetectionConfig
 from .geometry import project_wgs84
 from .models import (
     CanonicalPoint,
@@ -58,6 +58,13 @@ class _RouteRuntimeState:
     last_evaluation_time_utc: datetime | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _AdaptiveRouteMatch:
+    detection: RouteDetection
+    window_start_utc: datetime
+    window_seconds: float
+
+
 def _utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         raise ValueError("time must be timezone-aware")
@@ -83,7 +90,7 @@ class CoreSession:
     def __init__(
         self,
         config: CoreConfig | None = None,
-        algorithm_version: str = "0.2.0",
+        algorithm_version: str = "0.3.0",
     ) -> None:
         self.config = config or CoreConfig()
         self.algorithm_version = algorithm_version
@@ -244,6 +251,13 @@ class CoreSession:
 
         route_state = self._routes.setdefault(key, _RouteRuntimeState())
         route_state.history.append(sample)
+        cutoff = sample.sample_time_utc - timedelta(
+            seconds=self.config.detection.max_history_seconds
+        )
+        if route_state.history and route_state.history[0].sample_time_utc < cutoff:
+            route_state.history = [
+                item for item in route_state.history if item.sample_time_utc >= cutoff
+            ]
 
         if route_state.confirmed is not None:
             return []
@@ -259,32 +273,42 @@ class CoreSession:
 
         changes: list[StateChange] = []
         if route_state.candidate is None:
-            candidate_config = replace(
+            candidate = _find_adaptive_route(
+                route_state.history,
                 self.config.detection,
-                new_route_observation_seconds=self.config.detection.known_route_candidate_seconds,
+                require_confirmation=False,
             )
-            candidate = detect_closed_route(route_state.history, candidate_config)
             if candidate is not None:
-                route_state.candidate = candidate.effective
+                route_state.candidate = candidate.detection.effective
                 changes.append(
                     self._route_change(sample, ChangeKind.ROUTE_CANDIDATE, candidate)
                 )
 
-        confirmed = detect_closed_route(route_state.history, self.config.detection)
+        confirmed = _find_adaptive_route(
+            route_state.history,
+            self.config.detection,
+            require_confirmation=True,
+        )
         if confirmed is not None:
-            route_state.candidate = confirmed.effective
-            route_state.confirmed = confirmed.effective
+            if route_state.candidate is None:
+                route_state.candidate = confirmed.detection.effective
+                changes.append(
+                    self._route_change(sample, ChangeKind.ROUTE_CANDIDATE, confirmed)
+                )
+            route_state.candidate = confirmed.detection.effective
+            route_state.confirmed = confirmed.detection.effective
             changes.append(
                 self._route_change(sample, ChangeKind.ROUTE_CONFIRMED, confirmed)
             )
         return changes
 
-    @staticmethod
     def _route_change(
+        self,
         sample: VehicleSample,
         kind: ChangeKind,
-        detection: RouteDetection,
+        match: _AdaptiveRouteMatch,
     ) -> StateChange:
+        detection = match.detection
         route = detection.effective
         return StateChange(
             sample.sample_time_utc,
@@ -299,7 +323,12 @@ class CoreSession:
                 "estimated_period_s": route.estimated_period_s,
                 "detection_quality": route.detection_quality,
                 "fit_fraction": detection.fit_fraction,
+                "coverage_fraction": detection.coverage_fraction,
                 "completed_cycles": detection.completed_cycles,
+                "closure_ok": bool(detection.diagnostics.get("closure_ok", False)),
+                "evidence_window_start_utc": _iso(match.window_start_utc),
+                "evidence_window_seconds": match.window_seconds,
+                "history_ceiling_seconds": self.config.detection.max_history_seconds,
             },
         )
 
@@ -400,7 +429,7 @@ class CoreSession:
         checkpoint: bytes | str,
         *,
         config: CoreConfig | None = None,
-        algorithm_version: str = "0.2.0",
+        algorithm_version: str = "0.3.0",
     ) -> CoreSession:
         config = config or CoreConfig()
         raw: Mapping[str, Any] = json.loads(
@@ -504,6 +533,106 @@ class CoreSession:
             "vehicles": [asdict(self._states[key]) for key in sorted(self._states)],
             "routes": routes,
         }
+
+
+def _find_adaptive_route(
+    history: Sequence[VehicleSample],
+    config: DetectionConfig,
+    *,
+    require_confirmation: bool,
+) -> _AdaptiveRouteMatch | None:
+    """Return the shortest recent evidence window that satisfies route gates.
+
+    Search windows grow geometrically for bounded CPU cost, then the first
+    successful bracket is refined to the configured temporal resolution. This
+    resolution controls search precision only; it is not a confirmation timer.
+    """
+    if len(history) < 12:
+        return None
+
+    end_time = history[-1].sample_time_utc
+    span_seconds = max(
+        0.0,
+        (end_time - history[0].sample_time_utc).total_seconds(),
+    )
+    if span_seconds <= 0:
+        return None
+
+    min_window = min(float(config.adaptive_min_window_seconds), span_seconds)
+    durations: list[float] = []
+    current = min_window
+    while current < span_seconds:
+        durations.append(current)
+        next_window = current * config.adaptive_window_growth_factor
+        current = max(current + 1.0, next_window)
+    durations.append(span_seconds)
+
+    previous_duration = 0.0
+    first_match: _AdaptiveRouteMatch | None = None
+    first_match_duration = 0.0
+    for duration in durations:
+        match = _detect_suffix(
+            history,
+            duration,
+            config,
+            require_confirmation=require_confirmation,
+        )
+        if match is not None:
+            first_match = match
+            first_match_duration = duration
+            break
+        previous_duration = duration
+
+    if first_match is None:
+        return None
+
+    lower = previous_duration
+    upper = first_match_duration
+    best = first_match
+    resolution = float(config.adaptive_window_refine_seconds)
+    while upper - lower > resolution:
+        middle = (lower + upper) / 2.0
+        match = _detect_suffix(
+            history,
+            middle,
+            config,
+            require_confirmation=require_confirmation,
+        )
+        if match is None:
+            lower = middle
+        else:
+            upper = middle
+            best = match
+    return best
+
+
+def _detect_suffix(
+    history: Sequence[VehicleSample],
+    duration_seconds: float,
+    config: DetectionConfig,
+    *,
+    require_confirmation: bool,
+) -> _AdaptiveRouteMatch | None:
+    end_time = history[-1].sample_time_utc
+    cutoff = end_time - timedelta(seconds=max(duration_seconds, 0.0))
+    window = tuple(sample for sample in history if sample.sample_time_utc >= cutoff)
+    if len(window) < 12:
+        return None
+    detection = detect_closed_route(
+        window,
+        config,
+        require_confirmation=require_confirmation,
+    )
+    if detection is None:
+        return None
+    window_seconds = (
+        window[-1].sample_time_utc - window[0].sample_time_utc
+    ).total_seconds()
+    return _AdaptiveRouteMatch(
+        detection=detection,
+        window_start_utc=window[0].sample_time_utc,
+        window_seconds=window_seconds,
+    )
 
 
 def _sample_to_dict(sample: VehicleSample) -> dict[str, Any]:
