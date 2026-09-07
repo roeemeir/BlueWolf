@@ -27,7 +27,12 @@ from .models import (
     VehicleFrameResult,
     VehicleSample,
 )
-from .route_change import compare_routes, estimate_change_onset, route_change_suspected
+from .route_change import (
+    compare_routes,
+    estimate_change_onset,
+    replacement_evidence_supports_new_route,
+    route_change_suspected,
+)
 from .route_detection import RouteDetection, detect_closed_route
 
 
@@ -295,6 +300,16 @@ class CoreSession:
             delta = compare_routes(previous_route, next_route, self.config.detection)
             if not delta.changed:
                 route_state.candidate = previous_route
+                return []
+
+            if not replacement_evidence_supports_new_route(
+                route_state.history,
+                replacement.window_start_utc,
+                previous_route,
+                next_route,
+                delta.reasons,
+                self.config.detection,
+            ):
                 return []
 
             onset = estimate_change_onset(
