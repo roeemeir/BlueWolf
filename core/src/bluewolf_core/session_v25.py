@@ -10,6 +10,12 @@ interval, rather than waiting for an unrelated fixed five-minute observation.
 Confirmed geometry is continuously refreshed from the latest cycle while the
 Route ID stays stable. Material changes still require the existing 120-second
 revision confirmation.
+
+A route-period change needs one extra mechanism: the old period cannot always
+slice a complete cycle of the new route. Therefore current-state fitting remains
+strictly latest-cycle based, while change discovery uses a bounded generic suffix
+probe. The probe is shape-neutral and expands only in time; once a changed route
+is found, its own period becomes the latest-cycle reference for revision checks.
 """
 
 from __future__ import annotations
@@ -44,6 +50,62 @@ class CoreSession(_V23CoreSession):
             new_route_observation_seconds=0,
         )
         return detect_closed_route(cycle, cycle_config)
+
+    def _generic_change_probe(
+        self,
+        sample: VehicleSample,
+        route_state,
+        reference: ClosedRoute,
+    ) -> RouteDetection | None:
+        """Find a changed closed route without assuming its new period or shape.
+
+        The active fit never leaves latest-cycle semantics. This probe exists only
+        to discover a materially changed route when the old period no longer spans
+        a complete new cycle. It examines recent suffixes from short to longer,
+        bounded by the retained 40-minute evidence. No centre/axis/turn/family
+        assumption is introduced; every suffix is passed to the same closed-route
+        detector and must satisfy its closure/fit/completed-cycle requirements.
+        """
+        history = route_state.history
+        if len(history) < 12:
+            return None
+        available_seconds = max(
+            0.0,
+            (history[-1].sample_time_utc - history[0].sample_time_utc).total_seconds(),
+        )
+        if available_seconds <= 0:
+            return None
+
+        # Two reference cycles are a natural first probe: one old-period slice is
+        # already used by the active fit, while a second cycle gives a changed
+        # period room to close without imposing a geometric model. The 180-second
+        # floor reuses the existing revision/candidate timing, not a new route law.
+        base_seconds = max(
+            2.0 * max(reference.estimated_period_s, 1.0),
+            float(_legacy._ROUTE_REVISION_CONFIRM_SECONDS + self.config.detection.known_route_candidate_seconds),
+        )
+        maximum = min(float(ROUTE_HISTORY_SECONDS), available_seconds)
+        window = min(base_seconds, maximum)
+        windows: list[float] = []
+        while window < maximum:
+            windows.append(window)
+            window = min(maximum, window * 2.0)
+        windows.append(maximum)
+
+        probe_config = replace(self.config.detection, new_route_observation_seconds=0)
+        seen: set[int] = set()
+        for seconds in windows:
+            rounded = max(1, int(round(seconds)))
+            if rounded in seen:
+                continue
+            seen.add(rounded)
+            recent = _legacy._samples_since(history, sample.sample_time_utc, float(rounded))
+            detection = detect_closed_route(recent, probe_config)
+            if detection is None:
+                continue
+            if _legacy._material_route_change(reference, detection.effective):
+                return detection
+        return None
 
     def _update_initial_route(self, sample: VehicleSample, route_state) -> list[StateChange]:
         changes: list[StateChange] = []
@@ -107,22 +169,56 @@ class CoreSession(_V23CoreSession):
 
     def _update_confirmed_route(self, sample: VehicleSample, route_state) -> list[StateChange]:
         assert route_state.confirmed is not None
-        detection = self._latest_cycle_detection(route_state, route_state.confirmed)
-        if detection is None:
-            return []
-        observed = detection.effective
+        confirmed = route_state.confirmed
 
-        if not _legacy._material_route_change(route_state.confirmed, observed):
-            # Refresh the active fit from the latest cycle without creating a new
-            # route identity/revision. This is the geometry used for current phase.
-            refreshed = replace(observed, route_id=route_state.confirmed.route_id)
-            route_state.confirmed = refreshed
-            route_state.candidate = refreshed
+        # Once a revision candidate exists, evaluate exactly its latest cycle.
+        # This prevents the old route period from controlling new-route stability.
+        if route_state.pending_revision is not None:
+            detection = self._latest_cycle_detection(route_state, route_state.pending_revision)
+            if detection is None:
+                return []
+            observed = detection.effective
+            if not _legacy._material_route_change(confirmed, observed):
+                route_state.pending_revision = None
+                route_state.pending_since_utc = None
+                return []
+            route_state.pending_revision = observed
+            assert route_state.pending_since_utc is not None
+            stable_seconds = (sample.sample_time_utc - route_state.pending_since_utc).total_seconds()
+            if stable_seconds < _legacy._ROUTE_REVISION_CONFIRM_SECONDS:
+                return []
+
+            previous = confirmed
+            route_state.revision += 1
+            revised = replace(observed, route_id=f"{observed.route_id}:r{route_state.revision}")
+            route_state.confirmed = revised
+            route_state.candidate = revised
+            route_state.candidate_since_utc = sample.sample_time_utc
             route_state.pending_revision = None
             route_state.pending_since_utc = None
-            return []
+            return [
+                self._route_change(
+                    sample,
+                    ChangeKind.ROUTE_REVISED,
+                    detection,
+                    route_override=revised,
+                    revision=route_state.revision,
+                    previous_route_id=previous.route_id,
+                )
+            ]
 
-        if route_state.pending_revision is None:
+        # Normal operation: current geometry is always the latest completed cycle
+        # under the currently confirmed period.
+        detection = self._latest_cycle_detection(route_state, confirmed)
+        if detection is not None:
+            observed = detection.effective
+            if not _legacy._material_route_change(confirmed, observed):
+                refreshed = replace(observed, route_id=confirmed.route_id)
+                route_state.confirmed = refreshed
+                route_state.candidate = refreshed
+                return []
+            # A valid, materially different full cycle is already sufficient to
+            # start the revision stability clock.
             route_state.pending_revision = observed
             route_state.pending_since_utc = sample.sample_time_utc
             return [
@@ -131,32 +227,25 @@ class CoreSession(_V23CoreSession):
                     ChangeKind.ROUTE_REVISION_CANDIDATE,
                     detection,
                     revision=route_state.revision + 1,
-                    previous_route_id=route_state.confirmed.route_id,
+                    previous_route_id=confirmed.route_id,
                 )
             ]
 
-        route_state.pending_revision = observed
-        assert route_state.pending_since_utc is not None
-        stable_seconds = (sample.sample_time_utc - route_state.pending_since_utc).total_seconds()
-        if stable_seconds < _legacy._ROUTE_REVISION_CONFIRM_SECONDS:
+        # If the old period no longer yields a complete cycle, discover the new
+        # route from a bounded generic suffix. This path is only entered during
+        # suspected change, so stable-route cost remains proportional to one cycle.
+        change_detection = self._generic_change_probe(sample, route_state, confirmed)
+        if change_detection is None:
             return []
-
-        previous = route_state.confirmed
-        route_state.revision += 1
-        revised = replace(observed, route_id=f"{observed.route_id}:r{route_state.revision}")
-        route_state.confirmed = revised
-        route_state.candidate = revised
-        route_state.candidate_since_utc = sample.sample_time_utc
-        route_state.pending_revision = None
-        route_state.pending_since_utc = None
+        route_state.pending_revision = change_detection.effective
+        route_state.pending_since_utc = sample.sample_time_utc
         return [
             self._route_change(
                 sample,
-                ChangeKind.ROUTE_REVISED,
-                detection,
-                route_override=revised,
-                revision=route_state.revision,
-                previous_route_id=previous.route_id,
+                ChangeKind.ROUTE_REVISION_CANDIDATE,
+                change_detection,
+                revision=route_state.revision + 1,
+                previous_route_id=confirmed.route_id,
             )
         ]
 
