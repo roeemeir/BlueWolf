@@ -31,7 +31,7 @@ from .models import (
     RouteTopology,
     VehicleSample,
 )
-from .route_detection import RouteDetection, detect_closed_route
+from .simple_route_detection import RouteDetection, detect_closed_route
 
 
 _EPSILON = 1e-9
