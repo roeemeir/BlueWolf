@@ -103,13 +103,7 @@ def compare_routes(
     current: ClosedRoute,
     config: DetectionConfig,
 ) -> RouteDelta:
-    """Decide whether ``current`` is materially different from ``previous``.
-
-    The existing 20% geometry/period values remain the initial calibration
-    point, but no elapsed-time gate is involved. Topology/family/subtype and a
-    known direction reversal are structural changes. For elongated SO routes,
-    orientation is also meaningful; SI orientation is intentionally ignored.
-    """
+    """Decide whether ``current`` is materially different from ``previous``."""
 
     local_center = wgs84_to_local_m(
         current.center_latitude_deg,
@@ -159,8 +153,6 @@ def compare_routes(
     if period_ratio + _EPSILON >= config.period_change_ratio:
         reasons.append("period")
 
-    # A circle has no stable principal-axis orientation. Orientation becomes a
-    # change signal only when at least one fit is an elongated SO route.
     if (
         previous.family is RouteFamily.SO or current.family is RouteFamily.SO
     ) and orientation_error + _EPSILON >= geometry_threshold * 90.0:
@@ -174,6 +166,57 @@ def compare_routes(
         short_axis_ratio=short_ratio,
         period_ratio=period_ratio,
         orientation_error_deg=orientation_error,
+    )
+
+
+def replacement_evidence_supports_new_route(
+    history: Sequence[VehicleSample],
+    evidence_start_utc: datetime,
+    previous: ClosedRoute,
+    current: ClosedRoute,
+    reasons: Sequence[str],
+    config: DetectionConfig,
+) -> bool:
+    """Reject a mixed old/new speed window before a period replacement.
+
+    Median-speed period estimation can produce an artificial intermediate
+    period when a geometrically closed window contains similar amounts of the
+    old and new speed regimes. For replacements whose reasons include period,
+    decisive samples inside the actual evidence window must predominantly be
+    closer to the new route's expected speed than to the old route's expected
+    speed. This is evidence purity, not an elapsed-time hold.
+    """
+
+    if "period" not in reasons:
+        return True
+
+    old_expected = previous.length_m / max(previous.estimated_period_s, _EPSILON)
+    new_expected = current.length_m / max(current.estimated_period_s, _EPSILON)
+    if old_expected <= _EPSILON or new_expected <= _EPSILON:
+        return True
+
+    decisive = 0
+    supports_new = 0
+    margin = config.replacement_speed_decision_margin
+    for sample in history:
+        if sample.sample_time_utc < evidence_start_utc:
+            continue
+        speed = _sample_speed(sample)
+        if speed is None:
+            continue
+        old_error = abs(speed - old_expected) / old_expected
+        new_error = abs(speed - new_expected) / new_expected
+        if abs(old_error - new_error) < margin:
+            continue
+        decisive += 1
+        if new_error < old_error:
+            supports_new += 1
+
+    if decisive < config.replacement_min_decisive_speed_samples:
+        return False
+    return (
+        supports_new / decisive
+        >= config.replacement_min_new_speed_support_fraction
     )
 
 
@@ -214,10 +257,6 @@ def estimate_change_onset(
     if not usable:
         return evidence_start_utc
 
-    # Once the new route is confirmed, search one full route cycle before the
-    # shortest evidence suffix. This is historical attribution, not a wait: it
-    # lets the event start at the first new-route samples even when the shortest
-    # confirmation suffix begins later in that cycle.
     search_margin = max(
         previous.estimated_period_s,
         current.estimated_period_s,
@@ -265,9 +304,6 @@ def estimate_change_onset(
                 old_speed_error + speed_preference_margin < new_speed_error
             )
 
-        # Period evidence is allowed to decide only when both route geometries
-        # explain the position. A wrong geometric route cannot win merely from
-        # a coincidentally similar speed.
         new_explains = position_prefers_new or (
             new_position_ok and old_position_ok and speed_prefers_new
         )
@@ -287,9 +323,6 @@ def estimate_change_onset(
         elif not new_position_ok:
             streak_start = None
             streak_count = 0
-        # If both routes explain position and speed is temporarily ambiguous,
-        # preserve an existing streak instead of converting one noisy velocity
-        # sample into a false reset.
 
     return evidence_start_utc
 
@@ -305,14 +338,6 @@ def _sample_speed(sample: VehicleSample) -> float | None:
 
 
 def _centered_canonical(route: ClosedRoute) -> tuple[CanonicalPoint, ...]:
-    """Normalize stored canonical coordinates to the route-center frame.
-
-    Detection V2 stores canonical geometry in a local acquisition frame while
-    the public route center is WGS84. Re-centering here makes residual tests
-    robust to a non-zero fitted center without changing the serialized route
-    contract.
-    """
-
     if not route.canonical_points:
         return ()
     center_x = statistics.fmean(point.x_m for point in route.canonical_points)
