@@ -164,6 +164,7 @@ def detect_closed_route(
         effective_points,
         effective_shape.canonical_points,
         detection.phase_coverage_bins,
+        detection.coverage_interpolation_max_phase_gap,
     )
     travelled_distance = _travelled_distance(effective_points)
     completed_cycles = travelled_distance / max(effective_shape.length_m, _EPSILON)
@@ -516,13 +517,43 @@ def _phase_coverage_fraction(
     points: Sequence[CanonicalPoint],
     canonical: Sequence[CanonicalPoint],
     bins: int,
+    max_interpolated_phase_gap: float,
 ) -> float:
+    """Measure observed route arcs rather than merely counting sample bins.
+
+    Consecutive navigation samples imply traversal of the short phase arc
+    between them. We fill that arc only when the phase gap is reasonably small;
+    larger gaps are treated as missing evidence rather than hallucinated path.
+    This keeps observability stable across 1-5 second sampling while preserving
+    a penalty for genuine data holes.
+    """
     if not points or bins <= 0:
         return 0.0
-    visited = {
-        min(int(project_onto_closed_polyline(canonical, point).phase * bins), bins - 1)
-        for point in points
-    }
+
+    phases = tuple(project_onto_closed_polyline(canonical, point).phase for point in points)
+    visited: set[int] = set()
+
+    def mark(phase: float) -> None:
+        visited.add(min(int((phase % 1.0) * bins), bins - 1))
+
+    for phase in phases:
+        mark(phase)
+
+    for first, second in zip(phases, phases[1:]):
+        forward = (second - first) % 1.0
+        backward = (first - second) % 1.0
+        if forward <= backward:
+            signed_delta = forward
+        else:
+            signed_delta = -backward
+        gap = abs(signed_delta)
+        if gap <= _EPSILON or gap > max_interpolated_phase_gap:
+            continue
+
+        steps = max(1, int(math.ceil(gap * bins * 2.0)))
+        for index in range(1, steps):
+            mark(first + signed_delta * index / steps)
+
     return len(visited) / bins
 
 
