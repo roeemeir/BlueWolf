@@ -32,8 +32,8 @@ def detect_closed_route(
     One cheap spatial/heading pass classifies whether a revisited point looks
     like an opposite-heading shared connection (Double Hippodrome), a
     non-parallel self crossing (Figure Eight), or neither. Expensive topology
-    proofs run only when their evidence exists. Until a higher-order SO topology
-    is resolved, a simple SO fit is not published as a transient confirmation.
+    proofs run only when their evidence exists. Until a higher-order topology is
+    resolved, an incompatible simple route is not published as confirmation.
     """
 
     detection = config or DetectionConfig()
@@ -121,12 +121,15 @@ def detect_closed_route(
     if simple is None:
         return None
 
-    # A simple SO route returns to a physical point with the same local tangent.
-    # Materially different revisit headings indicate unresolved higher-order
-    # topology, so do not publish a transient Single while evidence accumulates.
+    # A self-crossing revisit contradicts every simple closed-route topology,
+    # including a compact lobe that could otherwise look SI. An opposite-heading
+    # shared connection specifically contradicts a simple SO hippodrome. Keep
+    # those cases unconfirmed until the higher-order topology is fully proven.
+    if require_confirmation and figure_eight_evidence:
+        return None
     if (
         require_confirmation
-        and (double_evidence or figure_eight_evidence)
+        and double_evidence
         and simple.effective.family is RouteFamily.SO
     ):
         return None
