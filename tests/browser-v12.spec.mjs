@@ -55,7 +55,7 @@ test("Influx mode never silently falls back to simulator", async ({ page }) => {
   expect(runtime, runtime.join("\n")).toEqual([]);
 });
 
-test("historical range derives events and event-only PDF from NAV", async ({ page }) => {
+test("historical 24h range derives events/PDF within 60 seconds", async ({ page }) => {
   const runtime = failures(page);
   await page.setViewportSize({ width: 1400, height: 1000 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
@@ -63,9 +63,12 @@ test("historical range derives events and event-only PDF from NAV", async ({ pag
   await page.getByRole("button", { name: "תחקור", exact: true }).click();
   await expect(page.getByRole("heading", { name: "תחקור לפי חלון נתוני ניווט" })).toBeVisible();
   await page.getByRole("button", { name: "24 שעות" }).click();
+  const startedAt = Date.now();
   await page.getByRole("button", { name: "טען טווח" }).click();
-  await expect.poll(async () => await page.locator(".v09-kpis").textContent(), { timeout: 30_000 }).toMatch(/\d+.*דגימות|דגימות.*\d+/s);
-  await expect(page.locator(".v09-event-card").first()).toBeVisible({ timeout: 30_000 });
+  await expect.poll(async () => await page.locator(".v09-kpis").textContent(), { timeout: 60_000 }).toMatch(/\d+.*דגימות|דגימות.*\d+/s);
+  await expect(page.locator(".v09-event-card").first()).toBeVisible({ timeout: 60_000 });
+  const analysisElapsedMs = Date.now() - startedAt;
+  expect(analysisElapsedMs, `24h investigation took ${(analysisElapsedMs / 1000).toFixed(2)}s`).toBeLessThan(60_000);
   await page.locator(".v09-event-card").first().click();
   await expect(page.locator(".v09-event-detail .v10-event-evidence-map")).toBeVisible();
   const downloadPromise = page.waitForEvent("download");
