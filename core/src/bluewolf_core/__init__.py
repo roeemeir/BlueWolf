@@ -38,7 +38,7 @@ from .models import (
 from .route_detection import RouteDetection, detect_closed_route
 from .scoring import aggregate_group_scores, score_error, score_vehicle
 from .session import CheckpointCompatibilityError
-from .session_v17 import CoreSession
+from .session_v23 import CoreSession
 from .templates import (
     MemberTemplateFit,
     NoLegalTemplateAssignment,
@@ -86,9 +86,6 @@ from .sync_v08 import (
     so_turn_weighted_error,
 )
 
-# Stable application/Core envelope. This is intentionally independent from the
-# implementation version so the Python implementation can evolve internally
-# without forcing UI/DB changes when the public contract remains compatible.
 CORE_API_VERSION = "1.0.0"
 IMPLEMENTATION_LANGUAGE = "python"
 
