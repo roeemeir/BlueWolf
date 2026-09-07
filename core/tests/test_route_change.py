@@ -119,6 +119,86 @@ class AdaptiveRouteChangeTests(unittest.TestCase):
             180.0,
         )
 
+    def test_period_only_change_is_detected_and_attributed_retroactively(self) -> None:
+        _, old_samples = _detected_circle(radius_m=100, period_s=120)
+        transition = START + timedelta(seconds=241)
+        _, new_samples = _detected_circle(
+            radius_m=100,
+            period_s=180,
+            start=transition,
+        )
+
+        result = CoreSession().process_batch(old_samples + new_samples)
+        replacements = [
+            change
+            for change in result.changes
+            if change.kind is ChangeKind.ROUTE_CONFIRMED
+            and bool(change.details.get("replacement"))
+        ]
+
+        self.assertEqual(len(replacements), 1)
+        replacement = replacements[0]
+        self.assertIn("period", replacement.details["change_reasons"])
+        self.assertGreaterEqual(replacement.change_time_utc, transition)
+        self.assertLessEqual(
+            replacement.change_time_utc,
+            transition + timedelta(seconds=5),
+        )
+        detection_time = datetime.fromisoformat(
+            str(replacement.details["detection_time_utc"]).replace("Z", "+00:00")
+        )
+        self.assertGreater(detection_time, replacement.change_time_utc)
+        self.assertTrue(bool(replacement.details["retroactive_onset"]))
+
+    def test_route_replacement_survives_checkpoint_mid_change(self) -> None:
+        _, old_samples = _detected_circle(radius_m=100, period_s=120)
+        transition = START + timedelta(seconds=241)
+        _, new_samples = _detected_circle(
+            radius_m=140,
+            period_s=120,
+            start=transition,
+        )
+        all_samples = old_samples + new_samples
+        checkpoint_at = transition + timedelta(seconds=60)
+        first_part = tuple(
+            sample for sample in all_samples if sample.sample_time_utc <= checkpoint_at
+        )
+        second_part = tuple(
+            sample for sample in all_samples if sample.sample_time_utc > checkpoint_at
+        )
+
+        uninterrupted = CoreSession()
+        first_result = uninterrupted.process_batch(first_part)
+        self.assertFalse(
+            any(
+                change.kind is ChangeKind.ROUTE_CONFIRMED
+                and bool(change.details.get("replacement"))
+                for change in first_result.changes
+            )
+        )
+        expected_tail = uninterrupted.process_batch(second_part)
+
+        before_restart = CoreSession()
+        before_restart.process_batch(first_part)
+        restored = CoreSession.from_checkpoint(before_restart.export_checkpoint())
+        actual_tail = restored.process_batch(second_part)
+
+        self.assertEqual(actual_tail, expected_tail)
+        replacements = [
+            change
+            for change in actual_tail.changes
+            if change.kind is ChangeKind.ROUTE_CONFIRMED
+            and bool(change.details.get("replacement"))
+        ]
+        self.assertEqual(len(replacements), 1)
+        self.assertGreaterEqual(replacements[0].change_time_utc, transition)
+        self.assertLessEqual(
+            replacements[0].change_time_utc,
+            transition + timedelta(seconds=5),
+        )
+        self.assertEqual(restored.debug_state(), uninterrupted.debug_state())
+        self.assertEqual(restored.export_checkpoint(), uninterrupted.export_checkpoint())
+
     def test_stable_confirmed_route_does_not_emit_replacement(self) -> None:
         stable = generate_si_circle_samples(
             start_time_utc=START,
