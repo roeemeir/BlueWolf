@@ -27,6 +27,7 @@ from .models import (
     VehicleFrameResult,
     VehicleSample,
 )
+from .route_change import compare_routes, estimate_change_onset
 from .route_detection import RouteDetection, detect_closed_route
 
 
@@ -91,7 +92,7 @@ class CoreSession:
     def __init__(
         self,
         config: CoreConfig | None = None,
-        algorithm_version: str = "0.3.0",
+        algorithm_version: str = "0.4.0",
     ) -> None:
         self.config = config or CoreConfig()
         self.algorithm_version = algorithm_version
@@ -260,9 +261,6 @@ class CoreSession:
                 item for item in route_state.history if item.sample_time_utc >= cutoff
             ]
 
-        if route_state.confirmed is not None:
-            return []
-
         last_eval = route_state.last_evaluation_time_utc
         if (
             last_eval is not None
@@ -271,6 +269,53 @@ class CoreSession:
         ):
             return []
         route_state.last_evaluation_time_utc = sample.sample_time_utc
+
+        # Once a route is confirmed, acquisition never freezes. A fresh strict
+        # route fit is compared to the existing geometry. Material replacements
+        # are confirmed by geometry/coverage/closure evidence, not by a fixed
+        # 120-second persistence timer, and their onset is attributed backward.
+        if route_state.confirmed is not None:
+            replacement = _find_adaptive_route(
+                route_state.history,
+                self.config.detection,
+                require_confirmation=True,
+            )
+            if replacement is None:
+                return []
+
+            previous_route = route_state.confirmed
+            next_route = replacement.detection.effective
+            delta = compare_routes(previous_route, next_route, self.config.detection)
+            if not delta.changed:
+                route_state.candidate = previous_route
+                return []
+
+            onset = estimate_change_onset(
+                route_state.history,
+                previous_route,
+                next_route,
+                replacement.window_start_utc,
+                self.config.detection,
+            )
+            route_state.candidate = next_route
+            route_state.confirmed = next_route
+            return [
+                self._route_change(
+                    sample,
+                    ChangeKind.ROUTE_CONFIRMED,
+                    replacement,
+                    change_time_utc=onset,
+                    previous_route=previous_route,
+                    change_reasons=delta.reasons,
+                    change_metrics={
+                        "center_short_axis_ratio": delta.center_short_axis_ratio,
+                        "long_axis_ratio": delta.long_axis_ratio,
+                        "short_axis_ratio": delta.short_axis_ratio,
+                        "period_ratio": delta.period_ratio,
+                        "orientation_error_deg": delta.orientation_error_deg,
+                    },
+                )
+            ]
 
         changes: list[StateChange] = []
         if route_state.candidate is None:
@@ -308,29 +353,59 @@ class CoreSession:
         sample: VehicleSample,
         kind: ChangeKind,
         match: _AdaptiveRouteMatch,
+        *,
+        change_time_utc: datetime | None = None,
+        previous_route: ClosedRoute | None = None,
+        change_reasons: Sequence[str] = (),
+        change_metrics: Mapping[str, float] | None = None,
     ) -> StateChange:
         detection = match.detection
         route = detection.effective
+        details: dict[str, Any] = {
+            "route_id": route.route_id,
+            "family": route.family.value,
+            "subtype": route.subtype.value,
+            "direction": route.direction.value,
+            "estimated_period_s": route.estimated_period_s,
+            "long_axis_a_m": route.long_axis_a_m,
+            "short_axis_b_m": route.short_axis_b_m,
+            "orientation_deg": route.orientation_deg,
+            "detection_quality": route.detection_quality,
+            "fit_fraction": detection.fit_fraction,
+            "coverage_fraction": detection.coverage_fraction,
+            "completed_cycles": detection.completed_cycles,
+            "closure_ok": bool(detection.diagnostics.get("closure_ok", False)),
+            "evidence_window_start_utc": _iso(match.window_start_utc),
+            "evidence_window_seconds": match.window_seconds,
+            "history_ceiling_seconds": self.config.detection.max_history_seconds,
+            "replacement": previous_route is not None,
+        }
+        if previous_route is not None:
+            details.update(
+                {
+                    "previous_route_id": previous_route.route_id,
+                    "previous_family": previous_route.family.value,
+                    "previous_subtype": previous_route.subtype.value,
+                    "previous_direction": previous_route.direction.value,
+                    "previous_estimated_period_s": previous_route.estimated_period_s,
+                    "previous_long_axis_a_m": previous_route.long_axis_a_m,
+                    "previous_short_axis_b_m": previous_route.short_axis_b_m,
+                    "previous_orientation_deg": previous_route.orientation_deg,
+                    "change_reasons": list(change_reasons),
+                    "detection_time_utc": _iso(sample.sample_time_utc),
+                    "retroactive_onset": change_time_utc is not None
+                    and change_time_utc < sample.sample_time_utc,
+                }
+            )
+            if change_metrics:
+                details["change_metrics"] = dict(change_metrics)
+
         return StateChange(
-            sample.sample_time_utc,
+            change_time_utc or sample.sample_time_utc,
             kind,
             sample.server_id,
             sample.vehicle_identifier,
-            details={
-                "route_id": route.route_id,
-                "family": route.family.value,
-                "subtype": route.subtype.value,
-                "direction": route.direction.value,
-                "estimated_period_s": route.estimated_period_s,
-                "detection_quality": route.detection_quality,
-                "fit_fraction": detection.fit_fraction,
-                "coverage_fraction": detection.coverage_fraction,
-                "completed_cycles": detection.completed_cycles,
-                "closure_ok": bool(detection.diagnostics.get("closure_ok", False)),
-                "evidence_window_start_utc": _iso(match.window_start_utc),
-                "evidence_window_seconds": match.window_seconds,
-                "history_ceiling_seconds": self.config.detection.max_history_seconds,
-            },
+            details=details,
         )
 
     def _advance_one(
@@ -430,7 +505,7 @@ class CoreSession:
         checkpoint: bytes | str,
         *,
         config: CoreConfig | None = None,
-        algorithm_version: str = "0.3.0",
+        algorithm_version: str = "0.4.0",
     ) -> CoreSession:
         config = config or CoreConfig()
         raw: Mapping[str, Any] = json.loads(
