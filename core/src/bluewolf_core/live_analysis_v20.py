@@ -16,7 +16,10 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any, Mapping
 
-from .application_analysis_v19 import analyze_navigation_dataset, derive_events
+# Import installs the Live-only "not enough topology points yet" guard before
+# any v2 session starts processing sparse streaming NAV.
+from . import route_detection_live_v20 as _route_detection_live_v20  # noqa: F401
+from .application_analysis_v20 import analyze_navigation_dataset, derive_events
 from .live_analysis import (
     LiveAnalysisEnvelope,
     LiveAnalysisSession as _BaseLiveAnalysisSession,
