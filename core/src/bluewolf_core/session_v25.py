@@ -16,6 +16,11 @@ slice a complete cycle of the new route. Therefore current-state fitting remains
 strictly latest-cycle based, while change discovery uses a bounded generic suffix
 probe. The probe is shape-neutral and expands only in time; once a changed route
 is found, its own period becomes the latest-cycle reference for revision checks.
+
+`route_state.confirmed` is the current active latest-cycle geometry. After route
+confirmation, `route_state.candidate` is intentionally retained as the fixed
+revision baseline. This prevents a real slow geometry drift from disappearing
+because the active fit follows it in many individually sub-threshold steps.
 """
 
 from __future__ import annotations
@@ -55,7 +60,7 @@ class CoreSession(_V23CoreSession):
         self,
         sample: VehicleSample,
         route_state,
-        reference: ClosedRoute,
+        baseline: ClosedRoute,
     ) -> RouteDetection | None:
         """Find a changed closed route without assuming its new period or shape.
 
@@ -76,12 +81,12 @@ class CoreSession(_V23CoreSession):
         if available_seconds <= 0:
             return None
 
-        # Two reference cycles are a natural first probe: one old-period slice is
-        # already used by the active fit, while a second cycle gives a changed
+        # Two baseline cycles are a natural first probe: one current-period slice
+        # is already used by the active fit, while a second cycle gives a changed
         # period room to close without imposing a geometric model. The 180-second
         # floor reuses the existing revision/candidate timing, not a new route law.
         base_seconds = max(
-            2.0 * max(reference.estimated_period_s, 1.0),
+            2.0 * max(baseline.estimated_period_s, 1.0),
             float(_legacy._ROUTE_REVISION_CONFIRM_SECONDS + self.config.detection.known_route_candidate_seconds),
         )
         maximum = min(float(ROUTE_HISTORY_SECONDS), available_seconds)
@@ -103,7 +108,7 @@ class CoreSession(_V23CoreSession):
             detection = detect_closed_route(recent, probe_config)
             if detection is None:
                 continue
-            if _legacy._material_route_change(reference, detection.effective):
+            if _legacy._material_route_change(baseline, detection.effective):
                 return detection
         return None
 
@@ -153,6 +158,8 @@ class CoreSession(_V23CoreSession):
 
         confirmed = replace(latest, route_id=f"{latest.route_id}:r0")
         route_state.confirmed = confirmed
+        # From this point candidate is the fixed revision baseline. It is updated
+        # only when a revision is approved, never by ordinary latest-cycle refresh.
         route_state.candidate = confirmed
         route_state.pending_revision = None
         route_state.pending_since_utc = None
@@ -170,6 +177,7 @@ class CoreSession(_V23CoreSession):
     def _update_confirmed_route(self, sample: VehicleSample, route_state) -> list[StateChange]:
         assert route_state.confirmed is not None
         confirmed = route_state.confirmed
+        baseline = route_state.candidate or confirmed
 
         # Once a revision candidate exists, evaluate exactly its latest cycle.
         # This prevents the old route period from controlling new-route stability.
@@ -178,7 +186,7 @@ class CoreSession(_V23CoreSession):
             if detection is None:
                 return []
             observed = detection.effective
-            if not _legacy._material_route_change(confirmed, observed):
+            if not _legacy._material_route_change(baseline, observed):
                 route_state.pending_revision = None
                 route_state.pending_since_utc = None
                 return []
@@ -208,14 +216,13 @@ class CoreSession(_V23CoreSession):
             ]
 
         # Normal operation: current geometry is always the latest completed cycle
-        # under the currently confirmed period.
+        # under the currently active period, but change is measured against the
+        # fixed approved baseline so gradual drift cannot hide.
         detection = self._latest_cycle_detection(route_state, confirmed)
         if detection is not None:
             observed = detection.effective
-            if not _legacy._material_route_change(confirmed, observed):
-                refreshed = replace(observed, route_id=confirmed.route_id)
-                route_state.confirmed = refreshed
-                route_state.candidate = refreshed
+            if not _legacy._material_route_change(baseline, observed):
+                route_state.confirmed = replace(observed, route_id=confirmed.route_id)
                 return []
             # A valid, materially different full cycle is already sufficient to
             # start the revision stability clock.
@@ -231,10 +238,10 @@ class CoreSession(_V23CoreSession):
                 )
             ]
 
-        # If the old period no longer yields a complete cycle, discover the new
+        # If the active period no longer yields a complete cycle, discover the new
         # route from a bounded generic suffix. This path is only entered during
         # suspected change, so stable-route cost remains proportional to one cycle.
-        change_detection = self._generic_change_probe(sample, route_state, confirmed)
+        change_detection = self._generic_change_probe(sample, route_state, baseline)
         if change_detection is None:
             return []
         route_state.pending_revision = change_detection.effective
