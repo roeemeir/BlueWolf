@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Iterable, Mapping, Sequence
 
 from .config import CoreConfig, DetectionConfig
-from .geometry import project_wgs84
+from .geometry import project_wgs84, vector_angle_error_deg, wgs84_to_local_m
 from .models import (
     CanonicalPoint,
     ChangeKind,
@@ -284,17 +285,17 @@ class CoreSession:
                     self._route_change(sample, ChangeKind.ROUTE_CANDIDATE, candidate)
                 )
 
+        # A strict confirmation implies the candidate evidence gates as well.
+        # Avoid a second expensive multi-window fit until a candidate exists.
+        if route_state.candidate is None:
+            return changes
+
         confirmed = _find_adaptive_route(
             route_state.history,
             self.config.detection,
             require_confirmation=True,
         )
         if confirmed is not None:
-            if route_state.candidate is None:
-                route_state.candidate = confirmed.detection.effective
-                changes.append(
-                    self._route_change(sample, ChangeKind.ROUTE_CANDIDATE, confirmed)
-                )
             route_state.candidate = confirmed.detection.effective
             route_state.confirmed = confirmed.detection.effective
             changes.append(
@@ -543,12 +544,32 @@ def _find_adaptive_route(
 ) -> _AdaptiveRouteMatch | None:
     """Return the shortest recent evidence window that satisfies route gates.
 
-    Search windows grow geometrically for bounded CPU cost, then the first
-    successful bracket is refined to the configured temporal resolution. This
-    resolution controls search precision only; it is not a confirmation timer.
+    Confirmation first uses geometric re-observation: earlier samples nearest
+    the current position (with compatible velocity heading when available) are
+    candidate cycle boundaries. This finds the actual repeated path even when
+    older free/approach motion exists in the 40-minute buffer, avoiding the
+    false monotonic assumption that every longer suffix must fit better.
+
+    A bounded geometric suffix search remains as fallback and as the early
+    candidate mechanism. Its refinement resolution is search precision only,
+    never a waiting timer.
     """
     if len(history) < 12:
         return None
+
+    if require_confirmation:
+        closure_matches: list[_AdaptiveRouteMatch] = []
+        for duration in _closure_guided_durations(history, config):
+            match = _detect_suffix(
+                history,
+                duration,
+                config,
+                require_confirmation=True,
+            )
+            if match is not None:
+                closure_matches.append(match)
+        if closure_matches:
+            return min(closure_matches, key=lambda item: item.window_seconds)
 
     end_time = history[-1].sample_time_utc
     span_seconds = max(
@@ -604,6 +625,73 @@ def _find_adaptive_route(
             upper = middle
             best = match
     return best
+
+
+def _closure_guided_durations(
+    history: Sequence[VehicleSample],
+    config: DetectionConfig,
+) -> tuple[float, ...]:
+    """Propose cycle windows from spatial/heading re-observation.
+
+    No fixed spatial threshold is used here: nearest historical revisits are
+    merely hypotheses. The route detector's fitted short axis, closure ratio,
+    fit and coverage gates make the actual decision.
+    """
+    current = history[-1]
+    if current.latitude_deg is None or current.longitude_deg is None:
+        return ()
+
+    current_velocity = _sample_velocity(current)
+    candidates: list[tuple[float, float]] = []
+    minimum_duration = float(config.adaptive_min_window_seconds)
+    for previous in history[:-1]:
+        if previous.latitude_deg is None or previous.longitude_deg is None:
+            continue
+        duration = (current.sample_time_utc - previous.sample_time_utc).total_seconds()
+        if duration < minimum_duration:
+            continue
+
+        previous_velocity = _sample_velocity(previous)
+        if current_velocity is not None and previous_velocity is not None:
+            heading_error = vector_angle_error_deg(
+                current_velocity[0],
+                current_velocity[1],
+                previous_velocity[0],
+                previous_velocity[1],
+            )
+            if heading_error > max(60.0, config.closure_direction_error_deg * 2.0):
+                continue
+
+        local = wgs84_to_local_m(
+            float(previous.latitude_deg),
+            float(previous.longitude_deg),
+            float(current.latitude_deg),
+            float(current.longitude_deg),
+        )
+        candidates.append((math.hypot(local.x_m, local.y_m), duration))
+
+    # Prefer the closest revisits, but prevent a dense cluster around one pass
+    # from consuming all hypotheses. A full-cycle revisit then naturally ranks
+    # ahead of arbitrary elapsed-time windows.
+    selected: list[float] = []
+    separation = max(10.0, float(config.adaptive_window_refine_seconds))
+    for _, duration in sorted(candidates, key=lambda item: (item[0], item[1])):
+        if any(abs(duration - known) < separation for known in selected):
+            continue
+        selected.append(duration)
+        if len(selected) >= 16:
+            break
+    return tuple(sorted(selected))
+
+
+def _sample_velocity(sample: VehicleSample) -> tuple[float, float] | None:
+    if sample.velocity_east_mps is None or sample.velocity_north_mps is None:
+        return None
+    east = float(sample.velocity_east_mps)
+    north = float(sample.velocity_north_mps)
+    if math.hypot(east, north) <= 1e-9:
+        return None
+    return east, north
 
 
 def _detect_suffix(
