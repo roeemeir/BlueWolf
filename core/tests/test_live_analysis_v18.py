@@ -95,19 +95,21 @@ class LiveAnalysisV18Tests(unittest.TestCase):
         self.assertEqual(sorted(incremental.analysis["groups"]["si"]["members"]), [101, 201, 301])
         self.assertEqual(incremental.analysis["provenance"]["latestSampleAt"], (START + timedelta(seconds=185)).isoformat(timespec="milliseconds").replace("+00:00", "Z"))
 
-    def test_long_warmup_retains_full_display_nav_but_bounds_streaming_bootstrap(self) -> None:
+    def test_long_warmup_uses_up_to_forty_minutes_of_streaming_route_history(self) -> None:
         dataset = _dataset(0, 1800)
         observed = START + timedelta(seconds=1800)
         bootstrap = _core_bootstrap_samples(dataset["samples"], observed)
-        self.assertEqual(len(bootstrap), 601 * 3)
-        self.assertEqual(bootstrap[0]["timestamp"], (START + timedelta(seconds=1200)).isoformat().replace("+00:00", "Z"))
+        # The selected window is only 30 minutes, so all of it is valid route
+        # evidence inside the new 40-minute Core horizon.
+        self.assertEqual(len(bootstrap), 1801 * 3)
+        self.assertEqual(bootstrap[0]["timestamp"], START.isoformat().replace("+00:00", "Z"))
 
         session = LiveAnalysisSession(_config(), retention_seconds=30 * 60)
         envelope = session.ingest(dataset)
         self.assertEqual(envelope.accepted_samples, 1801 * 3)
         self.assertEqual(len(session.samples), 1801 * 3)
         self.assertIsNotNone(envelope.core_batch)
-        self.assertEqual(len(envelope.core_batch.frames), 601 * 3)
+        self.assertEqual(len(envelope.core_batch.frames), 1801 * 3)
         self.assertEqual(session.core.processed_until_utc, observed)
         self.assertEqual(sorted(envelope.analysis["groups"]["si"]["members"]), [101, 201, 301])
 
@@ -141,10 +143,6 @@ class LiveAnalysisV18Tests(unittest.TestCase):
         checkpoint = original.checkpoint()
         uninterrupted = original.ingest(_dataset(361, 365))
 
-        # The application recovery query contains the same live NAV window used
-        # for display analysis, including enough pre-frontier route history and
-        # every sample after the checkpoint frontier. Core state is restored from
-        # the checkpoint; only seconds 361..365 are accepted through process_batch.
         restored, recovered = LiveAnalysisSession.restore(
             checkpoint,
             app_config=_config(),
