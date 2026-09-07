@@ -118,16 +118,21 @@ def estimate_change_onset(
     """Estimate the first sample explained by the new route but not the old.
 
     This is deliberately retrospective. Confirmation can happen after enough
-    new-route geometry has accumulated, while the emitted change time points
-    back to the structural transition. Three consecutive usable samples are
-    required to reject a single GPS excursion; this is a robustness count, not
-    an elapsed-time confirmation timer.
+    new-route evidence has accumulated, while the emitted change time points
+    back to the structural transition. Position residuals identify geometry
+    changes; speed-vs-period residuals identify period-only changes on the same
+    geometry. Three consecutive usable samples reject a single GPS/velocity
+    excursion; this is a robustness count, not an elapsed-time confirmation
+    timer.
     """
 
     old_canonical = _centered_canonical(previous)
     new_canonical = _centered_canonical(current)
     old_tolerance = max(previous.short_axis_b_m * 0.15, 2.0)
     new_tolerance = max(current.short_axis_b_m * 0.20, 2.0)
+    old_expected_speed = previous.length_m / max(previous.estimated_period_s, _EPSILON)
+    new_expected_speed = current.length_m / max(current.estimated_period_s, _EPSILON)
+    speed_preference_margin = min(0.08, config.period_change_ratio * 0.40)
 
     usable = [
         sample
@@ -142,7 +147,7 @@ def estimate_change_onset(
 
     # Once the new route is confirmed, search one full route cycle before the
     # shortest evidence suffix. This is historical attribution, not a wait: it
-    # lets the event start at the first new-geometry samples even when the
+    # lets the event start at the first new-route samples even when the shortest
     # confirmation suffix begins later in that cycle.
     search_margin = max(
         previous.estimated_period_s,
@@ -173,8 +178,34 @@ def estimate_change_onset(
         old_distance = project_onto_closed_polyline(old_canonical, old_local).distance_m
         new_distance = project_onto_closed_polyline(new_canonical, new_local).distance_m
 
-        new_explains = new_distance <= new_tolerance
-        old_explains = old_distance <= old_tolerance
+        new_position_ok = new_distance <= new_tolerance
+        old_position_ok = old_distance <= old_tolerance
+        position_prefers_new = new_position_ok and not old_position_ok
+        position_prefers_old = old_position_ok and not new_position_ok
+
+        speed_prefers_new = False
+        speed_prefers_old = False
+        speed = _sample_speed(sample)
+        if speed is not None and old_expected_speed > _EPSILON and new_expected_speed > _EPSILON:
+            old_speed_error = abs(speed - old_expected_speed) / old_expected_speed
+            new_speed_error = abs(speed - new_expected_speed) / new_expected_speed
+            speed_prefers_new = (
+                new_speed_error + speed_preference_margin < old_speed_error
+            )
+            speed_prefers_old = (
+                old_speed_error + speed_preference_margin < new_speed_error
+            )
+
+        # Period evidence is allowed to decide only when both route geometries
+        # explain the position. A wrong geometric route cannot win merely from
+        # a coincidentally similar speed.
+        new_explains = position_prefers_new or (
+            new_position_ok and old_position_ok and speed_prefers_new
+        )
+        old_explains = position_prefers_old or (
+            new_position_ok and old_position_ok and speed_prefers_old
+        )
+
         if new_explains and not old_explains:
             if streak_start is None:
                 streak_start = sample.sample_time_utc
@@ -184,11 +215,24 @@ def estimate_change_onset(
         elif old_explains and not new_explains:
             streak_start = None
             streak_count = 0
-        elif not new_explains:
+        elif not new_position_ok:
             streak_start = None
             streak_count = 0
+        # If both routes explain position and speed is temporarily ambiguous,
+        # preserve an existing streak instead of converting one noisy velocity
+        # sample into a false reset.
 
     return evidence_start_utc
+
+
+def _sample_speed(sample: VehicleSample) -> float | None:
+    if sample.velocity_east_mps is None or sample.velocity_north_mps is None:
+        return None
+    speed = math.hypot(
+        float(sample.velocity_east_mps),
+        float(sample.velocity_north_mps),
+    )
+    return speed if speed > _EPSILON else None
 
 
 def _centered_canonical(route: ClosedRoute) -> tuple[CanonicalPoint, ...]:
