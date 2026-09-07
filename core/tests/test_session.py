@@ -127,7 +127,7 @@ class SessionDeterminismTests(unittest.TestCase):
         session.process_batch(route_scenario(180))
         payload = json.loads(session.export_checkpoint().decode("utf-8"))
         self.assertEqual(payload["checkpoint_schema_version"], 4)
-        self.assertEqual(payload["recovery_history_seconds"], 600)
+        self.assertEqual(payload["recovery_history_seconds"], 2400)
         self.assertTrue(payload["routes"])
         self.assertTrue(all("history" not in route for route in payload["routes"]))
 
@@ -258,10 +258,14 @@ class SessionDeterminismTests(unittest.TestCase):
         session = CoreSession()
         session.process_batch(samples)
         route = session.debug_state()["routes"][0]
-        self.assertLessEqual(route["history_count"], 602)
+        # A 30-minute fixture must no longer be truncated to the old 10-minute
+        # history; the canonical cap is now 40 minutes.
+        self.assertGreater(route["history_count"], 602)
+        self.assertLessEqual(route["history_count"], 2402)
         history_start = _parse_debug_time(route["history_start_utc"])
         history_end = _parse_debug_time(route["history_end_utc"])
-        self.assertLessEqual((history_end - history_start).total_seconds(), 600)
+        self.assertGreater((history_end - history_start).total_seconds(), 600)
+        self.assertLessEqual((history_end - history_start).total_seconds(), 2400)
 
     def test_material_route_change_requires_stability_and_emits_revision(self) -> None:
         session = CoreSession()
