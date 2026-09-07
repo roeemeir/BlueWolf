@@ -79,18 +79,19 @@ class DetectionConfig:
     si_axis_ratio_max: float = 1.5
     canonical_point_limit: int = 64
 
-    # Route acquisition is evidence-driven. These legacy timer fields are retained
-    # for configuration compatibility but are no longer used as confirmation gates.
+    # Retained only for old configuration compatibility. Route acquisition is
+    # evidence-driven and these values are not used as confirmation timers.
     new_route_observation_seconds: int = 0
     known_route_candidate_seconds: int = 0
 
-    # 40 minutes is a hard memory/lookback ceiling, never a required wait time.
+    # Forty minutes is a hard memory/lookback ceiling, never a required wait.
     max_history_seconds: int = 2400
     adaptive_min_window_seconds: int = 30
     adaptive_window_growth_factor: float = 1.5
     adaptive_window_refine_seconds: int = 10
 
-    # Candidate gates are intentionally permissive; confirmation remains strict.
+    # Initial evidence thresholds. They are intentionally configuration values
+    # so deterministic simulation and later real-data calibration can tune them.
     candidate_fit_fraction: float = 0.68
     candidate_coverage_fraction: float = 0.45
     candidate_travel_fraction: float = 0.40
@@ -98,6 +99,7 @@ class DetectionConfig:
     confirmation_coverage_fraction: float = 0.82
     required_completed_cycles: float = 0.90
     phase_coverage_bins: int = 32
+    coverage_interpolation_max_phase_gap: float = 0.20
 
     closure_distance_short_axis_ratio: float = 0.20
     closure_direction_error_deg: float = 30
@@ -121,6 +123,8 @@ class DetectionConfig:
             raise ValueError("adaptive_window_refine_seconds must be positive")
         if self.phase_coverage_bins < 8:
             raise ValueError("phase_coverage_bins must be at least 8")
+        if not 0.0 < self.coverage_interpolation_max_phase_gap <= 0.5:
+            raise ValueError("coverage_interpolation_max_phase_gap must be in (0, 0.5]")
         for name in (
             "candidate_fit_fraction",
             "candidate_coverage_fraction",
