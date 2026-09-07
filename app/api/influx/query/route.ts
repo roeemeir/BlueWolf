@@ -9,6 +9,7 @@ type QueryBody = {
   from?: string;
   to?: string;
   joinToleranceSeconds?: number;
+  targetPoints?: number;
   mappings?: InfluxFieldMapping[];
 };
 
@@ -25,6 +26,23 @@ function fluxString(value: string) {
   return JSON.stringify(value);
 }
 
+/**
+ * Historical density budget used before CSV transfer.
+ *
+ * The application target is expressed as total joined NAV points. Vehicle
+ * count is not known until after the query, so use the same conservative
+ * eight-vehicle planning factor as the deterministic simulator. Short/live
+ * windows remain raw at one-second resolution; long history is reduced inside
+ * Influx with `last`, preserving a real measurement instead of averaging a
+ * route transition into a synthetic point.
+ */
+function aggregateEverySeconds(from: Date, to: Date, targetPoints: number) {
+  const durationSeconds = Math.max(1, (to.getTime() - from.getTime()) / 1000);
+  const target = Math.max(1_000, Math.min(50_000, Math.round(targetPoints)));
+  const planned = Math.ceil(durationSeconds * 8 / target);
+  return durationSeconds <= 20 * 60 ? 1 : Math.max(1, planned);
+}
+
 async function queryMapping(
   baseUrl: string,
   organization: string,
@@ -33,11 +51,15 @@ async function queryMapping(
   from: string,
   to: string,
   mapping: InfluxFieldMapping,
+  aggregateSeconds: number,
 ) {
   const serverFilter = serverId
     ? `\n  |> filter(fn: (r) => exists r.server_id and string(v: r.server_id) == ${fluxString(serverId)})`
     : "";
-  const query = `from(bucket: ${fluxString(mapping.bucket)})\n  |> range(start: time(v: ${fluxString(from)}), stop: time(v: ${fluxString(to)}))\n  |> filter(fn: (r) => r._measurement == ${fluxString(mapping.measurement)})\n  |> filter(fn: (r) => r._field == ${fluxString(mapping.key)})${serverFilter}\n  |> sort(columns: ["_time"])`;
+  const aggregate = aggregateSeconds > 1
+    ? `\n  |> aggregateWindow(every: ${aggregateSeconds}s, fn: last, createEmpty: false)`
+    : "";
+  const query = `from(bucket: ${fluxString(mapping.bucket)})\n  |> range(start: time(v: ${fluxString(from)}), stop: time(v: ${fluxString(to)}))\n  |> filter(fn: (r) => r._measurement == ${fluxString(mapping.measurement)})\n  |> filter(fn: (r) => r._field == ${fluxString(mapping.key)})${serverFilter}${aggregate}\n  |> sort(columns: ["_time"])`;
   const response = await fetch(`${baseUrl}/api/v2/query?org=${encodeURIComponent(organization)}`, {
     method: "POST",
     signal: AbortSignal.timeout(20_000),
@@ -49,6 +71,7 @@ async function queryMapping(
 }
 
 export async function POST(request: Request) {
+  const totalStarted = Date.now();
   try {
     const body = await request.json() as QueryBody;
     const baseUrl = safeBaseUrl((body.url ?? "").trim());
@@ -65,11 +88,18 @@ export async function POST(request: Request) {
     const missing = required.filter((key) => !mappings.some((item) => item.systemKey === key));
     if (missing.length) return Response.json({ ok: false, error: `Missing required mappings: ${missing.join(", ")}`, samples: [], warnings: [] }, { status: 400 });
 
+    const aggregateSeconds = aggregateEverySeconds(from, to, body.targetPoints ?? 9_000);
+    const queryStarted = Date.now();
     const queried = await Promise.all(mappings.map(async (mapping) => ({
       mapping,
-      records: await queryMapping(baseUrl, organization, token, serverId, from.toISOString(), to.toISOString(), mapping),
+      records: await queryMapping(baseUrl, organization, token, serverId, from.toISOString(), to.toISOString(), mapping, aggregateSeconds),
     })));
+    const queryMs = Date.now() - queryStarted;
+    const queriedRecordCount = queried.reduce((sum, item) => sum + item.records.length, 0);
+
+    const joinStarted = Date.now();
     const normalized = normalizeInfluxRecords(queried, body.joinToleranceSeconds ?? 5);
+    const joinMs = Date.now() - joinStarted;
     const candidates = normalized.samples;
     const origin = candidates[0] ? { lat: candidates[0].latitude, lon: candidates[0].longitude } : { lat: 0, lon: 0 };
     const metresLat = 111_320;
@@ -98,9 +128,15 @@ export async function POST(request: Request) {
         serverId,
         from: from.toISOString(),
         to: to.toISOString(),
+        aggregateEverySeconds: aggregateSeconds,
+        targetPoints: body.targetPoints ?? 9_000,
+        queriedRecordCount,
         normalizedSampleCount: samples.length,
         vehicleCount,
         latestSampleAt,
+        queryMs,
+        joinMs,
+        totalMs: Date.now() - totalStarted,
         warningCount: normalized.warnings.length,
       },
       warnings: normalized.warnings,
