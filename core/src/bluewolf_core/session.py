@@ -27,7 +27,7 @@ from .models import (
     VehicleFrameResult,
     VehicleSample,
 )
-from .route_change import compare_routes, estimate_change_onset
+from .route_change import compare_routes, estimate_change_onset, route_change_suspected
 from .route_detection import RouteDetection, detect_closed_route
 
 
@@ -270,11 +270,18 @@ class CoreSession:
             return []
         route_state.last_evaluation_time_utc = sample.sample_time_utc
 
-        # Once a route is confirmed, acquisition never freezes. A fresh strict
-        # route fit is compared to the existing geometry. Material replacements
-        # are confirmed by geometry/coverage/closure evidence, not by a fixed
-        # 120-second persistence timer, and their onset is attributed backward.
+        # Once a route is confirmed, acquisition never freezes. The current
+        # sample first passes a cheap residual/speed/direction gate. Stable
+        # motion therefore stays O(1); only a mismatch opens the expensive
+        # evidence-driven multi-window replacement search.
         if route_state.confirmed is not None:
+            if not route_change_suspected(
+                sample,
+                route_state.confirmed,
+                self.config.detection,
+            ):
+                return []
+
             replacement = _find_adaptive_route(
                 route_state.history,
                 self.config.detection,
