@@ -101,7 +101,7 @@ class HistoricalReplayPerformanceV22Tests(unittest.TestCase):
         elapsed = time.perf_counter() - started
 
         self.assertGreaterEqual(len(history), 100)
-        self.assertLessEqual(len(history), 122)
+        self.assertLessEqual(len(history), 120)
         self.assertEqual(history[-1]["timestamp"], dataset["provenance"]["latestSampleAt"])
         self.assertTrue(all(frame["analysis"]["available"] for frame in history[-5:]))
         self.assertIsInstance(events, list)
