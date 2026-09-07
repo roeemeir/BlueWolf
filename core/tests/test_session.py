@@ -175,12 +175,12 @@ class SessionDeterminismTests(unittest.TestCase):
         first_half = tuple(
             sample
             for sample in samples
-            if sample.sample_time_utc <= START + timedelta(seconds=100)
+            if sample.sample_time_utc <= START + timedelta(seconds=115)
         )
         second_half = tuple(
             sample
             for sample in samples
-            if sample.sample_time_utc > START + timedelta(seconds=100)
+            if sample.sample_time_utc > START + timedelta(seconds=115)
         )
 
         uninterrupted = CoreSession()
