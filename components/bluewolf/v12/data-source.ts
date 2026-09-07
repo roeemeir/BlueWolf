@@ -11,6 +11,10 @@ export type DataLoadResult = { dataset: NavigationDataset; error: string | null 
  * Load one navigation source. Real Influx server selection uses the canonical
  * server_id identity. Historical callers may still carry a legacy serverTag
  * property while persisted workspaces migrate; it is deliberately ignored.
+ *
+ * targetPoints is an end-to-end historical processing budget. Simulation uses
+ * it directly; Influx forwards it to the server so Flux can reduce long ranges
+ * before CSV transfer/join instead of downloading every raw field row first.
  */
 export async function loadNavigationDataset({ mode, serverId, from, to, grouping, windMode, influx, targetPoints = 9_000 }: {
   mode: "simulation" | "influx"; serverId: string; serverTag?: string; from: Date; to: Date; grouping: SoGroupingSettings; windMode: WindMode; influx: InfluxSettings; targetPoints?: number;
@@ -32,6 +36,7 @@ export async function loadNavigationDataset({ mode, serverId, from, to, grouping
         from: from.toISOString(),
         to: to.toISOString(),
         joinToleranceSeconds: influx.joinToleranceSeconds,
+        targetPoints: Math.max(1_000, Math.min(50_000, Math.round(targetPoints))),
         mappings: influx.mappings,
       }),
     });
