@@ -35,6 +35,7 @@ from .models import (
 )
 from .route_detection import RouteDetection, detect_closed_route
 from .double_hippodrome import DoubleHippodromeDetection, detect_double_hippodrome
+from .figure_eight import FigureEightDetection, detect_figure_eight
 from .scoring import aggregate_group_scores, score_error, score_vehicle
 from .session import CheckpointCompatibilityError, CoreSession
 from .templates import (
@@ -57,6 +58,7 @@ __all__ = [
     "Direction",
     "DoubleHippodromeDetection",
     "FieldQuality",
+    "FigureEightDetection",
     "MemberTemplateFit",
     "NoLegalTemplateAssignment",
     "ObservedMember",
@@ -79,6 +81,7 @@ __all__ = [
     "curvature_at_phase",
     "detect_closed_route",
     "detect_double_hippodrome",
+    "detect_figure_eight",
     "fit_template",
     "normalized_curvature_error",
     "point_at_phase",
