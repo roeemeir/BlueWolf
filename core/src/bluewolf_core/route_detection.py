@@ -29,19 +29,56 @@ def detect_closed_route(
 ) -> RouteDetection | None:
     """Detect the strongest supported closed-route topology.
 
-    A cheap spatial/heading revisit gate decides whether Double Hippodrome is
-    even plausible. This keeps ordinary SI/SO confirmation inexpensive. When an
-    opposite-heading revisit exists, a full topology proof gets first refusal;
-    until it succeeds, a simple SO fit is not confirmed from the same ambiguous
-    evidence window.
+    One cheap spatial/heading pass classifies whether a revisited point looks
+    like an opposite-heading shared connection (Double Hippodrome), a
+    non-parallel self crossing (Figure Eight), or neither. Expensive topology
+    proofs run only when their evidence exists. Until a higher-order SO topology
+    is resolved, a simple SO fit is not published as a transient confirmation.
     """
 
     detection = config or DetectionConfig()
     frozen = tuple(samples)
-    double_evidence = require_confirmation and _has_opposite_heading_revisit(
-        frozen,
-        detection,
-    )
+    double_evidence = False
+    figure_eight_evidence = False
+    if require_confirmation:
+        double_evidence, figure_eight_evidence = _revisit_heading_evidence(
+            frozen,
+            detection,
+        )
+
+    if figure_eight_evidence:
+        from .figure_eight import detect_figure_eight
+
+        figure_eight = detect_figure_eight(frozen, detection)
+        if figure_eight is not None:
+            observation_seconds = (
+                figure_eight.cycle_end_utc - figure_eight.cycle_start_utc
+            ).total_seconds()
+            route = figure_eight.effective
+            return RouteDetection(
+                observed=figure_eight.observed,
+                effective=route,
+                fit_fraction=figure_eight.fit_fraction,
+                inlier_fraction=figure_eight.fit_fraction,
+                coverage_fraction=figure_eight.coverage_fraction,
+                completed_cycles=1.0,
+                outlier_count=0,
+                diagnostics={
+                    "candidate_ready": True,
+                    "confirmation_ready": True,
+                    "closure_ok": True,
+                    "self_crossing_topology": True,
+                    "crossing_revisit_evidence": True,
+                    "crossing_angle_deg": figure_eight.crossing_angle_deg,
+                    "sample_count": len(frozen),
+                    "effective_sample_count": len(frozen),
+                    "observation_seconds": observation_seconds,
+                    "axis_ratio": route.long_axis_a_m / route.short_axis_b_m,
+                    "fit_tolerance_m": 0.0,
+                    "travelled_distance_m": route.length_m,
+                    "coverage_fraction": figure_eight.coverage_fraction,
+                },
+            )
 
     if double_evidence:
         from .double_hippodrome import detect_double_hippodrome
@@ -84,29 +121,28 @@ def detect_closed_route(
     if simple is None:
         return None
 
-    # An opposite-heading revisit is incompatible with a completed simple SO
-    # cycle: a real single hippodrome returns to a point with the same tangent
-    # direction. Once this evidence appears, keep the route unconfirmed until
-    # the second lobe is proven rather than publishing a transient Single.
+    # A simple SO route returns to a physical point with the same local tangent.
+    # Materially different revisit headings indicate unresolved higher-order
+    # topology, so do not publish a transient Single while evidence accumulates.
     if (
         require_confirmation
-        and double_evidence
+        and (double_evidence or figure_eight_evidence)
         and simple.effective.family is RouteFamily.SO
     ):
         return None
     return simple
 
 
-def _has_opposite_heading_revisit(
+def _revisit_heading_evidence(
     samples: tuple[VehicleSample, ...],
     config: DetectionConfig,
-) -> bool:
-    """Return True when geometry contains a plausible lobe connection revisit.
+) -> tuple[bool, bool]:
+    """Return ``(double_evidence, figure_eight_evidence)`` in near O(n).
 
-    Positions are indexed in a tolerance-sized spatial hash, so ordinary route
-    checks are near O(n) instead of invoking the O(n^2) Double topology search.
-    The gate is evidence-only: elapsed time supplies a minimum separation but
-    never a confirmation timer.
+    A spatial hash finds materially separated revisits. Heading error >=120 deg
+    makes a Double shared connection plausible. Error in [35,145] deg makes a
+    self crossing plausible. The overlap deliberately lets ambiguous noisy
+    revisits try both full topology proofs rather than deciding from one angle.
     """
 
     usable = tuple(
@@ -118,7 +154,7 @@ def _has_opposite_heading_revisit(
         and sample.reliability > 0.0
     )
     if len(usable) < 12:
-        return False
+        return False, False
 
     origin_lat = float(usable[0].latitude_deg)
     origin_lon = float(usable[0].longitude_deg)
@@ -141,6 +177,8 @@ def _has_opposite_heading_revisit(
     cell_size = max(tolerance, 1.0)
     minimum_separation_s = max(20.0, float(config.adaptive_min_window_seconds))
     buckets: dict[tuple[int, int], list[int]] = {}
+    double_evidence = False
+    figure_eight_evidence = False
 
     for index, (sample, point) in enumerate(zip(usable, points, strict=True)):
         cell_x = math.floor(point.x_m / cell_size)
@@ -168,18 +206,20 @@ def _has_opposite_heading_revisit(
                         previous_velocity = _velocity(previous)
                         if previous_velocity is None:
                             continue
-                        if (
-                            vector_angle_error_deg(
-                                previous_velocity[0],
-                                previous_velocity[1],
-                                current_velocity[0],
-                                current_velocity[1],
-                            )
-                            >= 120.0
-                        ):
-                            return True
+                        error = vector_angle_error_deg(
+                            previous_velocity[0],
+                            previous_velocity[1],
+                            current_velocity[0],
+                            current_velocity[1],
+                        )
+                        if error >= 120.0:
+                            double_evidence = True
+                        if 35.0 <= error <= 145.0:
+                            figure_eight_evidence = True
+                        if double_evidence and figure_eight_evidence:
+                            return True, True
         buckets.setdefault((cell_x, cell_y), []).append(index)
-    return False
+    return double_evidence, figure_eight_evidence
 
 
 def _velocity(sample: VehicleSample) -> tuple[float, float] | None:
