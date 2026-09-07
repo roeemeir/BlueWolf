@@ -18,6 +18,9 @@ from .models import CanonicalPoint, ClosedRoute, Direction, RouteFamily, Vehicle
 
 
 _EPSILON = 1e-9
+_GEOMETRY_REASONS = frozenset(
+    {"family", "subtype", "topology", "center", "long_axis", "short_axis", "orientation"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +49,11 @@ def route_change_suspected(
     multi-window search when the current route stops explaining the motion.
     """
 
-    if sample.active is False or sample.latitude_deg is None or sample.longitude_deg is None:
+    if (
+        sample.active is False
+        or sample.latitude_deg is None
+        or sample.longitude_deg is None
+    ):
         return False
 
     canonical = _centered_canonical(route)
@@ -92,7 +99,10 @@ def route_change_suspected(
                 tangent_east,
                 tangent_north,
             )
-            if direction_error > max(45.0, config.closure_direction_error_deg * 1.5):
+            if direction_error > max(
+                45.0,
+                config.closure_direction_error_deg * 1.5,
+            ):
                 return True
 
     return False
@@ -177,47 +187,113 @@ def replacement_evidence_supports_new_route(
     reasons: Sequence[str],
     config: DetectionConfig,
 ) -> bool:
-    """Reject a mixed old/new speed window before a period replacement.
+    """Require the evidence window to prefer the replacement over the old fit.
 
-    Median-speed period estimation can produce an artificial intermediate
-    period when a geometrically closed window contains similar amounts of the
-    old and new speed regimes. For replacements whose reasons include period,
-    decisive samples inside the actual evidence window must predominantly be
-    closer to the new route's expected speed than to the old route's expected
-    speed. This is evidence purity, not an elapsed-time hold.
+    A strict closed-route fit can still move because a suffix contains a
+    non-integer number of cycles and therefore over-samples one phase region.
+    Geometry changes are accepted only when decisive position residuals in the
+    candidate window predominantly prefer the new route. Period changes use the
+    analogous expected-speed comparison. These are evidence-purity gates, not
+    elapsed-time holds.
     """
 
-    if "period" not in reasons:
-        return True
+    reason_set = set(reasons)
+    if reason_set & _GEOMETRY_REASONS:
+        old_canonical = _centered_canonical(previous)
+        new_canonical = _centered_canonical(current)
+        if len(old_canonical) < 3 or len(new_canonical) < 3:
+            return False
 
-    old_expected = previous.length_m / max(previous.estimated_period_s, _EPSILON)
-    new_expected = current.length_m / max(current.estimated_period_s, _EPSILON)
-    if old_expected <= _EPSILON or new_expected <= _EPSILON:
-        return True
+        decisive = 0
+        supports_new = 0
+        geometry_margin_m = max(
+            min(previous.short_axis_b_m, current.short_axis_b_m)
+            * config.geometry_change_ratio
+            * 0.25,
+            1.0,
+        )
+        for sample in history:
+            if sample.sample_time_utc < evidence_start_utc:
+                continue
+            if (
+                sample.active is False
+                or sample.latitude_deg is None
+                or sample.longitude_deg is None
+                or sample.reliability <= 0.0
+            ):
+                continue
+            old_local = wgs84_to_local_m(
+                float(sample.latitude_deg),
+                float(sample.longitude_deg),
+                previous.center_latitude_deg,
+                previous.center_longitude_deg,
+            )
+            new_local = wgs84_to_local_m(
+                float(sample.latitude_deg),
+                float(sample.longitude_deg),
+                current.center_latitude_deg,
+                current.center_longitude_deg,
+            )
+            old_distance = project_onto_closed_polyline(
+                old_canonical,
+                old_local,
+            ).distance_m
+            new_distance = project_onto_closed_polyline(
+                new_canonical,
+                new_local,
+            ).distance_m
+            if abs(old_distance - new_distance) < geometry_margin_m:
+                continue
+            decisive += 1
+            if new_distance < old_distance:
+                supports_new += 1
 
-    decisive = 0
-    supports_new = 0
-    margin = config.replacement_speed_decision_margin
-    for sample in history:
-        if sample.sample_time_utc < evidence_start_utc:
-            continue
-        speed = _sample_speed(sample)
-        if speed is None:
-            continue
-        old_error = abs(speed - old_expected) / old_expected
-        new_error = abs(speed - new_expected) / new_expected
-        if abs(old_error - new_error) < margin:
-            continue
-        decisive += 1
-        if new_error < old_error:
-            supports_new += 1
+        if decisive < config.replacement_min_decisive_speed_samples:
+            return False
+        if (
+            supports_new / decisive
+            < config.replacement_min_new_speed_support_fraction
+        ):
+            return False
 
-    if decisive < config.replacement_min_decisive_speed_samples:
-        return False
-    return (
-        supports_new / decisive
-        >= config.replacement_min_new_speed_support_fraction
-    )
+    if "period" in reason_set:
+        old_expected = previous.length_m / max(
+            previous.estimated_period_s,
+            _EPSILON,
+        )
+        new_expected = current.length_m / max(
+            current.estimated_period_s,
+            _EPSILON,
+        )
+        if old_expected <= _EPSILON or new_expected <= _EPSILON:
+            return True
+
+        decisive = 0
+        supports_new = 0
+        margin = config.replacement_speed_decision_margin
+        for sample in history:
+            if sample.sample_time_utc < evidence_start_utc:
+                continue
+            speed = _sample_speed(sample)
+            if speed is None:
+                continue
+            old_error = abs(speed - old_expected) / old_expected
+            new_error = abs(speed - new_expected) / new_expected
+            if abs(old_error - new_error) < margin:
+                continue
+            decisive += 1
+            if new_error < old_error:
+                supports_new += 1
+
+        if decisive < config.replacement_min_decisive_speed_samples:
+            return False
+        if (
+            supports_new / decisive
+            < config.replacement_min_new_speed_support_fraction
+        ):
+            return False
+
+    return True
 
 
 def estimate_change_onset(
@@ -242,8 +318,14 @@ def estimate_change_onset(
     new_canonical = _centered_canonical(current)
     old_tolerance = max(previous.short_axis_b_m * 0.15, 2.0)
     new_tolerance = max(current.short_axis_b_m * 0.20, 2.0)
-    old_expected_speed = previous.length_m / max(previous.estimated_period_s, _EPSILON)
-    new_expected_speed = current.length_m / max(current.estimated_period_s, _EPSILON)
+    old_expected_speed = previous.length_m / max(
+        previous.estimated_period_s,
+        _EPSILON,
+    )
+    new_expected_speed = current.length_m / max(
+        current.estimated_period_s,
+        _EPSILON,
+    )
     speed_preference_margin = min(0.08, config.period_change_ratio * 0.40)
 
     usable = [
@@ -294,7 +376,11 @@ def estimate_change_onset(
         speed_prefers_new = False
         speed_prefers_old = False
         speed = _sample_speed(sample)
-        if speed is not None and old_expected_speed > _EPSILON and new_expected_speed > _EPSILON:
+        if (
+            speed is not None
+            and old_expected_speed > _EPSILON
+            and new_expected_speed > _EPSILON
+        ):
             old_speed_error = abs(speed - old_expected_speed) / old_expected_speed
             new_speed_error = abs(speed - new_expected_speed) / new_expected_speed
             speed_prefers_new = (
