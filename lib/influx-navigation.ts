@@ -83,14 +83,15 @@ const canonicalSignatureCache = new Map<string, string>();
 const MAX_SIGNATURE_CACHE = 4_096;
 
 function signature(tags: Record<string, string>) {
+  const entries = Object.entries(tags);
   // CSV column order is stable within one query, so this cheap raw key normally
   // repeats for every sample of the same stream. Canonical sorting is only done
   // on cache miss, while the returned signature remains order-independent across
   // different field/mapping queries.
-  const raw = Object.entries(tags).map(([key, value]) => `${key}=${value}`).join("|");
+  const raw = entries.map(([key, value]) => `${key}=${value}`).join("|");
   const cached = canonicalSignatureCache.get(raw);
   if (cached !== undefined) return cached;
-  const canonical = Object.entries(tags)
+  const canonical = entries
     .filter(([key]) => !["_measurement", "_field"].includes(key))
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([key, value]) => `${key}=${value}`)
@@ -105,28 +106,31 @@ function toNumber(value: unknown) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+type JoinBucket = Record<string, unknown> & { timeMs: number; tags: Record<string, string> };
+
 export function normalizeInfluxRecords(
   input: { mapping: InfluxFieldMapping; records: InfluxMappedRecord[] }[],
   joinToleranceSeconds = 5,
 ) {
   const tolerance = Math.max(.25, Math.min(30, joinToleranceSeconds));
-  const buckets = new Map<string, Record<string, unknown> & { time: string; tags: Record<string, string> }>();
+  const toleranceMs = tolerance * 1000;
+  const buckets = new Map<string, JoinBucket>();
   const warnings: string[] = [];
 
   for (const { mapping, records } of input) {
     for (const record of records) {
       const milliseconds = Date.parse(record.time);
       if (!Number.isFinite(milliseconds)) continue;
-      const bucketMs = Math.round(milliseconds / (tolerance * 1000)) * tolerance * 1000;
+      const bucketMs = Math.round(milliseconds / toleranceMs) * toleranceMs;
       const streamSignature = signature(record.tags);
       const key = `${streamSignature}|${bucketMs}`;
-      const row = buckets.get(key) ?? { time: new Date(bucketMs).toISOString(), tags: record.tags };
+      const row = buckets.get(key) ?? { timeMs: bucketMs, tags: record.tags };
       row[mapping.systemKey] = mapValue(mapping, record.value);
       buckets.set(key, row);
     }
   }
 
-  const rows = [...buckets.values()].sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
+  const rows = [...buckets.values()].sort((a, b) => a.timeMs - b.timeMs);
   const samples: NormalizedInfluxNavigation[] = [];
   for (const row of rows) {
     const vehicleId = toNumber(row.uniqueVehicleId ?? row.vehicleNumber);
@@ -138,7 +142,16 @@ export function normalizeInfluxRecords(
     if (vehicleId == null || latitude == null || longitude == null || velocityNorth == null || velocityEast == null) continue;
     const activeRaw = row.active;
     const active = activeRaw == null ? true : [true, 1, "1", "true", "green"].includes(activeRaw as never);
-    samples.push({ timestamp: row.time, vehicleId, active, latitude, longitude, altitude, velocityNorth, velocityEast });
+    samples.push({
+      timestamp: new Date(row.timeMs).toISOString(),
+      vehicleId,
+      active,
+      latitude,
+      longitude,
+      altitude,
+      velocityNorth,
+      velocityEast,
+    });
   }
 
   if (!samples.length && rows.length) {
