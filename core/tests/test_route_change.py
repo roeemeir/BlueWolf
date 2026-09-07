@@ -136,7 +136,20 @@ class AdaptiveRouteChangeTests(unittest.TestCase):
             and bool(change.details.get("replacement"))
         ]
 
-        self.assertEqual(len(replacements), 1)
+        diagnostics = [
+            {
+                "time": change.change_time_utc.isoformat(),
+                "detection_time": change.details.get("detection_time_utc"),
+                "old_period": change.details.get("previous_estimated_period_s"),
+                "new_period": change.details.get("estimated_period_s"),
+                "reasons": change.details.get("change_reasons"),
+                "window_start": change.details.get("evidence_window_start_utc"),
+                "window_seconds": change.details.get("evidence_window_seconds"),
+                "metrics": change.details.get("change_metrics"),
+            }
+            for change in replacements
+        ]
+        self.assertEqual(len(replacements), 1, diagnostics)
         replacement = replacements[0]
         self.assertIn("period", replacement.details["change_reasons"])
         self.assertGreaterEqual(replacement.change_time_utc, transition)
