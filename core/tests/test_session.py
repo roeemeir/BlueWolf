@@ -181,8 +181,15 @@ class SessionDeterminismTests(unittest.TestCase):
             [item.kind for item in route_changes],
             [ChangeKind.ROUTE_CANDIDATE, ChangeKind.ROUTE_CONFIRMED],
         )
-        self.assertGreaterEqual((route_changes[0].change_time_utc - START).total_seconds(), 60)
-        self.assertGreaterEqual((route_changes[1].change_time_utc - START).total_seconds(), 300)
+        candidate_seconds = (route_changes[0].change_time_utc - START).total_seconds()
+        confirmed_seconds = (route_changes[1].change_time_utc - START).total_seconds()
+        # Candidate requires a complete closed cycle; confirmation then requires
+        # the existing 60-second structural stability interval. The 40-minute
+        # evidence buffer and the legacy fixed 300-second gate are not detection
+        # prerequisites.
+        self.assertGreaterEqual(candidate_seconds, 120)
+        self.assertGreaterEqual(confirmed_seconds - candidate_seconds, 60)
+        self.assertLess(confirmed_seconds, 300)
         self.assertLess(route_changes[0].change_time_utc, route_changes[1].change_time_utc)
         self.assertEqual(route_changes[1].details["family"], "si")
         self.assertEqual(route_changes[1].details["subtype"], "compact")
@@ -190,7 +197,7 @@ class SessionDeterminismTests(unittest.TestCase):
 
         routed_frames = [frame for frame in result.frames if frame.route_id is not None]
         self.assertTrue(routed_frames)
-        self.assertGreaterEqual((routed_frames[0].sample_time_utc - START).total_seconds(), 300)
+        self.assertGreaterEqual((routed_frames[0].sample_time_utc - START).total_seconds(), confirmed_seconds)
         self.assertTrue(routed_frames[0].route_id and routed_frames[0].route_id.endswith(":r0"))
         self.assertIsNotNone(routed_frames[0].phase)
         assert routed_frames[0].phase is not None
@@ -199,8 +206,9 @@ class SessionDeterminismTests(unittest.TestCase):
 
     def test_route_lifecycle_survives_compact_checkpoint_with_influx_hydration(self) -> None:
         samples = route_scenario()
-        first_half = tuple(sample for sample in samples if sample.sample_time_utc <= START + timedelta(seconds=180))
-        second_half = tuple(sample for sample in samples if sample.sample_time_utc > START + timedelta(seconds=180))
+        split_at = START + timedelta(seconds=150)
+        first_half = tuple(sample for sample in samples if sample.sample_time_utc <= split_at)
+        second_half = tuple(sample for sample in samples if sample.sample_time_utc > split_at)
 
         uninterrupted = CoreSession()
         first_result = uninterrupted.process_batch(first_half)
