@@ -23,25 +23,51 @@ function csvRow(line: string) {
   return out;
 }
 
+type CsvLayout = {
+  width: number;
+  timeIndex: number;
+  valueIndex: number;
+  tagColumns: Array<{ index: number; key: string }>;
+};
+
+function csvLayout(header: string[]): CsvLayout | null {
+  const timeIndex = header.indexOf("_time");
+  const valueIndex = header.indexOf("_value");
+  if (timeIndex < 0 || valueIndex < 0) return null;
+  const tagColumns: CsvLayout["tagColumns"] = [];
+  for (let index = 0; index < header.length; index += 1) {
+    const key = header[index];
+    if (!key || key.startsWith("_") || key === "result" || key === "table") continue;
+    tagColumns.push({ index, key });
+  }
+  return { width: header.length, timeIndex, valueIndex, tagColumns };
+}
+
 export function parseInfluxCsv(text: string, systemKey: string): InfluxMappedRecord[] {
-  const lines = text.split(/\r?\n/).filter(Boolean);
-  let header: string[] = [];
+  // Influx annotated CSV can repeat a header for every Flux table/series. Build
+  // column indices only when such a header is encountered. Data rows then avoid
+  // allocating an Object for every CSV column; only `_time`, `_value` and tags
+  // required by the Join are materialized.
+  const lines = text.split(/\r?\n/);
+  let layout: CsvLayout | null = null;
   const records: InfluxMappedRecord[] = [];
   for (const line of lines) {
-    if (line.startsWith("#")) continue;
+    if (!line || line.startsWith("#")) continue;
     const cells = csvRow(line);
-    if (!header.length || cells.includes("_time") && cells.includes("_value")) {
-      header = cells;
+    const candidateLayout = cells.includes("_time") && cells.includes("_value") ? csvLayout(cells) : null;
+    if (candidateLayout) {
+      layout = candidateLayout;
       continue;
     }
-    if (!header.length || cells.length !== header.length) continue;
-    const row = Object.fromEntries(header.map((name, index) => [name, cells[index] ?? ""]));
-    if (!row._time) continue;
+    if (!layout || cells.length !== layout.width) continue;
+    const time = cells[layout.timeIndex] ?? "";
+    if (!time) continue;
     const tags: Record<string, string> = {};
-    for (const [key, value] of Object.entries(row)) {
-      if (value && !key.startsWith("_") && !["result", "table"].includes(key)) tags[key] = value;
+    for (const column of layout.tagColumns) {
+      const value = cells[column.index] ?? "";
+      if (value) tags[column.key] = value;
     }
-    records.push({ systemKey, time: row._time, value: row._value ?? "", tags });
+    records.push({ systemKey, time, value: cells[layout.valueIndex] ?? "", tags });
   }
   return records;
 }
