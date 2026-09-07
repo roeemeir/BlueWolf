@@ -101,3 +101,24 @@ The DB continues to store non-reconstructible product state and compact checkpoi
 `Normalized NAV + immutable configuration/state contract -> Python Core -> derived analysis`
 
 A future Core may replace the Python implementation without UI/DB redesign when the public contract remains compatible and both the independent Core gate and integrated release gate pass.
+
+## 10. Serialized Live-session mutation and stale overlap handling
+The HTTP/Core service MAY process independent sessions concurrently, but mutation of one stateful `LiveAnalysisSession` SHALL be serialized per session.
+
+For one Live session:
+- ingest, Core frontier advancement, bounded display-window mutation and checkpoint creation SHALL share the same serialization boundary;
+- two HTTP requests SHALL NOT mutate the same navigation list or CoreSession state concurrently;
+- an overlapping or late batch MAY add previously unseen Raw NAV to the bounded display/history evidence window;
+- a sample whose timestamp is at or before the already processed Core frontier SHALL NOT be re-fed into the Core state machine merely because it arrived in a later HTTP request;
+- `observed_until_utc`, the processed Core frontier, and the public operational `to/latestSampleAt` timestamp SHALL never move backwards;
+- a stale overlapping request SHALL be idempotent with respect to Core state and SHALL NOT produce a transport-visible 400 solely because a newer request completed first;
+- no stale-batch handling may invoke simulator data, GT, or a TypeScript algorithm fallback.
+
+Independent Live sessions remain eligible for parallel execution. Serialization is scoped to mutable state belonging to the same session and therefore does not redefine the public Core API or persistence model.
+
+The independent Core suite SHALL include a deterministic concurrency regression that submits out-of-order batches concurrently to the same Live session and proves:
+- no concurrent list-mutation failure;
+- no backward frontier movement;
+- no backward public operational timestamp;
+- correct retention of accepted Raw NAV evidence;
+- final Core frontier equal to the newest valid processed batch.
