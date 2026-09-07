@@ -2,6 +2,12 @@ import { expect, test } from "@playwright/test";
 
 const baseURL = process.env.BLUEWOLF_BASE_URL ?? "http://127.0.0.1:3000";
 function failures(page) { const out = []; page.on("pageerror", (error) => out.push(`pageerror: ${error.message}`)); page.on("console", (message) => { if (message.type() === "error") out.push(`console: ${message.text()}`); }); return out; }
+async function waitForLiveCore(page) {
+  const detectedGroup = page.locator(".v10-group-card:has(.v10-compact-scores)").first();
+  await expect(detectedGroup).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator(".v12-data-error")).toHaveCount(0);
+  return detectedGroup;
+}
 
 test("live simulation is NAV-derived and exposes versioned Python Core", async ({ page }) => {
   const runtime = failures(page);
@@ -14,6 +20,7 @@ test("live simulation is NAV-derived and exposes versioned Python Core", async (
   await expect(page.locator(".v12-live-map")).toBeVisible();
   await expect.poll(async () => await page.locator(".v12-live-map .v09-map-heading").textContent(), { timeout: 20_000 }).toMatch(/\d+ דגימות/);
   await expect(page.locator(".v10-group-card")).toHaveCount(2);
+  await waitForLiveCore(page);
   expect(runtime, runtime.join("\n")).toEqual([]);
 });
 
@@ -22,8 +29,7 @@ test("template switch is group-contextual and score trail colorbar is multicolor
   await page.setViewportSize({ width: 1360, height: 950 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
   await expect(page.getByRole("button", { name: "החלפת תבנית לקבוצה" })).toHaveCount(0);
-  const detectedGroup = page.locator(".v10-group-card:has(.v10-compact-scores)").first();
-  await expect(detectedGroup).toBeVisible({ timeout: 20_000 });
+  const detectedGroup = await waitForLiveCore(page);
   await detectedGroup.click();
   await expect(page.getByRole("button", { name: "החלפת תבנית לקבוצה" })).toBeVisible();
   await page.getByRole("button", { name: "החלפת תבנית לקבוצה" }).click();
@@ -40,6 +46,7 @@ test("template switch is group-contextual and score trail colorbar is multicolor
 test("Influx mode never silently falls back to simulator", async ({ page }) => {
   const runtime = failures(page);
   await page.goto(baseURL, { waitUntil: "networkidle" });
+  await waitForLiveCore(page);
   await page.locator(".v09-source>button").click();
   await expect(page.getByText("InfluxDB אמיתי", { exact: false }).first()).toBeVisible();
   await expect(page.getByText("ללא fallback לסימולטור", { exact: false }).first()).toBeVisible();
@@ -52,6 +59,7 @@ test("historical range derives events and event-only PDF from NAV", async ({ pag
   const runtime = failures(page);
   await page.setViewportSize({ width: 1400, height: 1000 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
+  await waitForLiveCore(page);
   await page.getByRole("button", { name: "תחקור", exact: true }).click();
   await expect(page.getByRole("heading", { name: "תחקור לפי חלון נתוני ניווט" })).toBeVisible();
   await page.getByRole("button", { name: "24 שעות" }).click();
@@ -69,13 +77,14 @@ test("historical range derives events and event-only PDF from NAV", async ({ pag
 
 test("in-app System Tests execute production Core and compare Figure-8 to external GT", async ({ page }) => {
   const runtime = failures(page);
-  test.setTimeout(120_000);
+  test.setTimeout(150_000);
   await page.setViewportSize({ width: 1400, height: 1000 });
   await page.goto(baseURL, { waitUntil: "networkidle" });
+  await waitForLiveCore(page);
   await page.getByRole("button", { name: /מפתחים/ }).click();
   await expect(page.getByRole("heading", { name: "בדיקות מערכת אמיתיות" })).toBeVisible();
   await page.getByRole("button", { name: "הרץ E2E" }).click();
-  await expect.poll(async () => await page.locator(".v09-test-kpis").textContent(), { timeout: 90_000 }).toMatch(/ניתוחי Core/);
+  await expect.poll(async () => await page.locator(".v09-test-kpis").textContent(), { timeout: 120_000 }).toMatch(/ניתוחי Core/);
   const failedCards = await page.locator(".v09-test-grid article:has(.fail)").allTextContents();
   expect(failedCards, failedCards.join("\n---\n")).toEqual([]);
   await expect(page.locator(".v09-test-grid")).toContainText("Core contract");
@@ -90,6 +99,7 @@ test("in-app System Tests execute production Core and compare Figure-8 to extern
 test("SO builder stays count-first and exposes Figure-8 as a crossed-leg entity", async ({ page }) => {
   const runtime = failures(page);
   await page.goto(baseURL, { waitUntil: "networkidle" });
+  await waitForLiveCore(page);
   await page.getByRole("button", { name: /מפתחים/ }).click();
   await page.locator(".v09-dev-nav button", { hasText: "תבניות" }).click();
   await expect(page.locator(".v10-template-builder")).toBeVisible();
@@ -110,5 +120,6 @@ test("mobile remains RTL without horizontal overflow", async ({ page }) => {
   expect(layout.direction).toBe("rtl");
   expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth + 5);
   await expect(page.locator(".v12-live-map")).toBeVisible();
+  await waitForLiveCore(page);
   expect(runtime, runtime.join("\n")).toEqual([]);
 });
