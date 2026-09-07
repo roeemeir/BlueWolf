@@ -1,27 +1,21 @@
 """Closed-route dispatcher preserving the proven simple fitter.
 
-The dispatcher gives hierarchical SO topologies first refusal at strict
-confirmation, then falls back to the original SI/simple-SO detector unchanged.
-Candidate acquisition remains simple for now so partial double evidence cannot
-be promoted before a complete double topology has been observed.
+Hierarchical SO topologies get first refusal at strict confirmation, then the
+original SI/simple-SO detector runs unchanged. Candidate acquisition stays
+simple until enough topology exists to prove a double route.
 """
 
 from __future__ import annotations
 
 import math
-from contextvars import ContextVar
 from typing import Iterable
 
 from .config import DetectionConfig
-from .geometry import vector_angle_error_deg
-from .models import VehicleSample
+from .geometry import vector_angle_error_deg, wgs84_to_local_m
+from .models import ClosedRoute, VehicleSample
 from .simple_route_detection import RouteDetection, detect_closed_route as _detect_simple
 
 
-_DOUBLE_SEARCH_ACTIVE: ContextVar[bool] = ContextVar(
-    "bluewolf_double_route_search_active",
-    default=False,
-)
 _EPSILON = 1e-9
 
 
@@ -34,25 +28,17 @@ def detect_closed_route(
     """Detect the strongest supported closed-route topology.
 
     Strict confirmation checks double hippodrome topology before invoking the
-    unchanged simple SI/SO fitter. While the double detector validates its two
-    lobes it recursively calls this public function; a context-local guard sends
-    those nested calls straight to the simple fitter, avoiding recursion without
-    global mutable state or monkey-patching.
+    unchanged simple SI/SO fitter. The double detector itself validates each
+    lobe directly with the simple fitter, so this dispatcher never recurses.
     """
 
     detection = config or DetectionConfig()
     frozen = tuple(samples)
-    nested_double_search = _DOUBLE_SEARCH_ACTIVE.get()
 
-    if require_confirmation and not nested_double_search:
-        token = _DOUBLE_SEARCH_ACTIVE.set(True)
-        try:
-            from .double_hippodrome import detect_double_hippodrome
+    if require_confirmation:
+        from .double_hippodrome import detect_double_hippodrome
 
-            double = detect_double_hippodrome(frozen, detection)
-        finally:
-            _DOUBLE_SEARCH_ACTIVE.reset(token)
-
+        double = detect_double_hippodrome(frozen, detection)
         if double is not None:
             observation_seconds = (
                 double.cycle_end_utc - double.cycle_start_utc
@@ -89,33 +75,37 @@ def detect_closed_route(
     )
     if simple is None:
         return None
-
-    # Nested calls are the two lobe fits used to prove a double. At the shared
-    # connection the next sample belongs to the next lobe, so endpoint velocity
-    # is not a valid single-lobe closure condition for those internal fits.
-    if nested_double_search or not require_confirmation:
+    if not require_confirmation:
         return simple
 
-    if not _endpoint_velocity_consistent(frozen, detection):
+    # A half-double traces a geometrically valid single lobe and returns to the
+    # same connection point, but its physical velocity reverses there because
+    # the next lobe begins. Reject only that specific spatial revisit pattern.
+    # Non-integer windows (for example 1.25 cycles) keep their valid simple fit.
+    if not _endpoint_revisit_velocity_consistent(
+        frozen,
+        simple.effective,
+        detection,
+    ):
         return None
-    if bool(simple.diagnostics.get("endpoint_velocity_ok", True)):
-        diagnostics = dict(simple.diagnostics)
-        diagnostics["endpoint_velocity_ok"] = True
-        return RouteDetection(
-            observed=simple.observed,
-            effective=simple.effective,
-            fit_fraction=simple.fit_fraction,
-            inlier_fraction=simple.inlier_fraction,
-            coverage_fraction=simple.coverage_fraction,
-            completed_cycles=simple.completed_cycles,
-            outlier_count=simple.outlier_count,
-            diagnostics=diagnostics,
-        )
-    return simple
+
+    diagnostics = dict(simple.diagnostics)
+    diagnostics["endpoint_velocity_ok"] = True
+    return RouteDetection(
+        observed=simple.observed,
+        effective=simple.effective,
+        fit_fraction=simple.fit_fraction,
+        inlier_fraction=simple.inlier_fraction,
+        coverage_fraction=simple.coverage_fraction,
+        completed_cycles=simple.completed_cycles,
+        outlier_count=simple.outlier_count,
+        diagnostics=diagnostics,
+    )
 
 
-def _endpoint_velocity_consistent(
+def _endpoint_revisit_velocity_consistent(
     samples: tuple[VehicleSample, ...],
+    route: ClosedRoute,
     config: DetectionConfig,
 ) -> bool:
     usable = tuple(
@@ -129,12 +119,33 @@ def _endpoint_velocity_consistent(
     if len(usable) < 2:
         return False
 
-    first = _velocity(usable[0])
-    last = _velocity(usable[-1])
-    if first is None or last is None:
+    first_sample = usable[0]
+    last_sample = usable[-1]
+    displacement = wgs84_to_local_m(
+        float(last_sample.latitude_deg),
+        float(last_sample.longitude_deg),
+        float(first_sample.latitude_deg),
+        float(first_sample.longitude_deg),
+    )
+    revisit_distance = math.hypot(displacement.x_m, displacement.y_m)
+    revisit_tolerance = max(
+        1.0,
+        route.short_axis_b_m * config.closure_distance_short_axis_ratio,
+    )
+    if revisit_distance > revisit_tolerance:
+        return True
+
+    first_velocity = _velocity(first_sample)
+    last_velocity = _velocity(last_sample)
+    if first_velocity is None or last_velocity is None:
         return True
     return (
-        vector_angle_error_deg(first[0], first[1], last[0], last[1])
+        vector_angle_error_deg(
+            first_velocity[0],
+            first_velocity[1],
+            last_velocity[0],
+            last_velocity[1],
+        )
         <= config.closure_direction_error_deg
     )
 
