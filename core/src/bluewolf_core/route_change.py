@@ -9,7 +9,11 @@ from datetime import datetime
 from typing import Sequence
 
 from .config import DetectionConfig
-from .geometry import project_onto_closed_polyline, wgs84_to_local_m
+from .geometry import (
+    project_onto_closed_polyline,
+    vector_angle_error_deg,
+    wgs84_to_local_m,
+)
 from .models import CanonicalPoint, ClosedRoute, Direction, RouteFamily, VehicleSample
 
 
@@ -27,6 +31,71 @@ class RouteDelta:
     short_axis_ratio: float
     period_ratio: float
     orientation_error_deg: float
+
+
+def route_change_suspected(
+    sample: VehicleSample,
+    route: ClosedRoute,
+    config: DetectionConfig,
+) -> bool:
+    """Cheaply decide whether an expensive replacement search is justified.
+
+    A stable confirmed route should not be re-fit every five seconds. This gate
+    checks only the current point, speed and direction against the confirmed
+    route. It never confirms a change; it merely opens the expensive adaptive
+    multi-window search when the current route stops explaining the motion.
+    """
+
+    if sample.active is False or sample.latitude_deg is None or sample.longitude_deg is None:
+        return False
+
+    canonical = _centered_canonical(route)
+    if len(canonical) < 3:
+        return True
+    local = wgs84_to_local_m(
+        float(sample.latitude_deg),
+        float(sample.longitude_deg),
+        route.center_latitude_deg,
+        route.center_longitude_deg,
+    )
+    projection = project_onto_closed_polyline(canonical, local)
+
+    position_gate = max(route.short_axis_b_m * 0.25, 3.0)
+    if projection.distance_m > position_gate:
+        return True
+
+    speed = _sample_speed(sample)
+    if speed is not None:
+        expected_speed = route.length_m / max(route.estimated_period_s, _EPSILON)
+        if expected_speed > _EPSILON:
+            speed_error = abs(speed - expected_speed) / expected_speed
+            speed_gate = max(0.15, config.period_change_ratio * 0.75)
+            if speed_error > speed_gate:
+                return True
+
+    if (
+        route.direction is not Direction.UNKNOWN
+        and sample.velocity_east_mps is not None
+        and sample.velocity_north_mps is not None
+    ):
+        east = float(sample.velocity_east_mps)
+        north = float(sample.velocity_north_mps)
+        if math.hypot(east, north) > _EPSILON:
+            tangent_east = projection.tangent_east
+            tangent_north = projection.tangent_north
+            if route.direction is Direction.CLOCKWISE:
+                tangent_east = -tangent_east
+                tangent_north = -tangent_north
+            direction_error = vector_angle_error_deg(
+                east,
+                north,
+                tangent_east,
+                tangent_north,
+            )
+            if direction_error > max(45.0, config.closure_direction_error_deg * 1.5):
+                return True
+
+    return False
 
 
 def compare_routes(
