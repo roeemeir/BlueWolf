@@ -78,6 +78,10 @@ def _dataset() -> dict:
     }
 
 
+def _time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 class LiveAnalysisV20Tests(unittest.TestCase):
     def test_selected_30_min_window_keeps_full_provenance_but_current_fit_is_15_min(self) -> None:
         dataset = _dataset()
@@ -93,10 +97,10 @@ class LiveAnalysisV20Tests(unittest.TestCase):
 
         self.assertTrue(observed_datasets)
         current = observed_datasets[0]
-        current_from = datetime.fromisoformat(current["provenance"]["from"].replace("Z", "+00:00"))
-        current_to = datetime.fromisoformat(current["provenance"]["to"].replace("Z", "+00:00"))
+        current_from = _time(current["provenance"]["from"])
+        current_to = _time(current["provenance"]["to"])
         self.assertLessEqual((current_to - current_from).total_seconds(), 15 * 60)
-        self.assertEqual(envelope.analysis["provenance"]["from"], dataset["provenance"]["from"])
+        self.assertEqual(_time(envelope.analysis["provenance"]["from"]), _time(dataset["provenance"]["from"]))
         self.assertEqual(envelope.analysis["provenance"]["sampleCount"], len(dataset["samples"]))
         self.assertEqual(sorted(envelope.analysis["groups"]["si"]["members"]), [101, 201, 301])
 
