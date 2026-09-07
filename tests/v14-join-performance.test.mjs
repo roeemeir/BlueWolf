@@ -11,14 +11,14 @@ const MAPPINGS = [
   { systemKey: "velocityEast", valueMode: "direct" },
 ];
 
-function recordsFor(mapping, vehicleCount = 8, samplesPerVehicle = 1750) {
+function recordsFor(mapping, vehicleCount = 8, samplesPerVehicle = 8641) {
   const records = [];
   const base = Date.parse("2026-09-06T00:00:00.000Z");
   for (let vehicle = 0; vehicle < vehicleCount; vehicle += 1) {
     const vehicleId = 101 + vehicle;
     const tags = { server_id: "1", vehicle: String(vehicleId) };
     for (let index = 0; index < samplesPerVehicle; index += 1) {
-      const time = new Date(base + index * 50_000).toISOString();
+      const time = new Date(base + index * 10_000).toISOString();
       let value;
       if (mapping.systemKey === "uniqueVehicleId") value = String(vehicleId);
       else if (mapping.systemKey === "latitude") value = String(31.7 + vehicle * 0.0001 + index * 1e-8);
@@ -31,15 +31,18 @@ function recordsFor(mapping, vehicleCount = 8, samplesPerVehicle = 1750) {
   return records;
 }
 
-test("post-Flux 24h join budget stays comfortably below end-to-end minute target", () => {
+test("post-Flux 24h join at ten-second fidelity stays inside end-to-end minute budget", () => {
   const input = MAPPINGS.map((mapping) => ({ mapping, records: recordsFor(mapping) }));
   const rawRecords = input.reduce((sum, item) => sum + item.records.length, 0);
-  assert.equal(rawRecords, 70_000);
+  assert.equal(rawRecords, 345_640);
 
   const started = performance.now();
   const normalized = normalizeInfluxRecords(input, 5);
   const elapsedMs = performance.now() - started;
 
-  assert.equal(normalized.samples.length, 14_000);
-  assert.ok(elapsedMs < 5_000, `70k field records -> 14k NAV samples join took ${(elapsedMs / 1000).toFixed(2)}s`);
+  assert.equal(normalized.samples.length, 69_128);
+  // The Influx mappings are queried in parallel with a 20 s query timeout and
+  // Python Core owns a separate 25 s budget. Keeping Join <10 s leaves margin
+  // inside the user's 60 s end-to-end requirement even on a CI-class machine.
+  assert.ok(elapsedMs < 10_000, `345k field records -> 69k NAV samples join took ${(elapsedMs / 1000).toFixed(2)}s`);
 });
