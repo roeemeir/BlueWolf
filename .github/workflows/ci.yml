@@ -57,6 +57,8 @@ jobs:
             tests: test_session
           - shard: integrated-session
             tests: test_integrated_session
+          - shard: semantic-session
+            tests: test_semantic_session
           - shard: classifiers
             tests: test_route_classifier_sweep test_route_classifier_v2 test_vector_route_detection
           - shard: route-vector
