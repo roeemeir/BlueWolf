@@ -10,7 +10,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }
 authors = [{ name = "Blue Wolf" }]
-dependencies = []
+dependencies = [
+  "numpy>=2,<3",
+  "shapely>=2,<3",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -41,4 +44,3 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 strict = true
 packages = ["bluewolf_core"]
-
