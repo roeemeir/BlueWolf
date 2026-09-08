@@ -4,6 +4,10 @@ on:
   push:
   pull_request:
 
+concurrency:
+  group: bluewolf-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lifecycle-smoke:
     name: Lifecycle smoke — ${{ matrix.case }}
