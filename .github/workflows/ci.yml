@@ -43,10 +43,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - shard: adaptive-acquisition
-            tests: test_adaptive_acquisition
-          - shard: route-change
-            tests: test_route_change
+          - shard: route-change-remainder
+            tests: >-
+              test_route_change.AdaptiveRouteChangeTests.test_material_geometry_and_period_change_is_detected
+              test_route_change.AdaptiveRouteChangeTests.test_small_refit_drift_does_not_create_route_change
+              test_route_change.AdaptiveRouteChangeTests.test_change_onset_is_retroactive_to_new_geometry
+              test_route_change.AdaptiveRouteChangeTests.test_route_replacement_survives_checkpoint_mid_change
           - shard: session
             tests: test_session
           - shard: classifiers
