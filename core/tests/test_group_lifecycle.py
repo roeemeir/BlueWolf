@@ -168,6 +168,50 @@ class GroupMembershipLifecycleTests(unittest.TestCase):
             [ChangeKind.GROUP_CONFIRMED],
         )
 
+    def test_expiry_removes_member_after_hold_and_preserves_id_with_sixty_percent(self) -> None:
+        engine = GroupMembershipLifecycle()
+        initial = engine.update(
+            (_evidence((1, 2, 3, 4, 5), BASE_TIME),),
+            BASE_TIME + timedelta(seconds=130),
+        )
+        group_id = initial.snapshot.groups[0].group_id
+        expired_at = BASE_TIME + timedelta(seconds=500)
+        result = engine.expire_members(((1, 4), (1, 5)), expired_at)
+        self.assertEqual(len(result.snapshot.groups), 1)
+        self.assertEqual(result.snapshot.groups[0].member_keys, ((1, 1), (1, 2), (1, 3)))
+        self.assertEqual(result.snapshot.groups[0].group_id, group_id)
+        self.assertEqual(len(result.changes), 1)
+        self.assertFalse(result.changes[0].details["dissolved"])
+
+    def test_expiry_dissolves_group_below_minimum_size(self) -> None:
+        engine = GroupMembershipLifecycle()
+        initial = engine.update(
+            (_evidence((1, 2), BASE_TIME),),
+            BASE_TIME + timedelta(seconds=130),
+        )
+        group_id = initial.snapshot.groups[0].group_id
+        result = engine.expire_members(((1, 2),), BASE_TIME + timedelta(seconds=500))
+        self.assertEqual(result.snapshot.groups, ())
+        dissolved = [change for change in result.changes if change.group_id == group_id]
+        self.assertEqual(len(dissolved), 1)
+        self.assertTrue(dissolved[0].details["dissolved"])
+
+    def test_expiry_below_identity_fraction_creates_new_id_for_survivors(self) -> None:
+        engine = GroupMembershipLifecycle()
+        initial = engine.update(
+            (_evidence((1, 2, 3, 4, 5), BASE_TIME),),
+            BASE_TIME + timedelta(seconds=130),
+        )
+        old_id = initial.snapshot.groups[0].group_id
+        result = engine.expire_members(
+            ((1, 3), (1, 4), (1, 5)),
+            BASE_TIME + timedelta(seconds=500),
+        )
+        self.assertEqual(len(result.snapshot.groups), 1)
+        self.assertEqual(result.snapshot.groups[0].member_keys, ((1, 1), (1, 2)))
+        self.assertNotEqual(result.snapshot.groups[0].group_id, old_id)
+        self.assertTrue(any(change.group_id == old_id and change.details["dissolved"] for change in result.changes))
+
     def test_naive_time_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             StructuralGroupEvidence(_structural((1, 2)), datetime(2026, 9, 8, 12, 0))
