@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 import numpy as np
 
 from bluewolf_core.geometry import local_m_to_wgs84
-from bluewolf_core.models import VehicleSample
+from bluewolf_core.models import CanonicalPoint, VehicleSample
 from bluewolf_core.vector_sample_adapter import build_vector_track
 
 
@@ -20,10 +20,7 @@ class VectorSampleAdapterTests(unittest.TestCase):
         vehicle_identifier: int = 7,
     ) -> VehicleSample:
         latitude, longitude = local_m_to_wgs84(
-            point=__import__("bluewolf_core.models", fromlist=["CanonicalPoint"]).CanonicalPoint(
-                east_m,
-                north_m,
-            ),
+            CanonicalPoint(east_m, north_m),
             center_latitude_deg=32.0,
             center_longitude_deg=34.8,
         )
