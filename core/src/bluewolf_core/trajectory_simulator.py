@@ -1,23 +1,11 @@
 """Spec-conformant vectorized trajectory simulator for Blue Wolf.
 
-The simulator intentionally models geometry and data-quality failure modes only.
-It is not a vehicle dynamics model.
+Source of truth:
+- core/docs/ROUTE_GEOMETRY_SPEC_HE.md
+- core/docs/ADAPTIVE_ROUTE_LIFECYCLE_HE.md
 
-Approved route geometry:
-- SI circle / octagon / arbitrary compact closed loop with axis ratio < 1.5.
-- SO single hippodrome.
-- SO figure-eight: hippodrome-like closed loop with crossed legs. Legs may be curved.
-- SO double hippodrome: boundary of the union of two hippodrome areas that share
-  the same turn-circle center. The transition is continuous; there is no U-turn
-  at the shared turn.
-- Double figure-eight is deliberately not implemented until specified.
-
-Failure/perturbation layers:
-- approach and exit legs, labelled separately from route samples.
-- Gaussian GPS noise and sparse spikes.
-- smooth time-varying wind vector (magnitude and direction).
-- packet/sample dropout with elevated probability and contiguous outages in
-  high-curvature turn regions.
+This module generates geometry and data-quality failure modes only. It is not a
+vehicle-dynamics model and must not encode detector priors as geometry limits.
 """
 from __future__ import annotations
 
@@ -27,13 +15,12 @@ import math
 from typing import Mapping
 
 import numpy as np
+from shapely.geometry import LineString
+from shapely.ops import unary_union
 
-try:
-    from shapely.geometry import LineString
-    from shapely.ops import unary_union
-except Exception:  # pragma: no cover - optional until simulator is invoked
-    LineString = None
-    unary_union = None
+
+DOUBLE_HIPPODROME_PRIORITY_OPENINGS_DEG = (10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0)
+DOUBLE_HIPPODROME_EDGE_OPENINGS_DEG = (5.0, 50.0, 60.0)
 
 
 class RouteShape(StrEnum):
@@ -117,31 +104,33 @@ class SimulatedTrace:
         return int(np.count_nonzero(self.observed_mask))
 
 
+def double_hippodrome_sweep_angles(*, include_edges: bool = True) -> tuple[float, ...]:
+    """QA scenario bank only; these values are not detector/product limits."""
+    if not include_edges:
+        return DOUBLE_HIPPODROME_PRIORITY_OPENINGS_DEG
+    return DOUBLE_HIPPODROME_PRIORITY_OPENINGS_DEG + DOUBLE_HIPPODROME_EDGE_OPENINGS_DEG
+
+
 def _resample_closed(xy: np.ndarray, n: int) -> np.ndarray:
     xy = np.asarray(xy, dtype=float)
-    if xy.ndim != 2 or xy.shape[1] != 2:
-        raise ValueError("xy must have shape (N,2)")
-    if len(xy) < 3:
-        raise ValueError("closed route needs at least 3 points")
+    if xy.ndim != 2 or xy.shape[1] != 2 or len(xy) < 3:
+        raise ValueError("closed route must have shape (N,2), N>=3")
     if not np.allclose(xy[0], xy[-1]):
         xy = np.vstack((xy, xy[0]))
-    delta = np.diff(xy, axis=0)
-    ds = np.linalg.norm(delta, axis=1)
+    ds = np.linalg.norm(np.diff(xy, axis=0), axis=1)
     s = np.concatenate(([0.0], np.cumsum(ds)))
     if s[-1] <= 0:
         raise ValueError("route length must be positive")
     target = np.linspace(0.0, s[-1], n, endpoint=False)
-    return np.column_stack((
-        np.interp(target, s, xy[:, 0]),
-        np.interp(target, s, xy[:, 1]),
-    ))
+    return np.column_stack(
+        (np.interp(target, s, xy[:, 0]), np.interp(target, s, xy[:, 1]))
+    )
 
 
 def _rotate(xy: np.ndarray, rotation_deg: float) -> np.ndarray:
     theta = math.radians(rotation_deg)
     c, s = math.cos(theta), math.sin(theta)
-    matrix = np.array(((c, -s), (s, c)), dtype=float)
-    return np.asarray(xy, dtype=float) @ matrix.T
+    return np.asarray(xy, dtype=float) @ np.array(((c, -s), (s, c))).T
 
 
 def _circle(radius_m: float, n: int, rotation_deg: float) -> RouteGeometry:
@@ -153,8 +142,11 @@ def _circle(radius_m: float, n: int, rotation_deg: float) -> RouteGeometry:
 def _octagon(radius_m: float, n: int, rotation_deg: float) -> RouteGeometry:
     t = math.pi / 8.0 + np.arange(8) * (2.0 * np.pi / 8.0)
     vertices = np.column_stack((radius_m * np.cos(t), radius_m * np.sin(t)))
-    xy = _resample_closed(vertices, n)
-    return RouteGeometry(RouteShape.SI_OCTAGON, _rotate(xy, rotation_deg), {"radius_m": radius_m})
+    return RouteGeometry(
+        RouteShape.SI_OCTAGON,
+        _rotate(_resample_closed(vertices, n), rotation_deg),
+        {"radius_m": radius_m},
+    )
 
 
 def _free_closed(radius_m: float, n: int, rotation_deg: float, variant: float) -> RouteGeometry:
@@ -164,12 +156,10 @@ def _free_closed(radius_m: float, n: int, rotation_deg: float, variant: float) -
         + 0.10 * np.cos(3.0 * t + 0.35 + variant)
         + 0.055 * np.sin(5.0 * t - 0.65 * variant)
     )
-    x = radial * np.cos(t)
-    y = 0.95 * radial * np.sin(t)
-    xy = _resample_closed(np.column_stack((x, y)), n)
+    xy = np.column_stack((radial * np.cos(t), 0.95 * radial * np.sin(t)))
     return RouteGeometry(
         RouteShape.SI_FREE_CLOSED,
-        _rotate(xy, rotation_deg),
+        _rotate(_resample_closed(xy, n), rotation_deg),
         {"radius_m": radius_m, "variant": variant},
     )
 
@@ -184,17 +174,21 @@ def _hippodrome(
     top_x = np.linspace(-half_straight_m, half_straight_m, resolution, endpoint=False)
     top = np.column_stack((top_x, np.full_like(top_x, turn_radius_m)))
     theta_r = np.linspace(np.pi / 2, -np.pi / 2, resolution, endpoint=False)
-    right = np.column_stack((
-        half_straight_m + turn_radius_m * np.cos(theta_r),
-        turn_radius_m * np.sin(theta_r),
-    ))
+    right = np.column_stack(
+        (
+            half_straight_m + turn_radius_m * np.cos(theta_r),
+            turn_radius_m * np.sin(theta_r),
+        )
+    )
     bottom_x = np.linspace(half_straight_m, -half_straight_m, resolution, endpoint=False)
     bottom = np.column_stack((bottom_x, np.full_like(bottom_x, -turn_radius_m)))
     theta_l = np.linspace(-np.pi / 2, -3 * np.pi / 2, resolution, endpoint=False)
-    left = np.column_stack((
-        -half_straight_m + turn_radius_m * np.cos(theta_l),
-        turn_radius_m * np.sin(theta_l),
-    ))
+    left = np.column_stack(
+        (
+            -half_straight_m + turn_radius_m * np.cos(theta_l),
+            turn_radius_m * np.sin(theta_l),
+        )
+    )
     xy = _resample_closed(np.vstack((top, right, bottom, left)), n)
     return RouteGeometry(
         RouteShape.SO_HIPPODROME,
@@ -210,12 +204,9 @@ def _figure_eight(
     rotation_deg: float,
     leg_softness: float,
 ) -> RouteGeometry:
-    # A smooth hippodrome-like self-crossing loop. The harmonic term bends the
-    # legs without changing the topology or forcing straight segments.
     t = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
     x = long_scale_m * np.sin(t)
-    y = short_scale_m * np.sin(2.0 * t)
-    y += leg_softness * short_scale_m * np.sin(4.0 * t)
+    y = short_scale_m * (np.sin(2.0 * t) + leg_softness * np.sin(4.0 * t))
     xy = _resample_closed(np.column_stack((x, y)), n)
     return RouteGeometry(
         RouteShape.SO_FIGURE_EIGHT,
@@ -235,8 +226,8 @@ def _double_hippodrome(
     n: int,
     rotation_deg: float,
 ) -> RouteGeometry:
-    if LineString is None or unary_union is None:
-        raise RuntimeError("Shapely is required for the double-hippodrome simulator")
+    if not math.isfinite(opening_deg):
+        raise ValueError("opening_deg must be finite")
     half_opening = math.radians(opening_deg / 2.0)
     shared_turn_center = np.array((0.0, -0.20 * arm_length_m), dtype=float)
     left_dir = np.array((-math.sin(half_opening), math.cos(half_opening)), dtype=float)
@@ -244,15 +235,11 @@ def _double_hippodrome(
     left_center = shared_turn_center + arm_length_m * left_dir
     right_center = shared_turn_center + arm_length_m * right_dir
 
-    # Each hippodrome area is exactly a capsule between an outer turn center and
-    # the approved shared turn-circle center. The driven double route is the
-    # exterior boundary of their union; the internal U-turn arcs are therefore
-    # absent by construction.
     left_area = LineString((tuple(shared_turn_center), tuple(left_center))).buffer(
-        turn_radius_m, cap_style=1, join_style=1, resolution=96
+        turn_radius_m, cap_style=1, join_style=1, quad_segs=96
     )
     right_area = LineString((tuple(shared_turn_center), tuple(right_center))).buffer(
-        turn_radius_m, cap_style=1, join_style=1, resolution=96
+        turn_radius_m, cap_style=1, join_style=1, quad_segs=96
     )
     merged = unary_union((left_area, right_area))
     exterior = np.asarray(merged.exterior.coords, dtype=float)[:-1]
@@ -263,7 +250,7 @@ def _double_hippodrome(
         {
             "arm_length_m": arm_length_m,
             "turn_radius_m": turn_radius_m,
-            "opening_deg": opening_deg,
+            "opening_deg": float(opening_deg),
             "shared_turn_center_x_m": float(shared_turn_center[0]),
             "shared_turn_center_y_m": float(shared_turn_center[1]),
         },
@@ -276,6 +263,7 @@ def make_route(
     point_count: int = 2048,
     rotation_deg: float = 0.0,
     variant: float = 0.0,
+    double_opening_deg: float | None = None,
 ) -> RouteGeometry:
     shape = RouteShape(shape)
     if point_count < 128:
@@ -297,10 +285,11 @@ def make_route(
             0.10 + 0.07 * variant,
         )
     if shape is RouteShape.SO_DOUBLE_HIPPODROME:
+        opening_deg = 25.0 if double_opening_deg is None else float(double_opening_deg)
         return _double_hippodrome(
             205.0 + 10.0 * variant,
             52.0,
-            54.0 + 12.0 * variant,
+            opening_deg,
             point_count,
             rotation_deg,
         )
@@ -312,28 +301,32 @@ def _sample_closed_polyline(xy: np.ndarray, phases: np.ndarray) -> np.ndarray:
     ds = np.linalg.norm(np.diff(points, axis=0), axis=1)
     s = np.concatenate(([0.0], np.cumsum(ds)))
     target = np.mod(phases, 1.0) * s[-1]
-    return np.column_stack((
-        np.interp(target, s, points[:, 0]),
-        np.interp(target, s, points[:, 1]),
-    ))
+    return np.column_stack(
+        (np.interp(target, s, points[:, 0]), np.interp(target, s, points[:, 1]))
+    )
 
 
 def _closed_tangent(xy: np.ndarray, phases: np.ndarray) -> np.ndarray:
     epsilon = 1e-4
-    before = _sample_closed_polyline(xy, phases - epsilon)
-    after = _sample_closed_polyline(xy, phases + epsilon)
-    tangent = after - before
-    norm = np.linalg.norm(tangent, axis=1, keepdims=True)
-    return tangent / np.maximum(norm, 1e-12)
+    tangent = _sample_closed_polyline(xy, phases + epsilon) - _sample_closed_polyline(
+        xy, phases - epsilon
+    )
+    return tangent / np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-12)
 
 
-def _bezier(p0: np.ndarray, p1: np.ndarray, p2: np.ndarray, p3: np.ndarray, t: np.ndarray) -> np.ndarray:
+def _bezier(
+    p0: np.ndarray,
+    p1: np.ndarray,
+    p2: np.ndarray,
+    p3: np.ndarray,
+    t: np.ndarray,
+) -> np.ndarray:
     t = np.asarray(t, dtype=float)[:, None]
     return (
         (1 - t) ** 3 * p0
         + 3 * (1 - t) ** 2 * t * p1
-        + 3 * (1 - t) * t ** 2 * p2
-        + t ** 3 * p3
+        + 3 * (1 - t) * t**2 * p2
+        + t**3 * p3
     )
 
 
@@ -347,8 +340,7 @@ def _curvature(points: np.ndarray) -> np.ndarray:
     first_unit = first / np.maximum(first_len[:, None], 1e-12)
     second_unit = second / np.maximum(second_len[:, None], 1e-12)
     angle = np.arccos(np.clip(np.sum(first_unit * second_unit, axis=1), -1.0, 1.0))
-    ds = 0.5 * (first_len + second_len)
-    middle = angle / np.maximum(ds, 1e-9)
+    middle = angle / np.maximum(0.5 * (first_len + second_len), 1e-9)
     return np.concatenate(([middle[0]], middle, [middle[-1]]))
 
 
@@ -358,11 +350,9 @@ def _turn_mask(route_points: np.ndarray) -> np.ndarray:
         return np.zeros(0, dtype=bool)
     mean = float(np.mean(curvature))
     std = float(np.std(curvature))
-    # A circle has nearly constant curvature; it has no distinct turn region.
     if std <= max(1e-6, 0.05 * mean):
         return np.zeros_like(curvature, dtype=bool)
-    threshold = float(np.quantile(curvature, 0.72))
-    return curvature >= threshold
+    return curvature >= float(np.quantile(curvature, 0.72))
 
 
 def _smooth_wind(
@@ -374,18 +364,19 @@ def _smooth_wind(
     if config.max_speed_mps <= 0 or config.response_gain_s <= 0:
         return np.zeros((sample_count, 2), dtype=float)
     duration_s = max(sample_interval_s, (sample_count - 1) * sample_interval_s)
-    knot_count = max(4, int(math.ceil(duration_s / max(config.knot_seconds, sample_interval_s))) + 1)
+    knot_count = max(
+        4, int(math.ceil(duration_s / max(config.knot_seconds, sample_interval_s))) + 1
+    )
     knot_index = np.linspace(0.0, sample_count - 1, knot_count)
     magnitude = rng.uniform(0.10 * config.max_speed_mps, config.max_speed_mps, size=knot_count)
-    # Random walk in direction produces smooth veering/backing wind.
     direction = np.cumsum(rng.normal(0.0, 0.65, size=knot_count))
-    east = magnitude * np.cos(direction)
-    north = magnitude * np.sin(direction)
     grid = np.arange(sample_count, dtype=float)
-    return np.column_stack((
-        np.interp(grid, knot_index, east),
-        np.interp(grid, knot_index, north),
-    ))
+    return np.column_stack(
+        (
+            np.interp(grid, knot_index, magnitude * np.cos(direction)),
+            np.interp(grid, knot_index, magnitude * np.sin(direction)),
+        )
+    )
 
 
 def simulate(route: RouteGeometry, config: SimulationConfig) -> SimulatedTrace:
@@ -481,8 +472,7 @@ def simulate(route: RouteGeometry, config: SimulationConfig) -> SimulatedTrace:
     if config.network.turn_burst_count > 0 and np.any(turn_mask):
         turn_indices = np.flatnonzero(turn_mask)
         half_width = max(
-            2,
-            int(round(config.network.turn_burst_half_width_fraction * route_count)),
+            2, int(round(config.network.turn_burst_half_width_fraction * route_count))
         )
         for _ in range(config.network.turn_burst_count):
             center = int(rng.choice(turn_indices))
