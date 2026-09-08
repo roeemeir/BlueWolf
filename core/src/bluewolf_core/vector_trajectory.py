@@ -1,11 +1,16 @@
 """Vectorized periodic-trajectory primitives for route discovery.
 
+Source of truth:
+- core/docs/ROUTE_GEOMETRY_SPEC_HE.md
+- core/docs/ADAPTIVE_ROUTE_LIFECYCLE_HE.md
+
 This module is intentionally topology-agnostic. It extracts recurrence,
 periodic support, a phase-folded centerline hypothesis and robust spatial axes.
 Route-family classification lives in a separate module.
 
-The heavy path is NumPy vectorized. The only small Python loop is over the fixed
-canonical phase-bin count (<=128), never over the 40-minute sample history.
+The sample-heavy path is NumPy vectorized. Small Python loops are bounded by a
+fixed phase-bin count or a small local lag-jitter window; no operation builds an
+N x N matrix over the 40-minute history.
 """
 from __future__ import annotations
 
@@ -55,7 +60,11 @@ class VectorTrack:
         object.__setattr__(self, "xy_m", xy_m)
         object.__setattr__(self, "observed_mask", observed)
         if self.velocity_xy_mps is not None:
-            object.__setattr__(self, "velocity_xy_mps", np.asarray(self.velocity_xy_mps, dtype=float))
+            object.__setattr__(
+                self,
+                "velocity_xy_mps",
+                np.asarray(self.velocity_xy_mps, dtype=float),
+            )
 
     @property
     def sample_interval_s(self) -> float:
@@ -123,7 +132,6 @@ def masked_lag_mse(track: VectorTrack) -> tuple[np.ndarray, np.ndarray]:
         masked_xy[:, 1], masked_xy[:, 1]
     )
     sse = corr(masked_squared, mask) + corr(mask, masked_squared) - 2.0 * dot
-    # FFT roundoff can make exact zero slightly negative.
     sse = np.maximum(sse, 0.0)
     mse = np.divide(
         sse,
@@ -153,9 +161,10 @@ def estimate_period(
 ) -> PeriodEstimate | None:
     """Estimate the smallest well-supported spatial recurrence period.
 
-    The estimator does not require turn observations. If turns disappear from
-    the network but straight/curved legs repeat one cycle later, those repeated
-    samples still create a deep recurrence minimum.
+    The FFT stage is a fast global proposal. It does not require turn samples:
+    repeated legs one cycle apart are sufficient evidence for a recurrence
+    minimum. A later local refinement makes the exact phase fold robust to the
+    few-sample bias caused by approach/exit, wind and missing turns.
     """
 
     dt = track.sample_interval_s
@@ -185,8 +194,6 @@ def estimate_period(
     strong = local[mse[local] <= best_mse * strong_minimum_ratio + 1e-6]
     lag = int(np.min(strong))
 
-    # Recurrence quality is normalized by the robust spatial variance. A lower
-    # MSE produces a score closer to one without using a route-type assumption.
     observed_xy = track.xy_m[track.observed_mask]
     spatial_variance = float(np.sum(np.var(observed_xy, axis=0))) if len(observed_xy) else 0.0
     score = 1.0 / (1.0 + float(mse[lag]) / max(spatial_variance, 1.0))
@@ -199,52 +206,134 @@ def estimate_period(
     )
 
 
+def _local_lag_radius_samples(track: VectorTrack, period: PeriodEstimate) -> int:
+    """Small numerical search radius around the FFT period proposal.
+
+    This is not a timing gate. It only compensates for a few samples of period
+    estimation bias before phase folding. The radius is capped so runtime stays
+    linear in N with a small constant.
+    """
+
+    dt = track.sample_interval_s
+    seconds = min(12.0, max(2.0 * dt, 0.04 * period.period_s))
+    return max(1, int(math.ceil(seconds / dt)))
+
+
+def _robust_lag_cost(track: VectorTrack, lag: int) -> tuple[float, int, float]:
+    if lag <= 0 or lag >= len(track.time_s):
+        return math.inf, 0, math.inf
+    valid = track.observed_mask[:-lag] & track.observed_mask[lag:]
+    count = int(np.count_nonzero(valid))
+    if count < 6:
+        return math.inf, count, math.inf
+    distance2 = np.sum((track.xy_m[:-lag] - track.xy_m[lag:]) ** 2, axis=1)
+    selected = distance2[valid]
+    # Route recurrence normally occupies the majority of valid pairs while
+    # approach/exit are one-off. Median cost is therefore much less sensitive
+    # to non-periodic tails than the global mean used by the FFT proposal.
+    cost = float(np.median(selected))
+    mse = float(np.mean(selected))
+    return cost, count, mse
+
+
+def refine_period_local(track: VectorTrack, period: PeriodEstimate) -> PeriodEstimate:
+    """Refine an FFT proposal within a small local lag window."""
+
+    radius = _local_lag_radius_samples(track, period)
+    lo = max(2, period.lag_samples - radius)
+    hi = min(len(track.time_s) - 2, period.lag_samples + radius)
+    lags = np.arange(lo, hi + 1, dtype=int)
+    costs = np.full(len(lags), np.inf, dtype=float)
+    counts = np.zeros(len(lags), dtype=int)
+    means = np.full(len(lags), np.inf, dtype=float)
+    for index, lag in enumerate(lags):
+        costs[index], counts[index], means[index] = _robust_lag_cost(track, int(lag))
+    if not np.any(np.isfinite(costs)):
+        return period
+    best_index = int(np.argmin(costs))
+    lag = int(lags[best_index])
+
+    observed_xy = track.xy_m[track.observed_mask]
+    spatial_variance = float(np.sum(np.var(observed_xy, axis=0))) if len(observed_xy) else 0.0
+    robust_recurrence = float(costs[best_index])
+    score = 1.0 / (1.0 + robust_recurrence / max(spatial_variance, 1.0))
+    return PeriodEstimate(
+        period_s=lag * track.sample_interval_s,
+        lag_samples=lag,
+        recurrence_mse_m2=float(means[best_index]),
+        support_pairs=int(counts[best_index]),
+        score=float(np.clip(score, 0.0, 1.0)),
+    )
+
+
 def robust_axis_frame(points: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return center, principal vectors and robust half extents."""
+    """Return geometry-centered principal vectors and robust half extents.
+
+    The returned center is the midpoint of the robust spatial envelope in the
+    PCA frame, not the sample median. This makes it insensitive to observing a
+    non-integer number of cycles or oversampling one phase.
+    """
 
     points = np.asarray(points, dtype=float)
     if points.ndim != 2 or points.shape[1] != 2 or len(points) < 3:
         raise ValueError("points must have shape (N,2), N>=3")
-    center = np.median(points, axis=0)
-    centered = points - center
+    origin = np.median(points, axis=0)
+    centered = points - origin
     covariance = centered.T @ centered / max(len(points) - 1, 1)
-    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
-    order = np.argsort(eigenvalues)[::-1]
-    vectors = eigenvectors[:, order]
+    _, eigenvectors = np.linalg.eigh(covariance)
+    vectors = eigenvectors[:, ::-1]
     projected = centered @ vectors
     low = np.quantile(projected, 0.02, axis=0)
     high = np.quantile(projected, 0.98, axis=0)
-    half_axes = np.maximum((high - low) / 2.0, _EPS)
+    midpoint = 0.5 * (low + high)
+    center = origin + midpoint @ vectors.T
+    half_axes = np.maximum(0.5 * (high - low), _EPS)
     return center, vectors, half_axes
+
+
+def _support_spatial_tolerance(track: VectorTrack) -> float:
+    observed_points = track.xy_m[track.observed_mask]
+    if len(observed_points) < 3:
+        return 8.0
+    center = np.median(observed_points, axis=0)
+    radial = np.linalg.norm(observed_points - center, axis=1)
+    cutoff = float(np.quantile(radial, 0.85))
+    core = observed_points[radial <= cutoff]
+    if len(core) < 3:
+        core = observed_points
+    _, _, half_axes = robust_axis_frame(core)
+    return max(8.0, 0.16 * float(np.min(half_axes)))
 
 
 def periodic_support_mask(
     track: VectorTrack,
     period: PeriodEstimate,
     *,
-    spatial_tolerance_fraction: float = 0.12,
-    minimum_spatial_tolerance_m: float = 6.0,
+    spatial_tolerance_m: float | None = None,
 ) -> np.ndarray:
-    """Mark samples that have a spatially consistent counterpart one period away."""
+    """Mark samples with a spatially recurrent counterpart near one period away.
 
-    lag = period.lag_samples
+    A single exact lag is intentionally *not* required. Period estimates can be
+    biased by a few samples when turns are missing or wind varies. We search a
+    small bounded lag neighborhood and OR the recurrent pairs. Missing turn
+    samples remain missing; no coordinates are synthesized here.
+    """
+
     n = len(track.time_s)
     output = np.zeros(n, dtype=bool)
-    if lag <= 0 or lag >= n:
-        return output
-    observed_points = track.xy_m[track.observed_mask]
-    if len(observed_points) < 3:
-        return output
-    _, _, half_axes = robust_axis_frame(observed_points)
-    tolerance = max(
-        minimum_spatial_tolerance_m,
-        spatial_tolerance_fraction * float(np.min(half_axes)),
+    radius = _local_lag_radius_samples(track, period)
+    tolerance = _support_spatial_tolerance(track) if spatial_tolerance_m is None else float(
+        spatial_tolerance_m
     )
-    valid = track.observed_mask[:-lag] & track.observed_mask[lag:]
-    distance = np.linalg.norm(track.xy_m[:-lag] - track.xy_m[lag:], axis=1)
-    recurrent = valid & (distance <= tolerance)
-    output[:-lag] |= recurrent
-    output[lag:] |= recurrent
+
+    for lag in range(max(2, period.lag_samples - radius), min(n - 1, period.lag_samples + radius) + 1):
+        valid = track.observed_mask[:-lag] & track.observed_mask[lag:]
+        if not np.any(valid):
+            continue
+        distance = np.linalg.norm(track.xy_m[:-lag] - track.xy_m[lag:], axis=1)
+        recurrent = valid & (distance <= tolerance)
+        output[:-lag] |= recurrent
+        output[lag:] |= recurrent
     return output
 
 
@@ -272,7 +361,7 @@ def fold_periodic_route(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Fold recurrent samples modulo period into a canonical phase path.
 
-    Unsupported bins are interpolated only to form a geometry *hypothesis*.
+    Unsupported bins are interpolated only to form a geometry hypothesis.
     `canonical_support` and `canonical_counts` remain authoritative evidence and
     downstream confirmation must never count interpolated bins as observed.
     """
@@ -293,7 +382,6 @@ def fold_periodic_route(
     canonical = np.full((canonical_bins, 2), np.nan, dtype=float)
     counts = np.zeros(canonical_bins, dtype=int)
 
-    # Fixed <=128-bin loop; sample-heavy work remains vectorized.
     for index in range(canonical_bins):
         selected = periodic_mask & (bin_index == index)
         if np.any(selected):
@@ -319,6 +407,7 @@ def extract_periodic_evidence(
     )
     if period is None:
         return None
+    period = refine_period_local(track, period)
     periodic = periodic_support_mask(track, period)
     try:
         canonical, support, counts = fold_periodic_route(
@@ -329,10 +418,11 @@ def extract_periodic_evidence(
         )
     except ValueError:
         return None
-    supported_points = track.xy_m[periodic]
-    if len(supported_points) < 3:
-        return None
-    center, vectors, half_axes = robust_axis_frame(supported_points)
+
+    # Canonical bins are phase-balanced by construction, so their geometry is a
+    # better axis estimator than raw recurrent samples whose phase density may
+    # be heavily skewed by turn outages or a non-integer number of cycles.
+    center, vectors, half_axes = robust_axis_frame(canonical)
     return FoldedRouteEvidence(
         period=period,
         periodic_mask=periodic,
