@@ -260,7 +260,20 @@ class VehicleFrameResult:
     event_id: str | None = None
     route_id: str | None = None
     phase: float | None = None
+    # SO-only geometry-normalized phase used by quarter/template semantics.
+    # `phase` remains the raw/legacy route phase for backward compatibility and
+    # for SI consumers. Figure-8 may legitimately leave semantic_phase=None at
+    # a self-crossing when heading evidence is unavailable.
+    semantic_phase: float | None = None
     scores: VehicleScores | None = None
+
+    def __post_init__(self) -> None:
+        _require_finite("phase", self.phase)
+        _require_finite("semantic_phase", self.semantic_phase)
+        if self.phase is not None and not 0.0 <= self.phase < 1.0:
+            raise ValueError("phase must be in [0, 1)")
+        if self.semantic_phase is not None and not 0.0 <= self.semantic_phase < 1.0:
+            raise ValueError("semantic_phase must be in [0, 1)")
 
 
 @dataclass(frozen=True, slots=True)
