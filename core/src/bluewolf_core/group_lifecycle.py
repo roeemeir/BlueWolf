@@ -122,13 +122,15 @@ class GroupMembershipLifecycle:
                 self._announced.add(signature)
                 changes.append(
                     StateChange(
-                        now,
+                        support_start,
                         ChangeKind.GROUP_CANDIDATE,
                         item.structural.server_id,
                         details={
                             "member_keys": [list(key) for key in signature],
                             "family": item.structural.family.value,
                             "support_start_utc": _iso(support_start),
+                            "detection_time_utc": _iso(now),
+                            "retroactive_candidate": support_start < now,
                             "required_support_seconds": self.config.membership_confirmation_seconds,
                         },
                     )
@@ -139,9 +141,7 @@ class GroupMembershipLifecycle:
         for signature, item in by_signature.items():
             support_start = self._candidate_support[signature]
             if now - support_start >= required:
-                mature.append(
-                    StructuralGroupEvidence(item.structural, support_start)
-                )
+                mature.append(StructuralGroupEvidence(item.structural, support_start))
 
         # A pending replacement must not prematurely destroy an existing group.
         # Only mature structural evidence is allowed to supersede an old id.
@@ -157,7 +157,6 @@ class GroupMembershipLifecycle:
             _carry(old) for old in old_groups if old.group_id not in mature_overlap_old_ids
         )
         next_snapshot = self._stable.reconcile(target)
-        next_by_id = {group.group_id: group for group in next_snapshot.groups}
 
         maturity_by_signature = {
             _signature(item.structural): self._candidate_support[_signature(item.structural)]
