@@ -34,6 +34,7 @@ from .grouping import (
     discover_structural_groups,
     routes_compatible,
 )
+from .integrated_session import CoreSession
 from .models import (
     ChangeKind,
     ClosedRoute,
@@ -50,7 +51,7 @@ from .models import (
 )
 from .route_detection import RouteDetection, detect_closed_route
 from .scoring import aggregate_group_scores, score_error, score_vehicle
-from .session import CheckpointCompatibilityError, CoreSession
+from .session import CheckpointCompatibilityError
 from .templates import (
     MemberTemplateFit,
     NoLegalTemplateAssignment,
@@ -113,4 +114,4 @@ __all__ = [
     "tangent_error_deg",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
