@@ -18,6 +18,11 @@ from .geometry import (
     resample_closed_polyline,
     tangent_error_deg,
 )
+from .group_lifecycle import (
+    GroupLifecycleResult,
+    GroupMembershipLifecycle,
+    StructuralGroupEvidence,
+)
 from .grouping import (
     GroupCompatibility,
     GroupObservation,
@@ -66,6 +71,8 @@ __all__ = [
     "Direction",
     "FieldQuality",
     "GroupCompatibility",
+    "GroupLifecycleResult",
+    "GroupMembershipLifecycle",
     "GroupObservation",
     "GroupingSnapshot",
     "MemberTemplateFit",
@@ -80,6 +87,7 @@ __all__ = [
     "StableGroupingEngine",
     "StateChange",
     "StructuralGroup",
+    "StructuralGroupEvidence",
     "SynchronizationTemplate",
     "TemplateFit",
     "TemplateSlot",
