@@ -1,13 +1,13 @@
 """Topology-neutral evidence for an early route candidate.
 
 A partial candidate must not pretend to be a ClosedRoute: before recurrence we
-do not yet know a defensible period, closure, family or topology.  This module
+do not yet know a defensible period, closure, family or topology. This module
 therefore extracts only ordered geometric evidence from the observed portion of
-the trajectory.  It does not make a binary candidate decision yet; thresholds
+the trajectory. It does not make a binary candidate decision yet; thresholds
 will be calibrated against the simulator/GT bank before lifecycle integration.
 
-Missing network slots remain gaps.  No segment is drawn through a gap for the
-turn/smoothness metrics.
+Missing network slots remain explicit gaps. No segment is drawn through a gap
+for either metrics or diagnostic geometry.
 """
 from __future__ import annotations
 
@@ -30,12 +30,16 @@ class PartialRouteEvidence:
     """Evidence that can exist before one complete route recurrence.
 
     `turn_fraction` is accumulated absolute change of tangent divided by 2π.
-    It is intentionally topology-neutral: a Figure-8 may change turn sign while
-    still accumulating substantial absolute turning.
+    It is topology-neutral: a Figure-8 may change turn sign while still
+    accumulating substantial absolute turning.
 
     `path_efficiency` is robust spatial extent / observed travelled distance.
     A straight approach tends toward one; a path that bends around an area falls
-    below one.  It is evidence only, not an acceptance gate.
+    below one. It is evidence only, not an acceptance gate.
+
+    `observed_runs` keeps communication gaps explicit. Each inner tuple is one
+    contiguous observed run; consumers must never connect separate runs as if a
+    position had been observed through the outage.
     """
 
     stream_key: tuple[int, int]
@@ -48,7 +52,7 @@ class PartialRouteEvidence:
     smooth_heading_fraction: float
     path_efficiency: float
     contiguous_observation_fraction: float
-    observed_centerline: tuple[CanonicalPoint, ...]
+    observed_runs: tuple[tuple[CanonicalPoint, ...], ...]
 
     def __post_init__(self) -> None:
         for name in (
@@ -66,8 +70,8 @@ class PartialRouteEvidence:
             raise ValueError("contiguous_observation_fraction must be in [0,1]")
         if self.observed_travel_m <= 0.0:
             raise ValueError("observed_travel_m must be positive")
-        if len(self.observed_centerline) < 3:
-            raise ValueError("observed_centerline requires at least three points")
+        if not self.observed_runs or any(len(run) < 2 for run in self.observed_runs):
+            raise ValueError("observed_runs must contain non-empty contiguous paths")
 
 
 def _contiguous_runs(mask: np.ndarray) -> tuple[np.ndarray, ...]:
@@ -82,8 +86,7 @@ def _resample_open(points: np.ndarray, count: int) -> np.ndarray:
     points = np.asarray(points, dtype=float)
     if len(points) < 2:
         return points.copy()
-    delta = np.diff(points, axis=0)
-    segment = np.linalg.norm(delta, axis=1)
+    segment = np.linalg.norm(np.diff(points, axis=0), axis=1)
     keep = np.concatenate(([True], segment > _EPS))
     points = points[keep]
     if len(points) < 2:
@@ -106,42 +109,32 @@ def _wrapped_angle_delta(first: np.ndarray, second: np.ndarray) -> np.ndarray:
     return (second - first + np.pi) % (2.0 * np.pi) - np.pi
 
 
-def _run_metrics(points: np.ndarray) -> tuple[float, float, int, np.ndarray]:
-    """Return travel, absolute turn radians, heading count and display path."""
+def _run_metrics(points: np.ndarray) -> tuple[float, np.ndarray, np.ndarray]:
+    """Return observed travel, heading changes and a bounded diagnostic path."""
 
-    if len(points) < 3:
-        travel = float(np.sum(np.linalg.norm(np.diff(points, axis=0), axis=1))) if len(points) > 1 else 0.0
-        return travel, 0.0, 0, points.copy()
-
+    if len(points) < 2:
+        return 0.0, np.zeros(0, dtype=float), points.copy()
     raw_travel = float(np.sum(np.linalg.norm(np.diff(points, axis=0), axis=1)))
     if raw_travel <= _EPS:
-        return 0.0, 0.0, 0, points[:1].copy()
+        return 0.0, np.zeros(0, dtype=float), points[:1].copy()
 
     # Equal-arc resampling makes heading evidence much less sensitive to a
-    # 1s/2s/5s navigation cadence.  A bounded <=32 point path also keeps this
-    # extractor cheap even when the history buffer is long.
+    # 1s/2s/5s navigation cadence. This interpolation occurs only inside one
+    # contiguous observed run; it never bridges a network outage.
     count = min(32, max(8, int(round(math.sqrt(len(points)) * 2.0))))
     sampled = _resample_open(points, count)
     if len(sampled) < 4:
-        return raw_travel, 0.0, 0, sampled
+        return raw_travel, np.zeros(0, dtype=float), sampled
 
-    # A two-segment chord suppresses one-sample GPS zig-zag without inventing
-    # points inside communication gaps (each run is processed independently).
+    # A two-segment chord suppresses one-sample GPS zig-zag.
     chord = sampled[2:] - sampled[:-2]
     chord_length = np.linalg.norm(chord, axis=1)
-    valid = chord_length > _EPS
-    chord = chord[valid]
+    chord = chord[chord_length > _EPS]
     if len(chord) < 2:
-        return raw_travel, 0.0, 0, sampled
+        return raw_travel, np.zeros(0, dtype=float), sampled
     heading = np.arctan2(chord[:, 1], chord[:, 0])
     turn = np.abs(_wrapped_angle_delta(heading[:-1], heading[1:]))
-    if len(turn) == 0:
-        return raw_travel, 0.0, 0, sampled
-
-    # Do not let one GPS spike count as an arbitrary amount of route coverage.
-    # The cap is a numerical robustness guard, not a physical vehicle limit.
-    capped_turn = np.minimum(turn, math.radians(75.0))
-    return raw_travel, float(np.sum(capped_turn)), len(turn), sampled
+    return raw_travel, turn, sampled
 
 
 def extract_partial_route_evidence(
@@ -165,28 +158,28 @@ def extract_partial_route_evidence(
     total_turn = 0.0
     heading_turn_count = 0
     smooth_turn_count = 0
-    display_parts: list[np.ndarray] = []
+    diagnostic_runs: list[tuple[CanonicalPoint, ...]] = []
 
     for run in usable:
-        points = prepared.track.xy_m[run]
-        travel, _, _, sampled = _run_metrics(points)
+        travel, turn, sampled = _run_metrics(prepared.track.xy_m[run])
         total_travel += travel
-        if len(sampled) >= 4:
-            chord = sampled[2:] - sampled[:-2]
-            chord_length = np.linalg.norm(chord, axis=1)
-            chord = chord[chord_length > _EPS]
-            if len(chord) >= 2:
-                heading = np.arctan2(chord[:, 1], chord[:, 0])
-                turn = np.abs(_wrapped_angle_delta(heading[:-1], heading[1:]))
-                if len(turn):
-                    capped = np.minimum(turn, math.radians(75.0))
-                    total_turn += float(np.sum(capped))
-                    heading_turn_count += len(turn)
-                    smooth_turn_count += int(np.count_nonzero(turn <= math.radians(45.0)))
+        if len(turn):
+            # One spike may not contribute an arbitrary amount of apparent
+            # coverage. The cap is a numerical robustness guard, not a vehicle
+            # dynamics or route-shape limit.
+            capped = np.minimum(turn, math.radians(75.0))
+            total_turn += float(np.sum(capped))
+            heading_turn_count += len(turn)
+            smooth_turn_count += int(np.count_nonzero(turn <= math.radians(45.0)))
         if len(sampled) >= 2:
-            display_parts.append(sampled)
+            diagnostic_runs.append(
+                tuple(
+                    CanonicalPoint(float(point[0]), float(point[1]))
+                    for point in sampled
+                )
+            )
 
-    if total_travel <= _EPS or heading_turn_count < 2 or not display_parts:
+    if total_travel <= _EPS or heading_turn_count < 2 or not diagnostic_runs:
         return None
 
     observed_points = prepared.track.xy_m[prepared.track.observed_mask]
@@ -199,17 +192,6 @@ def extract_partial_route_evidence(
 
     longest_run = max(len(run) for run in runs)
     contiguous_fraction = longest_run / max(prepared.observed_grid_count, 1)
-
-    # Preserve the order of observed runs for operator/developer diagnostics.
-    # We intentionally do not connect gaps with synthetic geometry.  The public
-    # candidate contract can later carry explicit run boundaries if needed; for
-    # now this bounded polyline is diagnostic only.
-    display = np.vstack(display_parts)
-    if len(display) > 32:
-        display = _resample_open(display, 32)
-    centerline = tuple(
-        CanonicalPoint(float(point[0]), float(point[1])) for point in display
-    )
 
     ordered_valid = sorted(
         (
@@ -236,5 +218,5 @@ def extract_partial_route_evidence(
         smooth_heading_fraction=smooth_turn_count / heading_turn_count,
         path_efficiency=path_efficiency,
         contiguous_observation_fraction=contiguous_fraction,
-        observed_centerline=centerline,
+        observed_runs=tuple(diagnostic_runs),
     )
