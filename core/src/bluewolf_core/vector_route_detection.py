@@ -1,7 +1,8 @@
 """Adapter from the vector route-discovery core to the existing ClosedRoute API.
 
-This module is intentionally side-by-side with route_detection.py until V2 has
-passed lifecycle equivalence tests. It must not change CoreSession behavior yet.
+The vector detector owns recurrence, phase folding and topology classification.
+CoreSession now uses a separate topology-neutral partial candidate before it
+calls this adapter for confirmed-route inference.
 
 Conformance sources:
 - core/docs/ROUTE_GEOMETRY_SPEC_HE.md
@@ -141,10 +142,10 @@ def detect_closed_route_vector(
 ) -> RouteDetection | None:
     """Detect an approved closed route using the vector V2 pipeline.
 
-    This first implementation intentionally requires periodic evidence for both
-    candidate and confirmation. A faster *partial-cycle candidate* path is a
-    separate milestone; it will not be faked with a timer or by reusing the old
-    ellipse/stadium assumption.
+    Expensive topology classification is intentionally delayed until generic
+    recurrence evidence has already passed every topology-independent gate. The
+    ordering is an optimization only: the same fit/coverage/cycle/closure gates
+    still decide whether a periodic candidate or confirmation can be returned.
     """
 
     detection = config or DetectionConfig()
@@ -159,12 +160,11 @@ def detect_closed_route_vector(
     )
     if evidence is None:
         return None
-    classification = classify_route(
-        prepared.track,
-        evidence,
-        si_axis_ratio_max=detection.si_axis_ratio_max,
-    )
 
+    # Everything through `generic_ready` is topology-independent and cheap
+    # compared with Single/Double model fitting. CoreSession can call this on
+    # every evidence update without paying for classification before recurrence
+    # could possibly satisfy the requested lifecycle gate.
     periodic_points = prepared.track.xy_m[evidence.periodic_mask]
     if len(periodic_points) < 6:
         return None
@@ -196,11 +196,36 @@ def detect_closed_route_vector(
     )
     closure_ok = evidence.period.support_pairs >= minimum_recurrence_pairs
 
+    required_fit = (
+        detection.required_fit_fraction
+        if require_confirmation
+        else detection.candidate_fit_fraction
+    )
+    required_cycles = (
+        detection.required_completed_cycles
+        if require_confirmation
+        else detection.candidate_travel_fraction
+    )
+    generic_ready = (
+        fit_fraction + _EPS >= required_fit
+        and coverage_fraction + _EPS >= detection.candidate_coverage_fraction
+        and completed_cycles + _EPS >= required_cycles
+        and closure_ok
+    )
+    if not generic_ready:
+        return None
+
+    classification = classify_route(
+        prepared.track,
+        evidence,
+        si_axis_ratio_max=detection.si_axis_ratio_max,
+    )
+
     # V1's 82% confirmation coverage assumed a detector that had to observe
     # nearly the complete fitted path. V2 explicitly supports a different
     # operational case: the network may lose almost every sample in both turns.
     # Missing turn bins remain unobserved and reduce quality, but do not veto
-    # strong recurrent evidence. The topology classifier already contains the
+    # strong recurrent evidence. The topology classifier contains the
     # model-specific acceptance gates; its confidence is a quality signal, not
     # a second binary threshold in the contract adapter.
     recognized_route = classification.family is not RouteFamily.FREE
