@@ -9,10 +9,14 @@ reference. The mean uses doubled orientation angles, so it is independent of
 axis sign, vehicle identifier and sample arrival order. Individual route frames
 then align their local Q0/Q2 sign to that common group reference.
 
-No new lifecycle state is introduced here: the reference is derived from the
-currently confirmed group geometry at each timestamp. This keeps checkpoint
-replay deterministic; if later membership/reference hysteresis is required it
-must be added explicitly as persisted state rather than hidden mutable cache.
+For Double Hippodrome, ``semantic_phase`` is intentionally *not* the full-double
+phase. It is the local phase on the currently active logical Single Hippodrome;
+``active_so_component_id`` reports which derived lobe supplied that evidence.
+Thus role switching is geometry-driven rather than tied to vehicle identity.
+
+No new lifecycle state is introduced here: references and Double lobe geometry
+are derived from confirmed geometry. Checkpoint replay therefore remains
+deterministic without hidden mutable role state.
 """
 from __future__ import annotations
 
@@ -23,11 +27,21 @@ from itertools import groupby
 from typing import Iterable
 
 from .config import CoreConfig
+from .double_lobe_phase import (
+    AmbiguousDoubleLobeProjection,
+    project_double_active_lobe_wgs84,
+)
 from .integrated_session import (
     DEFAULT_ALGORITHM_VERSION,
     CoreSession as IntegratedCoreSession,
 )
-from .models import CoreBatchResult, RouteFamily, VehicleFrameResult, VehicleSample
+from .models import (
+    CoreBatchResult,
+    RouteFamily,
+    RouteSubtype,
+    VehicleFrameResult,
+    VehicleSample,
+)
 from .so_phase import (
     AmbiguousSOPhaseProjection,
     UnsupportedSOPhaseGeometry,
@@ -104,10 +118,6 @@ class CoreSession(IntegratedCoreSession):
         frames: list[VehicleFrameResult] = []
         changes = []
 
-        # Feed the validated integrated parent exactly one timestamp at a time.
-        # It already uses timestamp buckets internally; doing the same here lets
-        # semantic projection use the route/group state that actually belonged
-        # to each emitted frame rather than the final route of a large batch.
         for _, bucket_iter in groupby(ordered, key=lambda item: item.sample_time_utc):
             bucket = tuple(bucket_iter)
             result = super().process_batch(bucket)
@@ -179,35 +189,61 @@ class CoreSession(IntegratedCoreSession):
             return frame
 
         reference = references.get(frame.group_id) if frame.group_id is not None else None
-        try:
-            phase_frame = build_so_phase_frame(
-                route,
-                reference_major_axis=reference,
-            )
-            velocity_east = None
-            velocity_north = None
-            if (
-                sample is not None
-                and sample.velocity_east_mps is not None
-                and sample.velocity_north_mps is not None
-            ):
-                velocity_east = sample.velocity_east_mps
-                velocity_north = sample.velocity_north_mps
-            semantic = project_so_semantic_phase_wgs84(
-                route,
-                frame.latitude_deg,
-                frame.longitude_deg,
-                frame=phase_frame,
-                velocity_east_mps=velocity_east,
-                velocity_north_mps=velocity_north,
-                ambiguity_distance_short_axis_ratio=(
-                    self.config.scoring.distance_short_axis_ratio.full_score_through
-                ),
-            ).semantic_phase
-        except (AmbiguousSOPhaseProjection, UnsupportedSOPhaseGeometry):
-            # Ambiguous Figure-8 crossings and explicitly undefined geometry are
-            # invalid semantic evidence, not reasons to fabricate a phase or to
-            # fail the entire navigation batch.
-            semantic = None
+        velocity_east = None
+        velocity_north = None
+        if (
+            sample is not None
+            and sample.velocity_east_mps is not None
+            and sample.velocity_north_mps is not None
+        ):
+            velocity_east = sample.velocity_east_mps
+            velocity_north = sample.velocity_north_mps
 
-        return replace(frame, semantic_phase=semantic)
+        semantic: float | None = None
+        active_component_id: str | None = None
+        try:
+            if route.subtype is RouteSubtype.DOUBLE_HIPPODROME:
+                double_projection = project_double_active_lobe_wgs84(
+                    route,
+                    frame.latitude_deg,
+                    frame.longitude_deg,
+                    reference_major_axis=reference,
+                    velocity_east_mps=velocity_east,
+                    velocity_north_mps=velocity_north,
+                    ambiguity_distance_short_axis_ratio=(
+                        self.config.scoring.distance_short_axis_ratio.full_score_through
+                    ),
+                )
+                semantic = double_projection.semantic_phase
+                active_component_id = double_projection.component_id
+            else:
+                phase_frame = build_so_phase_frame(
+                    route,
+                    reference_major_axis=reference,
+                )
+                semantic = project_so_semantic_phase_wgs84(
+                    route,
+                    frame.latitude_deg,
+                    frame.longitude_deg,
+                    frame=phase_frame,
+                    velocity_east_mps=velocity_east,
+                    velocity_north_mps=velocity_north,
+                    ambiguity_distance_short_axis_ratio=(
+                        self.config.scoring.distance_short_axis_ratio.full_score_through
+                    ),
+                ).semantic_phase
+        except (
+            AmbiguousDoubleLobeProjection,
+            AmbiguousSOPhaseProjection,
+            UnsupportedSOPhaseGeometry,
+        ):
+            # Ambiguous connection/crossing evidence is missing information, not
+            # permission to fabricate a role or phase for this timestamp.
+            semantic = None
+            active_component_id = None
+
+        return replace(
+            frame,
+            semantic_phase=semantic,
+            active_so_component_id=active_component_id,
+        )
