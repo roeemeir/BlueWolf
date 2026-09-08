@@ -182,7 +182,7 @@ def fit_so_template(
             "vehicle types or Route Instance membership do not match template"
         )
 
-    best_key: tuple[float, float, tuple[str, ...], float] | None = None
+    best_key: tuple[float, float, float, tuple[str, ...]] | None = None
     best_result: SOTemplateFit | None = None
 
     for assignment in assignments:
@@ -208,11 +208,16 @@ def fit_so_template(
         )
         mean_error = sum(item.position_error_cycle for item in member_fits) / len(member_fits)
         maximum_error = max(item.position_error_cycle for item in member_fits)
+        # Equivalent quarter assignments can differ only by a half-cycle when
+        # the template itself is symmetric (for example Q0/Q2 with identical
+        # vehicle types). Prefer the canonical lower common phase before slot
+        # labels so the result is stable and is not accidentally driven by
+        # lexical slot names or member identifiers.
         key = (
             round(mean_error, 15),
             round(maximum_error, 15),
+            round(common, 15),
             tuple(item.slot_id for item in member_fits),
-            common,
         )
         if best_key is None or key < best_key:
             best_key = key
