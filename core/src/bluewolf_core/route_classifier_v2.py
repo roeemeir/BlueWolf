@@ -213,6 +213,42 @@ def _fit_template(
     )
 
 
+def _ordered_phase_rms(
+    canonical_xy_m: np.ndarray,
+    support: np.ndarray,
+    template: np.ndarray,
+    observed_points: np.ndarray,
+) -> float:
+    """Compare a model to canonical phase order, not just nearest geometry.
+
+    The spatial alignment remains translation/rotation/scale invariant. After
+    alignment, only a cyclic phase shift and traversal reversal are allowed.
+    This preserves the temporal ordering encoded by phase folding while still
+    allowing an arbitrary phase origin and CW/CCW traversal.
+    """
+
+    canonical = np.asarray(canonical_xy_m, dtype=float)
+    support = np.asarray(support, dtype=bool)
+    if canonical.ndim != 2 or canonical.shape[1] != 2:
+        raise ValueError("canonical_xy_m must have shape (N,2)")
+    if support.shape != (len(canonical),):
+        raise ValueError("support must match canonical bins")
+    if np.count_nonzero(support) < 3:
+        return math.inf
+
+    sampled_template = _resample_closed(np.asarray(template, dtype=float), len(canonical))
+    aligned = _align_template(sampled_template, observed_points)
+    best = math.inf
+    for ordered in (aligned, aligned[::-1]):
+        for shift in range(len(canonical)):
+            shifted = np.roll(ordered, shift, axis=0)
+            delta = canonical[support] - shifted[support]
+            rms = float(np.sqrt(np.mean(np.sum(delta * delta, axis=1))))
+            if rms < best:
+                best = rms
+    return best
+
+
 @lru_cache(maxsize=256)
 def _single_template(axis_ratio_bucket: float) -> np.ndarray:
     ratio = max(float(axis_ratio_bucket), 1.0)
@@ -414,6 +450,46 @@ def classify_route(
     single_fit = _fit_single_hippodrome(model_points, max(axis_ratio, 1.01), short_scale)
     double_fit = _fit_double_hippodrome(model_points, short_scale)
     double_improvement = (single_fit.rms_m - double_fit.rms_m) / max(single_fit.rms_m, 1.0)
+
+    single_ratio = float(single_fit.metadata["axis_ratio_model"])
+    single_ordered_rms = _ordered_phase_rms(
+        evidence.canonical_xy_m,
+        evidence.canonical_support,
+        _single_template(round(single_ratio, 2)),
+        model_points,
+    )
+    double_opening = float(double_fit.metadata["opening_deg"])
+    double_radius = float(double_fit.metadata["radius_ratio"])
+    double_ordered_rms = _ordered_phase_rms(
+        evidence.canonical_xy_m,
+        evidence.canonical_support,
+        _double_template(round(double_opening, 3), round(double_radius, 4)),
+        model_points,
+    )
+    ordered_improvement = (
+        single_ordered_rms - double_ordered_rms
+    ) / max(single_ordered_rms, 1.0)
+    single_fit = _ModelFit(
+        single_fit.rms_m,
+        single_fit.p90_m,
+        single_fit.normalized_rms,
+        {
+            **dict(single_fit.metadata),
+            "single_ordered_rms_m": single_ordered_rms,
+            "single_ordered_normalized_rms": single_ordered_rms / max(short_scale, 1.0),
+        },
+    )
+    double_fit = _ModelFit(
+        double_fit.rms_m,
+        double_fit.p90_m,
+        double_fit.normalized_rms,
+        {
+            **dict(double_fit.metadata),
+            "double_ordered_rms_m": double_ordered_rms,
+            "double_ordered_normalized_rms": double_ordered_rms / max(short_scale, 1.0),
+            "ordered_model_improvement": ordered_improvement,
+        },
+    )
 
     double_absolute_ok = double_fit.normalized_rms <= _DOUBLE_MAX_NORMALIZED_RMS
     double_separated = double_improvement >= _DOUBLE_MIN_MODEL_IMPROVEMENT
