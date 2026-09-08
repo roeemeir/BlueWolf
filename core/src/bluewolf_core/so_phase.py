@@ -92,7 +92,7 @@ class SOSemanticProjection:
     projection: PolylineProjection
     semantic_phase: float
     heading_disambiguated: bool
-    competing_branch_count: int
+    candidate_count: int
     heading_error_deg: float | None = None
 
     def __post_init__(self) -> None:
@@ -100,8 +100,8 @@ class SOSemanticProjection:
             raise ValueError("semantic_phase must be finite")
         if not 0.0 <= self.semantic_phase < 1.0:
             raise ValueError("semantic_phase must be in [0,1)")
-        if self.competing_branch_count < 1:
-            raise ValueError("competing_branch_count must be positive")
+        if self.candidate_count < 1:
+            raise ValueError("candidate_count must be positive")
         if self.heading_error_deg is not None and not math.isfinite(self.heading_error_deg):
             raise ValueError("heading_error_deg must be finite when supplied")
 
@@ -390,7 +390,7 @@ def _figure_eight_projection(
         )
         ranked.append((heading_error, item.distance_m, item.segment_index, item))
     heading_error, _, _, selected = min(ranked, key=lambda row: row[:3])
-    return selected, True, 1 + len(competing), heading_error
+    return selected, True, len(nearby), heading_error
 
 
 def project_so_semantic_phase_local(
@@ -407,6 +407,10 @@ def project_so_semantic_phase_local(
     active_frame = frame or build_so_phase_frame(route)
     if active_frame.route_id != route.route_id:
         raise ValueError("phase frame belongs to a different route")
+
+    # Validate the velocity contract consistently for every SO subtype even when
+    # the simple-route path does not need heading for branch selection.
+    _validated_velocity(velocity_east_mps, velocity_north_mps)
 
     if route.subtype is RouteSubtype.FIGURE_EIGHT:
         projection, disambiguated, candidate_count, heading_error = _figure_eight_projection(
@@ -426,7 +430,7 @@ def project_so_semantic_phase_local(
         projection=projection,
         semantic_phase=active_frame.normalize(projection.phase),
         heading_disambiguated=disambiguated,
-        competing_branch_count=candidate_count,
+        candidate_count=candidate_count,
         heading_error_deg=heading_error,
     )
 
