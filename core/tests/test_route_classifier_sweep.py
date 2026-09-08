@@ -84,9 +84,18 @@ class RouteClassifierRobustnessSweepTests(unittest.TestCase):
         assert evidence is not None
         result = classify_route(track, evidence)
         elapsed = time.perf_counter() - started
-        self.assertEqual(result.family, expected_family)
-        self.assertEqual(result.subtype, expected_subtype)
-        self.assertLess(abs(result.period_s - period_s), max(18.0, 0.08 * period_s))
+        diagnostics = dict(result.diagnostics)
+        message = (
+            f"shape={shape.value} opening={opening_deg} dt={dt_s} seed={seed} "
+            f"got={result.family.value}/{result.subtype.value} diagnostics={diagnostics}"
+        )
+        self.assertEqual(result.family, expected_family, msg=message)
+        self.assertEqual(result.subtype, expected_subtype, msg=message)
+        self.assertLess(
+            abs(result.period_s - period_s),
+            max(18.0, 0.08 * period_s),
+            msg=message,
+        )
         return elapsed
 
     def test_sample_interval_rotation_wind_and_noise_sweep(self) -> None:
