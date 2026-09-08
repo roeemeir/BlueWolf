@@ -2,10 +2,14 @@
 
 Source of truth: core/docs/ROUTE_GEOMETRY_SPEC_HE.md.
 
-The classifier does not encode the simulator's preferred Double-Hippodrome
-10..40 degree QA sweep as a product rule. Double opening is fitted as a
-continuous geometry parameter; coarse/fine search values are numerical solver
-steps only and never acceptance gates.
+Important distinction:
+- simulator QA samples Double-Hippodrome openings densely around 10..40 deg;
+- the classifier has NO 10..40 acceptance gate;
+- fitted opening is a continuous geometry parameter and model evidence decides.
+
+The classifier consumes phase-balanced vector evidence. Heavy sample-history
+operations live in vector_trajectory.py; model fits here operate on <=64
+canonical supported points and cached geometry templates.
 """
 from __future__ import annotations
 
@@ -24,6 +28,18 @@ from .vector_trajectory import FoldedRouteEvidence, VectorTrack, robust_axis_fra
 
 
 _EPS = 1e-12
+
+# Initial calibration values, not physical/product laws. Changes must be
+# validated against the simulation sweep before merge.
+_SINGLE_MAX_NORMALIZED_RMS = 0.24
+_DOUBLE_MAX_NORMALIZED_RMS = 0.24
+_DOUBLE_MIN_MODEL_IMPROVEMENT = 0.25
+# A Double can itself be compact (axis ratio <=1.5). In that ambiguous regime
+# we require stronger topology evidence: visible union-boundary concavity plus
+# a much stronger improvement over a Single-Hippodrome model. This is not an
+# opening-angle constraint.
+_COMPACT_DOUBLE_MAX_CONCAVITY_RATIO = 0.97
+_COMPACT_DOUBLE_MIN_MODEL_IMPROVEMENT = 0.55
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,8 +80,8 @@ def supported_self_crossings(
 ) -> tuple[int, float]:
     """Count proper crossings whose two segments are directly observed.
 
-    Unsupported interpolated phase bins are never allowed to manufacture a
-    Figure-8 crossing.
+    Unsupported/interpolated bins may shape a hypothesis but are not allowed to
+    manufacture Figure-8 topology evidence.
     """
 
     points = np.asarray(canonical_xy_m, dtype=float)
@@ -83,10 +99,6 @@ def supported_self_crossings(
 
     p = start[indices]
     r = end[indices] - start[indices]
-    q = p[:, None, :]
-    s = r[:, None, :]
-
-    # Pairwise segment equations p_i + t*r_i = p_j + u*r_j.
     p_i = p[:, None, :]
     p_j = p[None, :, :]
     r_i = r[:, None, :]
@@ -111,8 +123,7 @@ def supported_self_crossings(
     original_j = indices[None, :]
     separation = np.abs(original_i - original_j)
     adjacent = (separation <= 1) | (separation >= n - 1)
-    upper = np.triu(np.ones_like(proper, dtype=bool), k=1)
-    proper &= ~adjacent & upper
+    proper &= ~adjacent & np.triu(np.ones_like(proper, dtype=bool), k=1)
 
     norm_i = np.linalg.norm(r_i, axis=2)
     norm_j = np.linalg.norm(r_j, axis=2)
@@ -167,13 +178,10 @@ def _point_to_polyline_distances(points: np.ndarray, polyline: np.ndarray) -> np
 def _align_template(template: np.ndarray, data_points: np.ndarray) -> np.ndarray:
     t_center, t_vectors, t_half = robust_axis_frame(template)
     d_center, d_vectors, d_half = robust_axis_frame(data_points)
-    scale_ratios = d_half / np.maximum(t_half, _EPS)
-    scale = float(np.median(scale_ratios))
+    scale = float(np.median(d_half / np.maximum(t_half, _EPS)))
     coordinates = (template - t_center) @ t_vectors
 
     candidates: list[np.ndarray] = []
-    # PCA signs are arbitrary. Try all sign combinations; this is a fixed four
-    # candidate loop independent of sample/history length.
     for first_sign in (-1.0, 1.0):
         for second_sign in (-1.0, 1.0):
             basis = d_vectors * np.array((first_sign, second_sign))[None, :]
@@ -209,8 +217,12 @@ def _single_template(axis_ratio_bucket: float) -> np.ndarray:
     ratio = max(float(axis_ratio_bucket), 1.0)
     radius = 1.0
     half_straight = max(ratio - 1.0, 0.0)
-    line = LineString(((-half_straight, 0.0), (half_straight, 0.0)))
-    polygon = line.buffer(radius, cap_style=1, join_style=1, quad_segs=48)
+    polygon = LineString(((-half_straight, 0.0), (half_straight, 0.0))).buffer(
+        radius,
+        cap_style=1,
+        join_style=1,
+        quad_segs=48,
+    )
     return _resample_closed(np.asarray(polygon.exterior.coords, dtype=float)[:-1])
 
 
@@ -224,22 +236,28 @@ def _double_template(opening_deg: float, radius_ratio: float) -> np.ndarray:
     right = np.array((math.sin(half_opening), math.cos(half_opening)), dtype=float)
     radius = float(radius_ratio)
     first = LineString((tuple(shared), tuple(left))).buffer(
-        radius, cap_style=1, join_style=1, quad_segs=32
+        radius,
+        cap_style=1,
+        join_style=1,
+        quad_segs=32,
     )
     second = LineString((tuple(shared), tuple(right))).buffer(
-        radius, cap_style=1, join_style=1, quad_segs=32
+        radius,
+        cap_style=1,
+        join_style=1,
+        quad_segs=32,
     )
     polygon = unary_union((first, second))
     return _resample_closed(np.asarray(polygon.exterior.coords, dtype=float)[:-1])
 
 
-def _fit_single_hippodrome(points: np.ndarray, axis_ratio: float, short_scale_m: float) -> _ModelFit:
+def _fit_single_hippodrome(
+    points: np.ndarray,
+    axis_ratio: float,
+    short_scale_m: float,
+) -> _ModelFit:
     candidates = np.unique(
-        np.clip(
-            np.array((axis_ratio * 0.80, axis_ratio, axis_ratio * 1.20)),
-            1.01,
-            20.0,
-        )
+        np.clip(np.array((axis_ratio * 0.80, axis_ratio, axis_ratio * 1.20)), 1.01, 20.0)
     )
     fits = [
         _fit_template(
@@ -254,12 +272,10 @@ def _fit_single_hippodrome(points: np.ndarray, axis_ratio: float, short_scale_m:
 
 
 def _fit_double_hippodrome(points: np.ndarray, short_scale_m: float) -> _ModelFit:
-    """Coarse-to-fine fit with no 10..40 degree acceptance rule.
+    """Coarse-to-fine fit over the full undirected opening domain.
 
-    Opening search spans the complete undirected angle domain. Radius ratio is a
-    numerical scale parameter searched logarithmically over a broad positive
-    range; neither grid is a product constraint and the final acceptance uses
-    residual/model separation only.
+    The angle/radius grids are solver discretization only. They are never used
+    as product acceptance ranges.
     """
 
     coarse_angles = np.arange(0.0, 180.0, 10.0)
@@ -281,7 +297,11 @@ def _fit_double_hippodrome(points: np.ndarray, short_scale_m: float) -> _ModelFi
                 best_radius = float(radius)
     assert best is not None
 
-    fine_angles = np.arange(max(0.0, best_angle - 10.0), min(180.0, best_angle + 10.0) + 0.1, 2.0)
+    fine_angles = np.arange(
+        max(0.0, best_angle - 10.0),
+        min(180.0, best_angle + 10.0) + 0.1,
+        2.0,
+    )
     radius_factors = np.exp(np.linspace(math.log(0.65), math.log(1.55), 5))
     for angle in fine_angles:
         for radius in best_radius * radius_factors:
@@ -300,8 +320,40 @@ def _polygon_concavity_ratio(canonical: np.ndarray) -> float:
     polygon = Polygon(canonical)
     if not polygon.is_valid or polygon.area <= _EPS:
         return 0.0
-    hull = polygon.convex_hull
-    return float(polygon.area / max(hull.area, _EPS))
+    return float(polygon.area / max(polygon.convex_hull.area, _EPS))
+
+
+def _base_diagnostics(
+    evidence: FoldedRouteEvidence,
+    *,
+    single_fit: _ModelFit | None = None,
+    double_fit: _ModelFit | None = None,
+    double_improvement: float | None = None,
+    concavity: float,
+) -> dict[str, float | int | bool | str]:
+    diagnostics: dict[str, float | int | bool | str] = {
+        "concavity_ratio": concavity,
+        "period_score": evidence.period.score,
+        "support_fraction": evidence.canonical_support_fraction,
+    }
+    if single_fit is not None:
+        diagnostics.update(
+            {
+                "single_rms_m": single_fit.rms_m,
+                "single_normalized_rms": single_fit.normalized_rms,
+            }
+        )
+    if double_fit is not None:
+        diagnostics.update(
+            {
+                "double_rms_m": double_fit.rms_m,
+                "double_normalized_rms": double_fit.normalized_rms,
+            }
+        )
+        diagnostics.update(double_fit.metadata)
+    if double_improvement is not None:
+        diagnostics["double_improvement"] = double_improvement
+    return diagnostics
 
 
 def classify_route(
@@ -312,9 +364,14 @@ def classify_route(
 ) -> RouteClassification:
     """Classify only the geometries approved in ROUTE_GEOMETRY_SPEC_HE.md."""
 
-    periodic_points = track.xy_m[evidence.periodic_mask]
-    if len(periodic_points) < 6:
+    # Use phase-balanced observed canonical bins for model fitting. Raw periodic
+    # samples can oversample straight legs when communication drops in turns.
+    model_points = evidence.canonical_xy_m[evidence.canonical_support]
+    if len(model_points) < 6:
+        model_points = track.xy_m[evidence.periodic_mask]
+    if len(model_points) < 6:
         raise ValueError("classification requires periodic support")
+
     short_scale = float(np.min(evidence.half_axes_m))
     axis_ratio = evidence.axis_ratio
     crossings, crossing_angle = supported_self_crossings(
@@ -322,23 +379,20 @@ def classify_route(
         evidence.canonical_support,
     )
     concavity = _polygon_concavity_ratio(evidence.canonical_xy_m)
-
     base_quality = float(
         np.clip(
-            0.45 * evidence.period.score
-            + 0.55 * evidence.canonical_support_fraction,
+            0.45 * evidence.period.score + 0.55 * evidence.canonical_support_fraction,
             0.0,
             1.0,
         )
     )
 
     if crossings > 0:
-        confidence = float(np.clip(base_quality + 0.12, 0.0, 1.0))
         return RouteClassification(
             family=RouteFamily.SO,
             subtype=RouteSubtype.FIGURE_EIGHT,
             topology=RouteTopology.SELF_CROSSING,
-            confidence=confidence,
+            confidence=float(np.clip(base_quality + 0.12, 0.0, 1.0)),
             axis_ratio=axis_ratio,
             period_s=evidence.period.period_s,
             canonical_xy_m=evidence.canonical_xy_m,
@@ -352,32 +406,35 @@ def classify_route(
             },
         )
 
-    single_fit = _fit_single_hippodrome(periodic_points, max(axis_ratio, 1.01), short_scale)
-    double_fit = _fit_double_hippodrome(periodic_points, short_scale)
+    single_fit = _fit_single_hippodrome(model_points, max(axis_ratio, 1.01), short_scale)
+    double_fit = _fit_double_hippodrome(model_points, short_scale)
     double_improvement = (single_fit.rms_m - double_fit.rms_m) / max(single_fit.rms_m, 1.0)
 
-    # Double is accepted by direct model evidence, not by an opening-angle gate.
-    double_absolute_ok = double_fit.normalized_rms <= 0.24
-    double_separated = double_improvement >= 0.08
-    if double_absolute_ok and double_separated:
-        confidence = float(
-            np.clip(base_quality + min(0.25, max(0.0, double_improvement)), 0.0, 1.0)
+    double_absolute_ok = double_fit.normalized_rms <= _DOUBLE_MAX_NORMALIZED_RMS
+    double_separated = double_improvement >= _DOUBLE_MIN_MODEL_IMPROVEMENT
+    compact = axis_ratio <= si_axis_ratio_max
+    compact_double_topology = (
+        concavity <= _COMPACT_DOUBLE_MAX_CONCAVITY_RATIO
+        and double_improvement >= _COMPACT_DOUBLE_MIN_MODEL_IMPROVEMENT
+    )
+    double_topology_ok = (not compact) or compact_double_topology
+
+    if double_absolute_ok and double_separated and double_topology_ok:
+        diagnostics = _base_diagnostics(
+            evidence,
+            single_fit=single_fit,
+            double_fit=double_fit,
+            double_improvement=double_improvement,
+            concavity=concavity,
         )
-        diagnostics: dict[str, float | int | bool | str] = {
-            "single_rms_m": single_fit.rms_m,
-            "double_rms_m": double_fit.rms_m,
-            "double_normalized_rms": double_fit.normalized_rms,
-            "double_improvement": double_improvement,
-            "concavity_ratio": concavity,
-            "period_score": evidence.period.score,
-            "support_fraction": evidence.canonical_support_fraction,
-        }
-        diagnostics.update(double_fit.metadata)
+        diagnostics["compact_double_topology"] = compact_double_topology
         return RouteClassification(
             family=RouteFamily.SO,
             subtype=RouteSubtype.DOUBLE_HIPPODROME,
             topology=RouteTopology.DOUBLE,
-            confidence=confidence,
+            confidence=float(
+                np.clip(base_quality + min(0.25, max(0.0, double_improvement)), 0.0, 1.0)
+            ),
             axis_ratio=axis_ratio,
             period_s=evidence.period.period_s,
             canonical_xy_m=evidence.canonical_xy_m,
@@ -385,7 +442,10 @@ def classify_route(
             diagnostics=diagnostics,
         )
 
-    if axis_ratio <= si_axis_ratio_max:
+    # The spec defines SI by compact closed geometry. A compact arbitrary route
+    # is therefore SI unless an explicit supported SO topology (crossing or
+    # strongly separated Double union geometry) has already been established.
+    if compact:
         return RouteClassification(
             family=RouteFamily.SI,
             subtype=RouteSubtype.COMPACT,
@@ -395,38 +455,32 @@ def classify_route(
             period_s=evidence.period.period_s,
             canonical_xy_m=evidence.canonical_xy_m,
             canonical_support=evidence.canonical_support,
-            diagnostics={
-                "single_rms_m": single_fit.rms_m,
-                "double_rms_m": double_fit.rms_m,
-                "double_improvement": double_improvement,
-                "concavity_ratio": concavity,
-                "period_score": evidence.period.score,
-                "support_fraction": evidence.canonical_support_fraction,
-            },
+            diagnostics=_base_diagnostics(
+                evidence,
+                single_fit=single_fit,
+                double_fit=double_fit,
+                double_improvement=double_improvement,
+                concavity=concavity,
+            ),
         )
 
-    # An elongated route is not automatically a hippodrome. Require the capsule
-    # model to explain the periodic observations within the same relative scale.
-    if single_fit.normalized_rms <= 0.24:
-        confidence = float(np.clip(base_quality + 0.08, 0.0, 1.0))
+    if single_fit.normalized_rms <= _SINGLE_MAX_NORMALIZED_RMS:
         return RouteClassification(
             family=RouteFamily.SO,
             subtype=RouteSubtype.HIPPODROME,
             topology=RouteTopology.SIMPLE,
-            confidence=confidence,
+            confidence=float(np.clip(base_quality + 0.08, 0.0, 1.0)),
             axis_ratio=axis_ratio,
             period_s=evidence.period.period_s,
             canonical_xy_m=evidence.canonical_xy_m,
             canonical_support=evidence.canonical_support,
-            diagnostics={
-                "single_rms_m": single_fit.rms_m,
-                "single_normalized_rms": single_fit.normalized_rms,
-                "double_rms_m": double_fit.rms_m,
-                "double_improvement": double_improvement,
-                "concavity_ratio": concavity,
-                "period_score": evidence.period.score,
-                "support_fraction": evidence.canonical_support_fraction,
-            },
+            diagnostics=_base_diagnostics(
+                evidence,
+                single_fit=single_fit,
+                double_fit=double_fit,
+                double_improvement=double_improvement,
+                concavity=concavity,
+            ),
         )
 
     return RouteClassification(
@@ -438,14 +492,11 @@ def classify_route(
         period_s=evidence.period.period_s,
         canonical_xy_m=evidence.canonical_xy_m,
         canonical_support=evidence.canonical_support,
-        diagnostics={
-            "single_rms_m": single_fit.rms_m,
-            "single_normalized_rms": single_fit.normalized_rms,
-            "double_rms_m": double_fit.rms_m,
-            "double_normalized_rms": double_fit.normalized_rms,
-            "double_improvement": double_improvement,
-            "concavity_ratio": concavity,
-            "period_score": evidence.period.score,
-            "support_fraction": evidence.canonical_support_fraction,
-        },
+        diagnostics=_base_diagnostics(
+            evidence,
+            single_fit=single_fit,
+            double_fit=double_fit,
+            double_improvement=double_improvement,
+            concavity=concavity,
+        ),
     )
