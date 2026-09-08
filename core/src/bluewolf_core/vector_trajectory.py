@@ -310,8 +310,15 @@ def periodic_support_mask(
     period: PeriodEstimate,
     *,
     spatial_tolerance_m: float | None = None,
+    heading_tolerance_deg: float | None = 60.0,
 ) -> np.ndarray:
-    """Mark samples with a spatially recurrent counterpart near one period away.
+    """Mark samples with a recurrent counterpart near one period away.
+
+    Spatial proximity remains the primary recurrence evidence. When velocity is
+    available at both endpoints, heading must also agree; this prevents a
+    one-off approach/exit path that merely crosses the route from being credited
+    as periodic motion. Missing velocity never removes otherwise valid spatial
+    evidence.
 
     A single exact lag is intentionally *not* required. Period estimates can be
     biased by a few samples when turns are missing or wind varies. We search a
@@ -325,6 +332,13 @@ def periodic_support_mask(
     tolerance = _support_spatial_tolerance(track) if spatial_tolerance_m is None else float(
         spatial_tolerance_m
     )
+    if heading_tolerance_deg is not None and not 0.0 < heading_tolerance_deg <= 180.0:
+        raise ValueError("heading_tolerance_deg must be in (0,180] or None")
+    cosine_threshold = (
+        math.cos(math.radians(float(heading_tolerance_deg)))
+        if heading_tolerance_deg is not None
+        else -1.0
+    )
 
     for lag in range(max(2, period.lag_samples - radius), min(n - 1, period.lag_samples + radius) + 1):
         valid = track.observed_mask[:-lag] & track.observed_mask[lag:]
@@ -332,6 +346,19 @@ def periodic_support_mask(
             continue
         distance = np.linalg.norm(track.xy_m[:-lag] - track.xy_m[lag:], axis=1)
         recurrent = valid & (distance <= tolerance)
+
+        if track.velocity_xy_mps is not None and heading_tolerance_deg is not None:
+            first_velocity = track.velocity_xy_mps[:-lag]
+            second_velocity = track.velocity_xy_mps[lag:]
+            first_speed = np.linalg.norm(first_velocity, axis=1)
+            second_speed = np.linalg.norm(second_velocity, axis=1)
+            heading_available = (first_speed > _EPS) & (second_speed > _EPS)
+            dot = np.sum(first_velocity * second_velocity, axis=1)
+            heading_matches = dot >= (
+                cosine_threshold * first_speed * second_speed - _EPS
+            )
+            recurrent &= (~heading_available) | heading_matches
+
         output[:-lag] |= recurrent
         output[lag:] |= recurrent
     return output
@@ -399,6 +426,7 @@ def extract_periodic_evidence(
     minimum_period_s: float = 20.0,
     maximum_period_s: float | None = None,
     canonical_bins: int = 64,
+    heading_tolerance_deg: float | None = 60.0,
 ) -> FoldedRouteEvidence | None:
     period = estimate_period(
         track,
@@ -408,7 +436,11 @@ def extract_periodic_evidence(
     if period is None:
         return None
     period = refine_period_local(track, period)
-    periodic = periodic_support_mask(track, period)
+    periodic = periodic_support_mask(
+        track,
+        period,
+        heading_tolerance_deg=heading_tolerance_deg,
+    )
     try:
         canonical, support, counts = fold_periodic_route(
             track,
