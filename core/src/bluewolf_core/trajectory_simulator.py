@@ -19,6 +19,7 @@ from shapely.geometry import LineString
 from shapely.ops import unary_union
 
 
+# QA sampling priorities only. These are explicitly NOT detector/product limits.
 DOUBLE_HIPPODROME_PRIORITY_OPENINGS_DEG = (10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0)
 DOUBLE_HIPPODROME_EDGE_OPENINGS_DEG = (5.0, 50.0, 60.0)
 
@@ -105,7 +106,7 @@ class SimulatedTrace:
 
 
 def double_hippodrome_sweep_angles(*, include_edges: bool = True) -> tuple[float, ...]:
-    """QA scenario bank only; these values are not detector/product limits."""
+    """Return the QA scenario bank, never a classifier acceptance range."""
     if not include_edges:
         return DOUBLE_HIPPODROME_PRIORITY_OPENINGS_DEG
     return DOUBLE_HIPPODROME_PRIORITY_OPENINGS_DEG + DOUBLE_HIPPODROME_EDGE_OPENINGS_DEG
@@ -204,6 +205,7 @@ def _figure_eight(
     rotation_deg: float,
     leg_softness: float,
 ) -> RouteGeometry:
+    # Hippodrome-like self-crossing route with deliberately soft/curved legs.
     t = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
     x = long_scale_m * np.sin(t)
     y = short_scale_m * (np.sin(2.0 * t) + leg_softness * np.sin(4.0 * t))
@@ -235,11 +237,20 @@ def _double_hippodrome(
     left_center = shared_turn_center + arm_length_m * left_dir
     right_center = shared_turn_center + arm_length_m * right_dir
 
+    # Each area is one approved Hippodrome/capsule sharing the same turn-circle
+    # center. Driving geometry is the exterior of their union, so the internal
+    # U-turn arcs are absent by construction.
     left_area = LineString((tuple(shared_turn_center), tuple(left_center))).buffer(
-        turn_radius_m, cap_style=1, join_style=1, quad_segs=96
+        turn_radius_m,
+        cap_style=1,
+        join_style=1,
+        quad_segs=96,
     )
     right_area = LineString((tuple(shared_turn_center), tuple(right_center))).buffer(
-        turn_radius_m, cap_style=1, join_style=1, quad_segs=96
+        turn_radius_m,
+        cap_style=1,
+        join_style=1,
+        quad_segs=96,
     )
     merged = unary_union((left_area, right_area))
     exterior = np.asarray(merged.exterior.coords, dtype=float)[:-1]
@@ -309,7 +320,8 @@ def _sample_closed_polyline(xy: np.ndarray, phases: np.ndarray) -> np.ndarray:
 def _closed_tangent(xy: np.ndarray, phases: np.ndarray) -> np.ndarray:
     epsilon = 1e-4
     tangent = _sample_closed_polyline(xy, phases + epsilon) - _sample_closed_polyline(
-        xy, phases - epsilon
+        xy,
+        phases - epsilon,
     )
     return tangent / np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-12)
 
@@ -345,14 +357,34 @@ def _curvature(points: np.ndarray) -> np.ndarray:
 
 
 def _turn_mask(route_points: np.ndarray) -> np.ndarray:
+    """Return distinct high-curvature regions without labelling flat legs.
+
+    The previous quantile-over-all-points implementation could produce a zero
+    threshold on a polygon and therefore label the entire octagon as a turn.
+    We instead estimate the threshold from positive/significant curvature only.
+    A circle has near-constant curvature and intentionally has no *distinct*
+    turn region for turn-biased communication loss.
+    """
+
     curvature = _curvature(route_points)
     if len(curvature) == 0:
         return np.zeros(0, dtype=bool)
     mean = float(np.mean(curvature))
     std = float(np.std(curvature))
-    if std <= max(1e-6, 0.05 * mean):
+    if std <= max(1e-6, 0.05 * max(mean, 1e-12)):
         return np.zeros_like(curvature, dtype=bool)
-    return curvature >= float(np.quantile(curvature, 0.72))
+
+    maximum = float(np.max(curvature))
+    significant_floor = max(1e-8, 0.02 * maximum)
+    positive = curvature[curvature > significant_floor]
+    if len(positive) == 0:
+        return np.zeros_like(curvature, dtype=bool)
+    threshold = max(
+        significant_floor,
+        0.10 * maximum,
+        float(np.quantile(positive, 0.30)),
+    )
+    return curvature >= threshold
 
 
 def _smooth_wind(
@@ -365,10 +397,12 @@ def _smooth_wind(
         return np.zeros((sample_count, 2), dtype=float)
     duration_s = max(sample_interval_s, (sample_count - 1) * sample_interval_s)
     knot_count = max(
-        4, int(math.ceil(duration_s / max(config.knot_seconds, sample_interval_s))) + 1
+        4,
+        int(math.ceil(duration_s / max(config.knot_seconds, sample_interval_s))) + 1,
     )
     knot_index = np.linspace(0.0, sample_count - 1, knot_count)
     magnitude = rng.uniform(0.10 * config.max_speed_mps, config.max_speed_mps, size=knot_count)
+    # Direction is a smooth random walk, so both magnitude and direction vary.
     direction = np.cumsum(rng.normal(0.0, 0.65, size=knot_count))
     grid = np.arange(sample_count, dtype=float)
     return np.column_stack(
@@ -456,7 +490,9 @@ def simulate(route: RouteGeometry, config: SimulationConfig) -> SimulatedTrace:
         spike = rng.random(len(observed)) < config.noise.spike_probability
         if np.any(spike):
             observed[spike] += rng.normal(
-                0.0, config.noise.spike_std_m, size=(int(np.count_nonzero(spike)), 2)
+                0.0,
+                config.noise.spike_std_m,
+                size=(int(np.count_nonzero(spike)), 2),
             )
 
     observed_mask = rng.random(len(truth)) >= config.network.base_dropout_probability
@@ -472,8 +508,10 @@ def simulate(route: RouteGeometry, config: SimulationConfig) -> SimulatedTrace:
     if config.network.turn_burst_count > 0 and np.any(turn_mask):
         turn_indices = np.flatnonzero(turn_mask)
         half_width = max(
-            2, int(round(config.network.turn_burst_half_width_fraction * route_count))
+            2,
+            int(round(config.network.turn_burst_half_width_fraction * route_count)),
         )
+        # Small scenario-count loop; geometry/sample math remains vectorized.
         for _ in range(config.network.turn_burst_count):
             center = int(rng.choice(turn_indices))
             lo = max(0, center - half_width)
