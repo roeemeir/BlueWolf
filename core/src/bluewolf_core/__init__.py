@@ -34,7 +34,7 @@ from .grouping import (
     discover_structural_groups,
     routes_compatible,
 )
-from .integrated_session import CoreSession
+from .semantic_session import CoreSession
 from .models import (
     ChangeKind,
     ClosedRoute,
