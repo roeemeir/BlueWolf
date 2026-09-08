@@ -16,7 +16,7 @@ import numpy as np
 
 from .config import DetectionConfig
 from .geometry import local_m_to_wgs84
-from .models import CanonicalPoint, ClosedRoute, Direction, RouteTopology, VehicleSample
+from .models import CanonicalPoint, ClosedRoute, Direction, RouteFamily, RouteTopology, VehicleSample
 from .route_classifier_v2 import RouteClassification, classify_route
 from .route_detection import RouteDetection
 from .vector_sample_adapter import PreparedVectorTrack, build_vector_track
@@ -199,22 +199,23 @@ def detect_closed_route_vector(
     # V1's 82% confirmation coverage assumed a detector that had to observe
     # nearly the complete fitted path. V2 explicitly supports a different
     # operational case: the network may lose almost every sample in both turns.
-    # Therefore missing turn bins remain unobserved and lower confidence, but
-    # they cannot veto otherwise strong recurrence/model evidence. Confirmation
-    # still needs the candidate observability floor, a full-cycle recurrence,
-    # strict fit and sufficient classifier confidence.
-    classification_ready = classification.confidence + _EPS >= detection.required_fit_fraction
+    # Missing turn bins remain unobserved and reduce quality, but do not veto
+    # strong recurrent evidence. The topology classifier already contains the
+    # model-specific acceptance gates; its confidence is a quality signal, not
+    # a second binary threshold in the contract adapter.
+    recognized_route = classification.family is not RouteFamily.FREE
     candidate_ready = (
-        fit_fraction + _EPS >= detection.candidate_fit_fraction
+        recognized_route
+        and fit_fraction + _EPS >= detection.candidate_fit_fraction
         and coverage_fraction + _EPS >= detection.candidate_coverage_fraction
         and completed_cycles + _EPS >= detection.candidate_travel_fraction
         and closure_ok
     )
     confirmation_ready = (
-        fit_fraction + _EPS >= detection.required_fit_fraction
+        recognized_route
+        and fit_fraction + _EPS >= detection.required_fit_fraction
         and coverage_fraction + _EPS >= detection.candidate_coverage_fraction
         and completed_cycles + _EPS >= detection.required_completed_cycles
-        and classification_ready
         and closure_ok
     )
     if require_confirmation and not confirmation_ready:
@@ -275,7 +276,8 @@ def detect_closed_route_vector(
             "detector": "vector_v2",
             "candidate_ready": candidate_ready,
             "confirmation_ready": confirmation_ready,
-            "classification_ready": classification_ready,
+            "recognized_route": recognized_route,
+            "classification_confidence": classification.confidence,
             "closure_ok": closure_ok,
             "period_score": evidence.period.score,
             "period_support_pairs": evidence.period.support_pairs,
