@@ -18,6 +18,17 @@ from .geometry import (
     resample_closed_polyline,
     tangent_error_deg,
 )
+from .grouping import (
+    GroupCompatibility,
+    GroupObservation,
+    GroupingSnapshot,
+    RouteGroup,
+    StableGroupingEngine,
+    StructuralGroup,
+    base_period_seconds,
+    discover_structural_groups,
+    routes_compatible,
+)
 from .models import (
     ChangeKind,
     ClosedRoute,
@@ -54,6 +65,9 @@ __all__ = [
     "CoreSession",
     "Direction",
     "FieldQuality",
+    "GroupCompatibility",
+    "GroupObservation",
+    "GroupingSnapshot",
     "MemberTemplateFit",
     "NoLegalTemplateAssignment",
     "ObservedMember",
@@ -61,8 +75,11 @@ __all__ = [
     "PolylineProjection",
     "RouteDetection",
     "RouteFamily",
+    "RouteGroup",
     "RouteSubtype",
+    "StableGroupingEngine",
     "StateChange",
+    "StructuralGroup",
     "SynchronizationTemplate",
     "TemplateFit",
     "TemplateSlot",
@@ -70,19 +87,22 @@ __all__ = [
     "VehicleSample",
     "VehicleScores",
     "aggregate_group_scores",
+    "base_period_seconds",
     "circular_phase_distance",
     "closed_polyline_length",
     "curvature_at_phase",
     "detect_closed_route",
+    "discover_structural_groups",
     "fit_template",
     "normalized_curvature_error",
     "point_at_phase",
     "project_onto_closed_polyline",
     "project_wgs84",
     "resample_closed_polyline",
+    "routes_compatible",
     "score_error",
     "score_vehicle",
     "tangent_error_deg",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
