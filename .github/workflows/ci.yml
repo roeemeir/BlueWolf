@@ -5,6 +5,37 @@ on:
   pull_request:
 
 jobs:
+  lifecycle-smoke:
+    name: Lifecycle smoke — ${{ matrix.case }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - case: fast-period-acquisition
+            test: test_adaptive_acquisition.AdaptiveAcquisitionSimulationTests.test_confirmation_latency_scales_with_route_period
+          - case: free-approach-attribution
+            test: test_adaptive_acquisition.AdaptiveAcquisitionSimulationTests.test_free_approach_is_excluded_by_shortest_sufficient_suffix
+          - case: initial-confirmation-geometry
+            test: test_session.SessionDeterminismTests.test_route_candidate_then_confirmation_and_phase_are_adaptive
+          - case: stable-route
+            test: test_route_change.AdaptiveRouteChangeTests.test_stable_confirmed_route_does_not_emit_replacement
+          - case: geometry-replacement
+            test: test_route_change.AdaptiveRouteChangeTests.test_session_replaces_confirmed_route_without_fixed_change_timer
+          - case: period-replacement
+            test: test_route_change.AdaptiveRouteChangeTests.test_period_only_change_is_detected_and_attributed_retroactively
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python core
+        working-directory: core
+        run: python -m pip install -e .
+      - name: Run focused lifecycle regression
+        working-directory: core/tests
+        run: python -m unittest -v "${{ matrix.test }}"
+
   core:
     name: Python core
     runs-on: ubuntu-latest
