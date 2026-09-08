@@ -215,6 +215,109 @@ class GroupMembershipLifecycle:
         )
         return GroupLifecycleResult(next_snapshot, tuple(changes))
 
+    def expire_members(
+        self,
+        expired_keys: Iterable[StreamKey],
+        observed_time_utc: datetime,
+    ) -> GroupLifecycleResult:
+        """Apply the five-minute communication hold boundary deterministically.
+
+        Before ``VEHICLE_EXPIRED`` the old confirmed membership is intentionally
+        retained. At expiry the missing members are removed immediately because
+        the hold itself already supplied the temporal grace period. Surviving
+        groups keep their id only if the normal 60% preservation rule allows it.
+        """
+
+        now = _utc(observed_time_utc)
+        expired = set(expired_keys)
+        if not expired:
+            return GroupLifecycleResult(self.snapshot(), ())
+
+        old_groups = self.groups
+        old_by_id = {group.group_id: group for group in old_groups}
+        target: list[StructuralGroup] = []
+        for group in old_groups:
+            kept_indices = [
+                index
+                for index, key in enumerate(group.member_keys)
+                if key not in expired
+            ]
+            if len(kept_indices) < self.config.minimum_valid_vehicles:
+                continue
+            target.append(
+                StructuralGroup(
+                    server_id=group.server_id,
+                    family=group.family,
+                    member_keys=tuple(group.member_keys[index] for index in kept_indices),
+                    route_ids=tuple(group.route_ids[index] for index in kept_indices),
+                    base_period_s=group.base_period_s,
+                )
+            )
+
+        next_snapshot = self._stable.reconcile(target)
+        next_by_id = {group.group_id: group for group in next_snapshot.groups}
+        changes: list[StateChange] = []
+
+        for group in next_snapshot.groups:
+            previous = old_by_id.get(group.group_id)
+            if previous is not None and previous.member_keys == group.member_keys:
+                continue
+            overlapping_old = [
+                old
+                for old in old_groups
+                if set(old.member_keys).intersection(group.member_keys)
+            ]
+            changes.append(
+                StateChange(
+                    now,
+                    ChangeKind.GROUP_CHANGED,
+                    group.server_id,
+                    group_id=group.group_id,
+                    details={
+                        "member_keys": [list(key) for key in group.member_keys],
+                        "previous_group_ids": [old.group_id for old in overlapping_old],
+                        "expired_member_keys": [list(key) for key in sorted(expired)],
+                        "dissolved": False,
+                    },
+                )
+            )
+
+        for old in old_groups:
+            if old.group_id in next_by_id:
+                continue
+            if not set(old.member_keys).intersection(expired):
+                continue
+            # If an identity reset created a successor with <60% retained, the
+            # old identity still closes explicitly at the hold boundary.
+            changes.append(
+                StateChange(
+                    now,
+                    ChangeKind.GROUP_CHANGED,
+                    old.server_id,
+                    group_id=old.group_id,
+                    details={
+                        "member_keys": [list(key) for key in old.member_keys],
+                        "expired_member_keys": [list(key) for key in sorted(expired)],
+                        "dissolved": True,
+                    },
+                )
+            )
+
+        for signature in tuple(self._candidate_support):
+            if set(signature).intersection(expired):
+                self._candidate_support.pop(signature, None)
+                self._announced.discard(signature)
+
+        changes.sort(
+            key=lambda item: (
+                item.change_time_utc,
+                item.server_id,
+                item.group_id or "",
+                item.kind.value,
+            )
+        )
+        return GroupLifecycleResult(next_snapshot, tuple(changes))
+
     def export_state(self) -> dict[str, Any]:
         return {
             "stable": self._stable.export_state(),
