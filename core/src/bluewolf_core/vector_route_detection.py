@@ -53,14 +53,7 @@ def _polyline_distances(points: np.ndarray, canonical: np.ndarray) -> np.ndarray
 
 
 def _phase_fold_mean(track: VectorTrack, evidence: FoldedRouteEvidence) -> np.ndarray:
-    """Raw/observed phase fold used only for the `observed` route view.
-
-    Effective geometry uses the robust median fold from vector_trajectory. This
-    mean fold deliberately retains more noise/spike influence so observed and
-    effective remain distinct. Unsupported phase bins fall back to the effective
-    hypothesis but remain unsupported in evidence; no confirmation credit is
-    created by that fallback.
-    """
+    """Raw/observed phase fold used only for the `observed` route view."""
 
     bins = len(evidence.canonical_xy_m)
     periodic = evidence.periodic_mask & track.observed_mask
@@ -79,8 +72,6 @@ def _phase_fold_mean(track: VectorTrack, evidence: FoldedRouteEvidence) -> np.nd
 
 
 def _direction(canonical_absolute: np.ndarray, topology: RouteTopology) -> Direction:
-    # A global CW/CCW sign is not well-defined for a self-crossing Figure-8.
-    # Return UNKNOWN rather than inventing a product convention.
     if topology is RouteTopology.SELF_CROSSING:
         return Direction.UNKNOWN
     x = canonical_absolute[:, 0]
@@ -161,10 +152,6 @@ def detect_closed_route_vector(
     if evidence is None:
         return None
 
-    # Everything through `generic_ready` is topology-independent and cheap
-    # compared with Single/Double model fitting. CoreSession can call this on
-    # every evidence update without paying for classification before recurrence
-    # could possibly satisfy the requested lifecycle gate.
     periodic_points = prepared.track.xy_m[evidence.periodic_mask]
     if len(periodic_points) < 6:
         return None
@@ -183,13 +170,16 @@ def detect_closed_route_vector(
     periodic_indices = np.flatnonzero(evidence.periodic_mask)
     if len(periodic_indices) < 2:
         return None
+    periodic_start_index = int(periodic_indices[0])
+    periodic_end_index = int(periodic_indices[-1])
+    periodic_start_utc = prepared.grid_time_utc(periodic_start_index)
+    periodic_end_utc = prepared.grid_time_utc(periodic_end_index)
     periodic_span_s = float(
-        prepared.track.time_s[periodic_indices[-1]] - prepared.track.time_s[periodic_indices[0]]
+        prepared.track.time_s[periodic_end_index]
+        - prepared.track.time_s[periodic_start_index]
     )
     completed_cycles = max(0.0, periodic_span_s / max(evidence.period.period_s, _EPS))
 
-    # Recurrence one period apart is the V2 closure evidence. It remains valid
-    # when the physical turn itself is missing from the network.
     minimum_recurrence_pairs = max(
         8,
         int(math.ceil(0.05 * prepared.observed_grid_count)),
@@ -221,13 +211,6 @@ def detect_closed_route_vector(
         si_axis_ratio_max=detection.si_axis_ratio_max,
     )
 
-    # V1's 82% confirmation coverage assumed a detector that had to observe
-    # nearly the complete fitted path. V2 explicitly supports a different
-    # operational case: the network may lose almost every sample in both turns.
-    # Missing turn bins remain unobserved and reduce quality, but do not veto
-    # strong recurrent evidence. The topology classifier contains the
-    # model-specific acceptance gates; its confidence is a quality signal, not
-    # a second binary threshold in the contract adapter.
     recognized_route = classification.family is not RouteFamily.FREE
     candidate_ready = (
         recognized_route
@@ -310,6 +293,11 @@ def detect_closed_route_vector(
             "grid_seconds": prepared.grid_seconds,
             "source_sample_count": prepared.source_sample_count,
             "observed_grid_count": prepared.observed_grid_count,
+            "periodic_start_grid_index": periodic_start_index,
+            "periodic_end_grid_index": periodic_end_index,
+            "periodic_start_utc": periodic_start_utc.isoformat().replace("+00:00", "Z"),
+            "periodic_end_utc": periodic_end_utc.isoformat().replace("+00:00", "Z"),
+            "periodic_span_seconds": periodic_span_s,
             "family": classification.family.value,
             "subtype": classification.subtype.value,
             "topology": classification.topology.value,
