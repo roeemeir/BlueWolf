@@ -52,6 +52,12 @@ from .models import (
 from .route_detection import RouteDetection, detect_closed_route
 from .scoring import aggregate_group_scores, score_error, score_vehicle
 from .session import CheckpointCompatibilityError
+from .so_phase import (
+    SOPhaseFrame,
+    UnsupportedSOPhaseGeometry,
+    build_so_phase_frame,
+    normalize_so_phase,
+)
 from .so_template_fit import (
     NoLegalSOTemplateAssignment,
     SOMemberTemplateFit,
@@ -111,6 +117,7 @@ __all__ = [
     "RouteSubtype",
     "SOMemberTemplateFit",
     "SOObservedMember",
+    "SOPhaseFrame",
     "SORouteInstance",
     "SORouteKind",
     "SOSlotRelation",
@@ -125,11 +132,13 @@ __all__ = [
     "TemplateFit",
     "TemplateSlot",
     "UndefinedSOGeometryError",
+    "UnsupportedSOPhaseGeometry",
     "VehicleFrameResult",
     "VehicleSample",
     "VehicleScores",
     "aggregate_group_scores",
     "base_period_seconds",
+    "build_so_phase_frame",
     "circular_phase_distance",
     "closed_polyline_length",
     "curvature_at_phase",
@@ -137,6 +146,7 @@ __all__ = [
     "discover_structural_groups",
     "fit_so_template",
     "fit_template",
+    "normalize_so_phase",
     "normalized_curvature_error",
     "point_at_phase",
     "project_onto_closed_polyline",
