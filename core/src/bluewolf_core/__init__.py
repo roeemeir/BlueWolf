@@ -62,6 +62,12 @@ from .so_phase import (
     project_so_semantic_phase_local,
     project_so_semantic_phase_wgs84,
 )
+from .so_scoring import (
+    SOGroupScoringResult,
+    SOMemberScoringResult,
+    SOScoringObservation,
+    score_so_template,
+)
 from .so_template_fit import (
     NoLegalSOTemplateAssignment,
     SOMemberTemplateFit,
@@ -120,11 +126,14 @@ __all__ = [
     "RouteFamily",
     "RouteGroup",
     "RouteSubtype",
+    "SOGroupScoringResult",
+    "SOMemberScoringResult",
     "SOMemberTemplateFit",
     "SOObservedMember",
     "SOPhaseFrame",
     "SORouteInstance",
     "SORouteKind",
+    "SOScoringObservation",
     "SOSemanticProjection",
     "SOSlotRelation",
     "SOTemplate",
@@ -163,6 +172,7 @@ __all__ = [
     "resample_closed_polyline",
     "routes_compatible",
     "score_error",
+    "score_so_template",
     "score_vehicle",
     "slot_relation",
     "synchronization_route_kind",
