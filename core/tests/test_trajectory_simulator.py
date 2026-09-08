@@ -93,6 +93,30 @@ class TrajectorySimulatorTests(unittest.TestCase):
         self.assertGreater(np.count_nonzero(observed_route), 0)
         self.assertEqual(trace.observed_xy_m.shape, trace.truth_xy_m.shape)
 
+    def test_octagon_turn_loss_targets_corners_not_the_whole_route(self) -> None:
+        route = make_route(RouteShape.SI_OCTAGON, point_count=1024)
+        trace = simulate(
+            route,
+            SimulationConfig(
+                seed=91,
+                sample_interval_s=1.0,
+                period_s=240.0,
+                route_cycles=1.0,
+                approach_duration_s=1.0,
+                exit_duration_s=1.0,
+                network=NetworkLossConfig(
+                    base_dropout_probability=0.0,
+                    turn_dropout_probability=1.0,
+                    turn_burst_count=0,
+                ),
+            ),
+        )
+        turn_fraction = float(np.mean(trace.route_turn_mask))
+        self.assertGreater(turn_fraction, 0.0)
+        self.assertLess(turn_fraction, 0.25)
+        route_observed = trace.observed_mask[trace.segment == "route"]
+        self.assertGreater(float(np.mean(route_observed)), 0.70)
+
 
 if __name__ == "__main__":
     unittest.main()
