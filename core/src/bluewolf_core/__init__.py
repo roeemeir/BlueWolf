@@ -43,6 +43,13 @@ from .grouping import (
     discover_structural_groups,
     routes_compatible,
 )
+from .live_so_scoring import (
+    LiveSOGroupScorer,
+    LiveSOGroupScoringResult,
+    LiveSOMemberInput,
+    LiveSOMetricResult,
+    LiveSOMetricsEngine,
+)
 from .semantic_session import CoreSession
 from .models import (
     ChangeKind,
@@ -143,6 +150,11 @@ __all__ = [
     "InvalidatedManualSelection",
     "InvalidSOTemplateBank",
     "InvalidSOTemplateSelection",
+    "LiveSOGroupScorer",
+    "LiveSOGroupScoringResult",
+    "LiveSOMemberInput",
+    "LiveSOMetricResult",
+    "LiveSOMetricsEngine",
     "MemberTemplateFit",
     "NoLegalSOTemplateAssignment",
     "NoLegalTemplateAssignment",
@@ -220,4 +232,4 @@ __all__ = [
     "template_relations",
 ]
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
