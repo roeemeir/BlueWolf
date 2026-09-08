@@ -73,6 +73,8 @@ jobs:
             tests: test_so_phase
           - shard: so-scoring
             tests: test_so_scoring
+          - shard: so-template-bank
+            tests: test_so_template_bank
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
