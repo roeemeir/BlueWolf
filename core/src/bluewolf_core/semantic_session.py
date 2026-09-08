@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
-from datetime import datetime
+from datetime import UTC, datetime
 from itertools import groupby
 from typing import Iterable
 
@@ -37,6 +37,12 @@ from .so_phase import (
 
 
 _EPS = 1e-12
+
+
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        raise ValueError("time must be timezone-aware")
+    return value.astimezone(UTC)
 
 
 def _oriented_world_axis(east: float, north: float) -> tuple[float, float]:
@@ -85,6 +91,7 @@ class CoreSession(IntegratedCoreSession):
         *,
         observed_until_utc: datetime | None = None,
     ) -> CoreBatchResult:
+        observed = _utc(observed_until_utc) if observed_until_utc is not None else None
         ordered = sorted(
             samples,
             key=lambda item: (
@@ -117,15 +124,11 @@ class CoreSession(IntegratedCoreSession):
             changes.extend(result.changes)
 
         newest_sample = ordered[-1].sample_time_utc if ordered else None
-        if observed_until_utc is not None and (
-            newest_sample is None or observed_until_utc > newest_sample
+        if observed is not None and (
+            newest_sample is None or observed > newest_sample
         ):
-            tail = super().process_batch((), observed_until_utc=observed_until_utc)
+            tail = super().process_batch((), observed_until_utc=observed)
             changes.extend(tail.changes)
-        elif not ordered and observed_until_utc is not None:
-            # The branch above already covers an empty batch, retained here only
-            # for readability of the public contract.
-            raise AssertionError("unreachable")
 
         return CoreBatchResult(
             schema_version=1,
