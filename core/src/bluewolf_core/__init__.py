@@ -52,6 +52,13 @@ from .models import (
 from .route_detection import RouteDetection, detect_closed_route
 from .scoring import aggregate_group_scores, score_error, score_vehicle
 from .session import CheckpointCompatibilityError
+from .so_template_fit import (
+    NoLegalSOTemplateAssignment,
+    SOMemberTemplateFit,
+    SOObservedMember,
+    SOTemplateFit,
+    fit_so_template,
+)
 from .so_templates import (
     Quarter,
     QuarterRelation,
@@ -91,6 +98,7 @@ __all__ = [
     "GroupObservation",
     "GroupingSnapshot",
     "MemberTemplateFit",
+    "NoLegalSOTemplateAssignment",
     "NoLegalTemplateAssignment",
     "ObservedMember",
     "PrimitiveMetrics",
@@ -101,10 +109,13 @@ __all__ = [
     "RouteFamily",
     "RouteGroup",
     "RouteSubtype",
+    "SOMemberTemplateFit",
+    "SOObservedMember",
     "SORouteInstance",
     "SORouteKind",
     "SOSlotRelation",
     "SOTemplate",
+    "SOTemplateFit",
     "SOVehicleSlot",
     "StableGroupingEngine",
     "StateChange",
@@ -124,6 +135,7 @@ __all__ = [
     "curvature_at_phase",
     "detect_closed_route",
     "discover_structural_groups",
+    "fit_so_template",
     "fit_template",
     "normalized_curvature_error",
     "point_at_phase",
