@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from bluewolf_core.geometry import local_m_to_wgs84
 from bluewolf_core.models import CanonicalPoint, Direction, RouteFamily, RouteSubtype, RouteTopology, VehicleSample
+from bluewolf_core.route_classifier_v2 import classify_route
 from bluewolf_core.trajectory_simulator import (
     NetworkLossConfig,
     NoiseConfig,
@@ -15,6 +16,8 @@ from bluewolf_core.trajectory_simulator import (
     simulate,
 )
 from bluewolf_core.vector_route_detection import detect_closed_route_vector
+from bluewolf_core.vector_sample_adapter import build_vector_track
+from bluewolf_core.vector_trajectory import extract_periodic_evidence
 
 
 class VectorRouteDetectionAdapterTests(unittest.TestCase):
@@ -81,6 +84,34 @@ class VectorRouteDetectionAdapterTests(unittest.TestCase):
             )
         return samples
 
+    def _classification_diagnostics(
+        self,
+        samples: list[VehicleSample],
+        *,
+        grid_seconds: float,
+    ) -> dict[str, object]:
+        prepared = build_vector_track(samples, grid_seconds=grid_seconds)
+        if prepared is None:
+            return {"prepared": False}
+        evidence = extract_periodic_evidence(
+            prepared.track,
+            minimum_period_s=max(2.0 * prepared.grid_seconds, 20.0),
+            canonical_bins=64,
+        )
+        if evidence is None:
+            return {"prepared": True, "periodic_evidence": False}
+        result = classify_route(prepared.track, evidence)
+        return {
+            "prepared": True,
+            "periodic_evidence": True,
+            "family": result.family.value,
+            "subtype": result.subtype.value,
+            "topology": result.topology.value,
+            "axis_ratio": result.axis_ratio,
+            "period_s": result.period_s,
+            **dict(result.diagnostics),
+        }
+
     def test_compact_free_si_preserves_generic_centerline_contract(self) -> None:
         detection = detect_closed_route_vector(
             self._vehicle_samples(RouteShape.SI_FREE_CLOSED, seed=701),
@@ -96,17 +127,19 @@ class VectorRouteDetectionAdapterTests(unittest.TestCase):
         self.assertEqual(detection.diagnostics["detector"], "vector_v2")
 
     def test_single_hippodrome_confirms_even_when_turn_samples_are_nearly_absent(self) -> None:
-        detection = detect_closed_route_vector(
-            self._vehicle_samples(
-                RouteShape.SO_HIPPODROME,
-                seed=702,
-                turn_dropout=0.98,
-                turn_bursts=4,
-                route_cycles=2.3,
-            ),
-            grid_seconds=2.0,
+        samples = self._vehicle_samples(
+            RouteShape.SO_HIPPODROME,
+            seed=702,
+            turn_dropout=0.98,
+            turn_bursts=4,
+            route_cycles=2.3,
         )
-        self.assertIsNotNone(detection)
+        detection = detect_closed_route_vector(samples, grid_seconds=2.0)
+        classification = self._classification_diagnostics(samples, grid_seconds=2.0)
+        self.assertIsNotNone(
+            detection,
+            msg=f"sparse-turn classification diagnostics: {classification}",
+        )
         assert detection is not None
         self.assertEqual(detection.effective.family, RouteFamily.SO)
         self.assertEqual(
@@ -120,17 +153,26 @@ class VectorRouteDetectionAdapterTests(unittest.TestCase):
     def test_double_opening_is_geometry_evidence_not_an_acceptance_range(self) -> None:
         for index, angle in enumerate((25.0, 55.0), start=1):
             with self.subTest(opening_deg=angle):
-                detection = detect_closed_route_vector(
-                    self._vehicle_samples(
-                        RouteShape.SO_DOUBLE_HIPPODROME,
-                        seed=710 + index,
-                        opening_deg=angle,
-                    ),
-                    grid_seconds=2.0,
+                samples = self._vehicle_samples(
+                    RouteShape.SO_DOUBLE_HIPPODROME,
+                    seed=710 + index,
+                    opening_deg=angle,
                 )
-                self.assertIsNotNone(detection)
+                detection = detect_closed_route_vector(samples, grid_seconds=2.0)
+                classification = self._classification_diagnostics(samples, grid_seconds=2.0)
+                self.assertIsNotNone(
+                    detection,
+                    msg=f"Double {angle} classification diagnostics: {classification}",
+                )
                 assert detection is not None
-                self.assertEqual(detection.effective.subtype, RouteSubtype.DOUBLE_HIPPODROME)
+                self.assertEqual(
+                    detection.effective.subtype,
+                    RouteSubtype.DOUBLE_HIPPODROME,
+                    msg=(
+                        f"Double {angle} diagnostics: {dict(detection.diagnostics)}; "
+                        f"classification={classification}"
+                    ),
+                )
                 self.assertEqual(detection.effective.topology, RouteTopology.DOUBLE)
 
     def test_figure_eight_keeps_self_crossing_topology_without_inventing_global_rotation(self) -> None:
