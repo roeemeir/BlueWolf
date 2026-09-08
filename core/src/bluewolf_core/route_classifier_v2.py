@@ -34,6 +34,11 @@ _EPS = 1e-12
 _SINGLE_MAX_NORMALIZED_RMS = 0.24
 _DOUBLE_MAX_NORMALIZED_RMS = 0.24
 _DOUBLE_MIN_MODEL_IMPROVEMENT = 0.25
+# Phase order is independent evidence: a more complex Double model is not
+# allowed to win merely because some branch lies near the observed points.
+# This threshold came from the deterministic simulator sweep, where supported
+# Doubles were >=~0.65 and false Single->Double fits were <=~0.11 (or negative).
+_DOUBLE_MIN_ORDERED_MODEL_IMPROVEMENT = 0.45
 # A Double can itself be compact (axis ratio <=1.5). In that ambiguous regime
 # topology evidence comes from the union boundary itself, not from an opening
 # angle rule. Mild concavity still requires a very strong model separation;
@@ -176,10 +181,24 @@ def _point_to_polyline_distances(points: np.ndarray, polyline: np.ndarray) -> np
     return np.sqrt(np.min(squared, axis=1))
 
 
-def _align_template(template: np.ndarray, data_points: np.ndarray) -> np.ndarray:
+def _align_template(
+    template: np.ndarray,
+    data_points: np.ndarray,
+    *,
+    scale_mode: str = "median",
+) -> np.ndarray:
     t_center, t_vectors, t_half = robust_axis_frame(template)
     d_center, d_vectors, d_half = robust_axis_frame(data_points)
-    scale = float(np.median(d_half / np.maximum(t_half, _EPS)))
+    ratio = d_half / np.maximum(t_half, _EPS)
+    if scale_mode == "median":
+        scale = float(np.median(ratio))
+    elif scale_mode == "short_axis":
+        # When turn regions are missing, the observed long-axis envelope is
+        # biased but the separation between the two recurrent legs still gives
+        # a strong estimate of route width. Let the model ratio solve length.
+        scale = float(np.min(d_half) / max(float(np.min(t_half)), _EPS))
+    else:
+        raise ValueError(f"unsupported scale_mode: {scale_mode}")
     coordinates = (template - t_center) @ t_vectors
 
     candidates: list[np.ndarray] = []
@@ -200,8 +219,10 @@ def _fit_template(
     template: np.ndarray,
     short_scale_m: float,
     metadata: Mapping[str, float],
+    *,
+    scale_mode: str = "median",
 ) -> _ModelFit:
-    aligned = _align_template(template, observed_points)
+    aligned = _align_template(template, observed_points, scale_mode=scale_mode)
     distance = _point_to_polyline_distances(observed_points, aligned)
     rms = float(np.sqrt(np.mean(distance * distance)))
     p90 = float(np.quantile(distance, 0.90))
@@ -218,6 +239,8 @@ def _ordered_phase_rms(
     support: np.ndarray,
     template: np.ndarray,
     observed_points: np.ndarray,
+    *,
+    scale_mode: str = "median",
 ) -> float:
     """Compare a model to canonical phase order, not just nearest geometry.
 
@@ -237,7 +260,11 @@ def _ordered_phase_rms(
         return math.inf
 
     sampled_template = _resample_closed(np.asarray(template, dtype=float), len(canonical))
-    aligned = _align_template(sampled_template, observed_points)
+    aligned = _align_template(
+        sampled_template,
+        observed_points,
+        scale_mode=scale_mode,
+    )
     best = math.inf
     for ordered in (aligned, aligned[::-1]):
         for shift in range(len(canonical)):
@@ -295,19 +322,27 @@ def _fit_single_hippodrome(
 ) -> _ModelFit:
     # The observed axis ratio can be biased when both turn regions are missing.
     # Search a broad logarithmic neighborhood instead of assuming the measured
-    # ratio is already within ±20% of the complete capsule. This expands only
-    # the numerical solver; the acceptance residual remains unchanged.
+    # ratio is already within ±20% of the complete capsule. For every ratio we
+    # test both the legacy median-axis scale and a width-anchored scale. This
+    # expands only the numerical solver; the acceptance residual is unchanged.
     ratio_factors = np.array((0.50, 0.70, 1.00, 1.40, 2.00), dtype=float)
     candidates = np.unique(np.clip(axis_ratio * ratio_factors, 1.01, 20.0))
-    fits = [
-        _fit_template(
-            points,
-            _single_template(round(float(candidate), 2)),
-            short_scale_m,
-            {"axis_ratio_model": float(candidate)},
-        )
-        for candidate in candidates
-    ]
+    fits: list[_ModelFit] = []
+    for candidate in candidates:
+        template = _single_template(round(float(candidate), 2))
+        for scale_mode, short_axis_alignment in (("median", 0.0), ("short_axis", 1.0)):
+            fits.append(
+                _fit_template(
+                    points,
+                    template,
+                    short_scale_m,
+                    {
+                        "axis_ratio_model": float(candidate),
+                        "single_short_axis_alignment": short_axis_alignment,
+                    },
+                    scale_mode=scale_mode,
+                )
+            )
     return min(fits, key=lambda fit: fit.rms_m)
 
 
@@ -452,11 +487,17 @@ def classify_route(
     double_improvement = (single_fit.rms_m - double_fit.rms_m) / max(single_fit.rms_m, 1.0)
 
     single_ratio = float(single_fit.metadata["axis_ratio_model"])
+    single_scale_mode = (
+        "short_axis"
+        if float(single_fit.metadata.get("single_short_axis_alignment", 0.0)) >= 0.5
+        else "median"
+    )
     single_ordered_rms = _ordered_phase_rms(
         evidence.canonical_xy_m,
         evidence.canonical_support,
         _single_template(round(single_ratio, 2)),
         model_points,
+        scale_mode=single_scale_mode,
     )
     double_opening = float(double_fit.metadata["opening_deg"])
     double_radius = float(double_fit.metadata["radius_ratio"])
@@ -493,6 +534,9 @@ def classify_route(
 
     double_absolute_ok = double_fit.normalized_rms <= _DOUBLE_MAX_NORMALIZED_RMS
     double_separated = double_improvement >= _DOUBLE_MIN_MODEL_IMPROVEMENT
+    double_ordered_separated = (
+        ordered_improvement >= _DOUBLE_MIN_ORDERED_MODEL_IMPROVEMENT
+    )
     compact = axis_ratio <= si_axis_ratio_max
     compact_double_strong_concavity = (
         concavity <= _COMPACT_DOUBLE_STRONG_CONCAVITY_RATIO
@@ -505,7 +549,12 @@ def classify_route(
     compact_double_topology = compact_double_strong_concavity or compact_double_mild_concavity
     double_topology_ok = (not compact) or compact_double_topology
 
-    if double_absolute_ok and double_separated and double_topology_ok:
+    if (
+        double_absolute_ok
+        and double_separated
+        and double_ordered_separated
+        and double_topology_ok
+    ):
         diagnostics = _base_diagnostics(
             evidence,
             single_fit=single_fit,
@@ -513,6 +562,7 @@ def classify_route(
             double_improvement=double_improvement,
             concavity=concavity,
         )
+        diagnostics["ordered_gate_passed"] = True
         diagnostics["compact_double_topology"] = compact_double_topology
         diagnostics["compact_double_strong_concavity"] = compact_double_strong_concavity
         return RouteClassification(
