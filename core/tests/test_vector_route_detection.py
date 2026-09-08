@@ -109,7 +109,11 @@ class VectorRouteDetectionAdapterTests(unittest.TestCase):
         self.assertIsNotNone(detection)
         assert detection is not None
         self.assertEqual(detection.effective.family, RouteFamily.SO)
-        self.assertEqual(detection.effective.subtype, RouteSubtype.HIPPODROME)
+        self.assertEqual(
+            detection.effective.subtype,
+            RouteSubtype.HIPPODROME,
+            msg=f"sparse-turn diagnostics: {dict(detection.diagnostics)}",
+        )
         self.assertTrue(bool(detection.diagnostics["closure_ok"]))
         self.assertGreater(int(detection.diagnostics["period_support_pairs"]), 8)
 
