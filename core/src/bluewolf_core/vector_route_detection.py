@@ -223,6 +223,25 @@ def detect_closed_route_vector(
         periodic_span_s / max(evidence.period.period_s, _EPS),
     )
 
+    # A confirmation suffix must start close to the recurrent traversal itself.
+    # Otherwise an old free/approach segment can remain in a coarse search
+    # window even though recurrence later identifies a valid route. The allowed
+    # prefix is evidence-scaled: the same phase gap already permitted for
+    # coverage interpolation, with a two-grid-sample floor for cadence jitter.
+    prefix_before_periodic_s = max(
+        0.0,
+        float(
+            prepared.track.time_s[periodic_start_index]
+            - prepared.track.time_s[0]
+        ),
+    )
+    allowed_prefix_s = max(
+        2.0 * prepared.grid_seconds,
+        evidence.period.period_s * detection.coverage_interpolation_max_phase_gap,
+    )
+    if require_confirmation and prefix_before_periodic_s > allowed_prefix_s + _EPS:
+        return None
+
     # Recurrence establishes trustworthy traversal bounds. Inside those bounds,
     # use every real observation to estimate the route; never synthesize samples
     # across network holes. fold_periodic_route may interpolate unsupported bins
@@ -395,6 +414,8 @@ def detect_closed_route_vector(
             "periodic_start_utc": periodic_start_utc.isoformat().replace("+00:00", "Z"),
             "periodic_end_utc": periodic_end_utc.isoformat().replace("+00:00", "Z"),
             "periodic_span_seconds": periodic_span_s,
+            "prefix_before_periodic_seconds": prefix_before_periodic_s,
+            "allowed_confirmation_prefix_seconds": allowed_prefix_s,
             "family": classification.family.value,
             "subtype": classification.subtype.value,
             "topology": classification.topology.value,
