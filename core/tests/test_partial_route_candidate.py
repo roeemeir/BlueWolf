@@ -95,6 +95,77 @@ class PartialRouteEvidenceTests(unittest.TestCase):
         # smooth-heading evidence of a vehicle following a coherent route.
         self.assertLess(evidence.smooth_heading_fraction, 0.80)
 
+    def test_candidate_features_scale_with_observed_route_fraction_not_elapsed_time(self) -> None:
+        """Calibration bank for an evidence gate; this test encodes no timer.
+
+        A circle arc is useful here because its true travelled route fraction is
+        known analytically. We deliberately keep the sample interval constant
+        and vary only geometric arc coverage. The assertions establish monotone
+        evidence trends that a later binary gate can consume without deriving a
+        wait time from wall-clock duration.
+        """
+
+        measured: list[tuple[float, float, float]] = []
+        for route_fraction in (0.20, 0.30, 0.40, 0.50, 0.65):
+            angle = np.linspace(0.0, 2.0 * math.pi * route_fraction, 80)
+            points = np.column_stack((100.0 * np.cos(angle), 100.0 * np.sin(angle)))
+            evidence = extract_partial_route_evidence(_samples(points), grid_seconds=2.0)
+            self.assertIsNotNone(evidence)
+            assert evidence is not None
+            measured.append(
+                (
+                    route_fraction,
+                    evidence.turn_fraction,
+                    evidence.path_efficiency,
+                )
+            )
+            self.assertGreater(evidence.smooth_heading_fraction, 0.85)
+
+        turn = [item[1] for item in measured]
+        efficiency = [item[2] for item in measured]
+        self.assertTrue(all(next_value > value for value, next_value in zip(turn, turn[1:])))
+        self.assertTrue(
+            all(next_value < value for value, next_value in zip(efficiency, efficiency[1:]))
+        )
+        # Around 40% of a smooth closed route there should already be substantial
+        # ordered turning evidence, but still no period/closure claim.
+        forty = measured[2]
+        self.assertGreater(forty[1], 0.30)
+        self.assertLess(forty[2], 0.90)
+
+    def test_partial_candidate_features_reject_non_route_motion_bank(self) -> None:
+        """Keep obvious non-route motion separated before choosing a gate."""
+
+        x = np.linspace(0.0, 420.0, 100)
+        straight = np.column_stack((x, 0.02 * x))
+        straight_evidence = extract_partial_route_evidence(
+            _samples(straight), grid_seconds=2.0
+        )
+        self.assertIsNotNone(straight_evidence)
+        assert straight_evidence is not None
+        self.assertLess(straight_evidence.turn_fraction, 0.05)
+        self.assertGreater(straight_evidence.path_efficiency, 0.80)
+
+        rng = np.random.default_rng(712)
+        noisy_drift = np.column_stack(
+            (
+                np.linspace(0.0, 180.0, 100),
+                np.cumsum(rng.normal(0.0, 2.0, size=100)),
+            )
+        )
+        drift_evidence = extract_partial_route_evidence(
+            _samples(noisy_drift), grid_seconds=2.0
+        )
+        self.assertIsNotNone(drift_evidence)
+        assert drift_evidence is not None
+        # Drift can accumulate apparent turn, so smoothness is an independent
+        # guard rather than treating turn_fraction alone as route evidence.
+        self.assertTrue(
+            drift_evidence.turn_fraction < 0.30
+            or drift_evidence.smooth_heading_fraction < 0.85
+            or drift_evidence.path_efficiency > 0.90
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
