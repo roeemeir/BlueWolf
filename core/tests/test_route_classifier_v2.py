@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 
+import numpy as np
+
 from bluewolf_core.models import RouteFamily, RouteSubtype, RouteTopology
 from bluewolf_core.route_classifier_v2 import classify_route
 from bluewolf_core.trajectory_simulator import (
@@ -76,6 +78,32 @@ class RouteClassifierV2Tests(unittest.TestCase):
                 self.assertEqual(result.family, RouteFamily.SI)
                 self.assertEqual(result.subtype, RouteSubtype.COMPACT)
                 self.assertEqual(result.topology, RouteTopology.SIMPLE)
+
+    def test_si_circle_stays_si_with_partial_recurrence_phase_support(self) -> None:
+        """A first valid revisit must not turn an SI circle into a fake Double.
+
+        With only ~1.5 traversals, recurrence pairs cover only part of phase even
+        though the observations between the first and last revisit contain a
+        real complete traversal. Classification must use those real samples and
+        never treat interpolation across unsupported phase as Double topology.
+        """
+
+        period_s = 120.0
+        time_s = np.arange(0.0, 181.0, 5.0)
+        phase = 2.0 * np.pi * time_s / period_s
+        xy_m = np.column_stack((100.0 * np.cos(phase), 100.0 * np.sin(phase)))
+        track = VectorTrack(time_s, xy_m, np.ones(len(time_s), dtype=bool))
+        evidence = extract_periodic_evidence(track, minimum_period_s=20.0)
+        self.assertIsNotNone(evidence)
+        assert evidence is not None
+        self.assertLess(evidence.canonical_support_fraction, 0.80)
+
+        result = classify_route(track, evidence)
+        self.assertEqual(result.family, RouteFamily.SI, dict(result.diagnostics))
+        self.assertEqual(result.subtype, RouteSubtype.COMPACT, dict(result.diagnostics))
+        self.assertEqual(result.topology, RouteTopology.SIMPLE)
+        self.assertLessEqual(float(result.diagnostics["model_axis_ratio"]), 1.15)
+        self.assertGreater(int(result.diagnostics["model_span_point_count"]), 20)
 
     def test_single_hippodrome_is_not_accepted_merely_for_being_elongated(self) -> None:
         result = self._classify(RouteShape.SO_HIPPODROME, seed=210)
