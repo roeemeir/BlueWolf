@@ -5,7 +5,20 @@ from datetime import UTC, datetime, timedelta
 
 from bluewolf_core import ChangeKind, CoreSession, Direction, detect_closed_route
 from bluewolf_core.config import DetectionConfig
-from bluewolf_core.route_change import compare_routes, estimate_change_onset
+from bluewolf_core.geometry import local_m_to_wgs84
+from bluewolf_core.models import (
+    CanonicalPoint,
+    ClosedRoute,
+    RouteFamily,
+    RouteSubtype,
+    RouteTopology,
+    VehicleSample,
+)
+from bluewolf_core.route_change import (
+    compare_routes,
+    estimate_change_onset,
+    route_change_suspected,
+)
 from bluewolf_core.simulator import SimulatedVehicle, generate_si_circle_samples
 
 
@@ -29,7 +42,63 @@ def _detected_circle(*, radius_m: float, period_s: int, start: datetime = START)
     return detected.effective, tuple(samples)
 
 
+def _clockwise_square_route() -> ClosedRoute:
+    # Canonical points are deliberately ordered clockwise, matching the V2
+    # contract where centerline order follows observed phase/time.
+    return ClosedRoute(
+        route_id="cw-square",
+        family=RouteFamily.SI,
+        subtype=RouteSubtype.COMPACT,
+        topology=RouteTopology.SIMPLE,
+        canonical_points=(
+            CanonicalPoint(10.0, 10.0),
+            CanonicalPoint(10.0, -10.0),
+            CanonicalPoint(-10.0, -10.0),
+            CanonicalPoint(-10.0, 10.0),
+        ),
+        center_latitude_deg=32.0,
+        center_longitude_deg=34.8,
+        length_m=80.0,
+        long_axis_a_m=10.0,
+        short_axis_b_m=10.0,
+        orientation_deg=0.0,
+        estimated_period_s=40.0,
+        direction=Direction.CLOCKWISE,
+        detection_quality=1.0,
+    )
+
+
+def _clockwise_tangent_sample() -> VehicleSample:
+    latitude, longitude = local_m_to_wgs84(
+        CanonicalPoint(10.0, 0.0),
+        32.0,
+        34.8,
+    )
+    # Right-hand leg of the clockwise canonical square points south.
+    return VehicleSample(
+        sample_time_utc=START,
+        server_id=1,
+        vehicle_number=1,
+        vehicle_identifier=101,
+        active=True,
+        latitude_deg=latitude,
+        longitude_deg=longitude,
+        velocity_east_mps=0.0,
+        velocity_north_mps=-2.0,
+        reliability=1.0,
+    )
+
+
 class AdaptiveRouteChangeTests(unittest.TestCase):
+    def test_clockwise_canonical_tangent_is_not_flipped_twice(self) -> None:
+        self.assertFalse(
+            route_change_suspected(
+                _clockwise_tangent_sample(),
+                _clockwise_square_route(),
+                DetectionConfig(),
+            )
+        )
+
     def test_material_geometry_and_period_change_is_detected(self) -> None:
         config = DetectionConfig()
         old_route, _ = _detected_circle(radius_m=100, period_s=120)
@@ -65,7 +134,6 @@ class AdaptiveRouteChangeTests(unittest.TestCase):
         )
         history = old_samples + new_samples
 
-        # Pretend confirmation happened only after enough new-route evidence.
         evidence_start = transition + timedelta(seconds=100)
         onset = estimate_change_onset(
             history,
@@ -113,7 +181,6 @@ class AdaptiveRouteChangeTests(unittest.TestCase):
             str(replacement.details["detection_time_utc"]).replace("Z", "+00:00")
         )
         self.assertGreater(detection_time, replacement.change_time_utc)
-        # Evidence determines latency: no legacy 120-second change hold is used.
         self.assertLess(
             (detection_time - transition).total_seconds(),
             180.0,
