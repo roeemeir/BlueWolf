@@ -37,8 +37,24 @@ jobs:
         run: python -m unittest -v "${{ matrix.test }}"
 
   core:
-    name: Python core
+    name: Python core — ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: adaptive-acquisition
+            tests: test_adaptive_acquisition
+          - shard: route-change
+            tests: test_route_change
+          - shard: session
+            tests: test_session
+          - shard: classifiers
+            tests: test_route_classifier_sweep test_route_classifier_v2 test_vector_route_detection
+          - shard: route-vector
+            tests: test_route_detection test_vector_trajectory test_vector_sample_adapter test_partial_route_candidate
+          - shard: fundamentals
+            tests: test_geometry test_ingest_join test_scoring test_simulator test_templates test_trajectory_simulator
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -47,9 +63,9 @@ jobs:
       - name: Install Python core
         working-directory: core
         run: python -m pip install -e .
-      - name: Run deterministic core tests
-        working-directory: core
-        run: python -m unittest discover -s tests -v
+      - name: Run deterministic core shard
+        working-directory: core/tests
+        run: python -m unittest -v ${{ matrix.tests }}
 
   web:
     name: Web application
