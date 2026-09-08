@@ -35,10 +35,11 @@ _SINGLE_MAX_NORMALIZED_RMS = 0.24
 _DOUBLE_MAX_NORMALIZED_RMS = 0.24
 _DOUBLE_MIN_MODEL_IMPROVEMENT = 0.25
 # A Double can itself be compact (axis ratio <=1.5). In that ambiguous regime
-# we require stronger topology evidence: visible union-boundary concavity plus
-# a much stronger improvement over a Single-Hippodrome model. This is not an
-# opening-angle constraint.
+# topology evidence comes from the union boundary itself, not from an opening
+# angle rule. Mild concavity still requires a very strong model separation;
+# strong concavity can use the normal Double-vs-Single separation requirement.
 _COMPACT_DOUBLE_MAX_CONCAVITY_RATIO = 0.97
+_COMPACT_DOUBLE_STRONG_CONCAVITY_RATIO = 0.94
 _COMPACT_DOUBLE_MIN_MODEL_IMPROVEMENT = 0.55
 
 
@@ -413,9 +414,16 @@ def classify_route(
     double_absolute_ok = double_fit.normalized_rms <= _DOUBLE_MAX_NORMALIZED_RMS
     double_separated = double_improvement >= _DOUBLE_MIN_MODEL_IMPROVEMENT
     compact = axis_ratio <= si_axis_ratio_max
-    compact_double_topology = (
+    compact_double_strong_concavity = (
+        concavity <= _COMPACT_DOUBLE_STRONG_CONCAVITY_RATIO
+        and double_improvement >= _DOUBLE_MIN_MODEL_IMPROVEMENT
+    )
+    compact_double_mild_concavity = (
         concavity <= _COMPACT_DOUBLE_MAX_CONCAVITY_RATIO
         and double_improvement >= _COMPACT_DOUBLE_MIN_MODEL_IMPROVEMENT
+    )
+    compact_double_topology = (
+        compact_double_strong_concavity or compact_double_mild_concavity
     )
     double_topology_ok = (not compact) or compact_double_topology
 
@@ -428,6 +436,7 @@ def classify_route(
             concavity=concavity,
         )
         diagnostics["compact_double_topology"] = compact_double_topology
+        diagnostics["compact_double_strong_concavity"] = compact_double_strong_concavity
         return RouteClassification(
             family=RouteFamily.SO,
             subtype=RouteSubtype.DOUBLE_HIPPODROME,
