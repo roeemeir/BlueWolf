@@ -154,6 +154,45 @@ class RouteRegion:
 
 
 @dataclass(frozen=True, slots=True)
+class RouteComponent:
+    """One logical geometry component inside a hierarchical detected route.
+
+    For the approved Double Hippodrome this represents one of the two logical
+    Single-Hippodrome scoring surfaces. Component labels are diagnostic only and
+    carry no fixed vehicle role. ``center_offset_*`` is measured in the parent
+    route's local east/north frame; ``canonical_points`` are centered on the
+    component itself.
+    """
+
+    component_id: str
+    subtype: RouteSubtype
+    canonical_points: tuple[CanonicalPoint, ...]
+    center_offset_east_m: float
+    center_offset_north_m: float
+    length_m: float
+    long_axis_a_m: float
+    short_axis_b_m: float
+    orientation_deg: float
+
+    def __post_init__(self) -> None:
+        if not self.component_id:
+            raise ValueError("component_id cannot be empty")
+        if not 3 <= len(self.canonical_points) <= 64:
+            raise ValueError("component canonical_points must contain 3..64 points")
+        for name in (
+            "center_offset_east_m",
+            "center_offset_north_m",
+            "length_m",
+            "long_axis_a_m",
+            "short_axis_b_m",
+            "orientation_deg",
+        ):
+            _require_finite(name, float(getattr(self, name)))
+        if self.length_m <= 0 or self.long_axis_a_m <= 0 or self.short_axis_b_m <= 0:
+            raise ValueError("component dimensions must be positive")
+
+
+@dataclass(frozen=True, slots=True)
 class ClosedRoute:
     route_id: str
     family: RouteFamily
@@ -170,6 +209,7 @@ class ClosedRoute:
     direction: Direction
     detection_quality: float
     regions: tuple[RouteRegion, ...] = ()
+    components: tuple[RouteComponent, ...] = ()
 
     def __post_init__(self) -> None:
         if not 3 <= len(self.canonical_points) <= 64:
@@ -180,6 +220,17 @@ class ClosedRoute:
             raise ValueError("estimated_period_s must be positive")
         if not 0.0 <= self.detection_quality <= 1.0:
             raise ValueError("detection_quality must be in [0, 1]")
+        component_ids = [component.component_id for component in self.components]
+        if len(component_ids) != len(set(component_ids)):
+            raise ValueError("route component ids must be unique")
+        if self.subtype is RouteSubtype.DOUBLE_HIPPODROME and self.components:
+            if len(self.components) != 2 or any(
+                component.subtype is not RouteSubtype.HIPPODROME
+                for component in self.components
+            ):
+                raise ValueError(
+                    "Double Hippodrome components must be exactly two Hippodromes"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,8 +314,10 @@ class VehicleFrameResult:
     # SO-only geometry-normalized phase used by quarter/template semantics.
     # `phase` remains the raw/legacy route phase for backward compatibility and
     # for SI consumers. Figure-8 may legitimately leave semantic_phase=None at
-    # a self-crossing when heading evidence is unavailable.
+    # a self-crossing when heading evidence is unavailable. Double Hippodrome
+    # semantic phase is local to the currently active logical component.
     semantic_phase: float | None = None
+    active_so_component_id: str | None = None
     scores: VehicleScores | None = None
 
     def __post_init__(self) -> None:
@@ -274,6 +327,8 @@ class VehicleFrameResult:
             raise ValueError("phase must be in [0, 1)")
         if self.semantic_phase is not None and not 0.0 <= self.semantic_phase < 1.0:
             raise ValueError("semantic_phase must be in [0, 1)")
+        if self.active_so_component_id == "":
+            raise ValueError("active_so_component_id must be non-empty when supplied")
 
 
 @dataclass(frozen=True, slots=True)
