@@ -90,8 +90,19 @@ class DetectionConfig:
     adaptive_window_growth_factor: float = 1.5
     adaptive_window_refine_seconds: int = 10
 
-    # Initial evidence thresholds. They are intentionally configuration values
-    # so deterministic simulation and later real-data calibration can tune them.
+    # Topology-neutral partial-cycle candidate gates. These do not claim a
+    # family, topology, route id or period; they only indicate that enough
+    # coherent route-like curvature has been observed to justify the more
+    # expensive closed-route search. Calibrated against all approved V2 route
+    # families plus straight, random-walk and noisy-drift negative banks.
+    partial_candidate_min_turn_fraction: float = 0.30
+    partial_candidate_min_smooth_heading_fraction: float = 0.85
+    partial_candidate_min_turn_sign_persistence: float = 0.75
+    partial_candidate_max_path_efficiency: float = 0.90
+    partial_candidate_min_contiguous_observation_fraction: float = 0.35
+
+    # Closed-route evidence thresholds. They are configuration values so
+    # deterministic simulation and later real-data calibration can tune them.
     candidate_fit_fraction: float = 0.68
     candidate_coverage_fraction: float = 0.45
     candidate_travel_fraction: float = 0.40
@@ -133,6 +144,26 @@ class DetectionConfig:
             raise ValueError("phase_coverage_bins must be at least 8")
         if not 0.0 < self.coverage_interpolation_max_phase_gap <= 0.5:
             raise ValueError("coverage_interpolation_max_phase_gap must be in (0, 0.5]")
+        for name in (
+            "partial_candidate_min_turn_fraction",
+            "partial_candidate_min_smooth_heading_fraction",
+            "partial_candidate_min_turn_sign_persistence",
+            "partial_candidate_max_path_efficiency",
+            "partial_candidate_min_contiguous_observation_fraction",
+        ):
+            value = float(getattr(self, name))
+            if not 0.0 <= value <= 1.5:
+                raise ValueError(f"{name} is outside the supported range")
+        for name in (
+            "partial_candidate_min_smooth_heading_fraction",
+            "partial_candidate_min_turn_sign_persistence",
+            "partial_candidate_min_contiguous_observation_fraction",
+        ):
+            value = float(getattr(self, name))
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be in [0,1]")
+        if not 0.0 < self.partial_candidate_max_path_efficiency <= 1.5:
+            raise ValueError("partial_candidate_max_path_efficiency must be in (0,1.5]")
         for name in (
             "candidate_fit_fraction",
             "candidate_coverage_fraction",
