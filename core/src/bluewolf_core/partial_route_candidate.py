@@ -3,8 +3,7 @@
 A partial candidate must not pretend to be a ClosedRoute: before recurrence we
 do not yet know a defensible period, closure, family or topology. This module
 therefore extracts only ordered geometric evidence from the observed portion of
-the trajectory. It does not make a binary candidate decision yet; thresholds
-will be calibrated against the simulator/GT bank before lifecycle integration.
+the trajectory and applies a calibrated topology-neutral readiness gate.
 
 Missing network slots remain explicit gaps. No segment is drawn through a gap
 for either metrics or diagnostic geometry.
@@ -18,6 +17,7 @@ from typing import Iterable
 
 import numpy as np
 
+from .config import DetectionConfig
 from .models import CanonicalPoint, VehicleSample
 from .vector_sample_adapter import build_vector_track
 
@@ -40,7 +40,7 @@ class PartialRouteEvidence:
 
     `path_efficiency` is robust spatial extent / observed travelled distance.
     A straight approach tends toward one; a path that bends around an area falls
-    below one. It is evidence only, not an acceptance gate.
+    below one.
 
     `observed_runs` keeps communication gaps explicit. Each inner tuple is one
     contiguous observed run; consumers must never connect separate runs as if a
@@ -82,6 +82,31 @@ class PartialRouteEvidence:
             raise ValueError("observed_travel_m must be positive")
         if not self.observed_runs or any(len(run) < 2 for run in self.observed_runs):
             raise ValueError("observed_runs must contain non-empty contiguous paths")
+
+
+def partial_candidate_ready(
+    evidence: PartialRouteEvidence,
+    config: DetectionConfig | None = None,
+) -> bool:
+    """Return whether partial geometry justifies a route-candidate state.
+
+    This decision is deliberately weaker than route confirmation and does not
+    infer family, topology, period, direction or route id. The gate is entirely
+    evidence-based; elapsed time is not an input.
+    """
+
+    detection = config or DetectionConfig()
+    return (
+        evidence.turn_fraction + _EPS >= detection.partial_candidate_min_turn_fraction
+        and evidence.smooth_heading_fraction + _EPS
+        >= detection.partial_candidate_min_smooth_heading_fraction
+        and evidence.turn_sign_persistence + _EPS
+        >= detection.partial_candidate_min_turn_sign_persistence
+        and evidence.path_efficiency
+        <= detection.partial_candidate_max_path_efficiency + _EPS
+        and evidence.contiguous_observation_fraction + _EPS
+        >= detection.partial_candidate_min_contiguous_observation_fraction
+    )
 
 
 def _contiguous_runs(mask: np.ndarray) -> tuple[np.ndarray, ...]:
