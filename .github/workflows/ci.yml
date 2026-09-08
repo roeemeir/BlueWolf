@@ -63,6 +63,8 @@ jobs:
             tests: test_route_detection test_vector_trajectory test_vector_sample_adapter test_partial_route_candidate
           - shard: fundamentals
             tests: test_geometry test_grouping test_group_lifecycle test_si_direction_lifecycle test_ingest_join test_scoring test_simulator test_templates test_trajectory_simulator
+          - shard: so-templates
+            tests: test_so_templates
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
