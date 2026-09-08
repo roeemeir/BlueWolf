@@ -53,10 +53,14 @@ from .route_detection import RouteDetection, detect_closed_route
 from .scoring import aggregate_group_scores, score_error, score_vehicle
 from .session import CheckpointCompatibilityError
 from .so_phase import (
+    AmbiguousSOPhaseProjection,
     SOPhaseFrame,
+    SOSemanticProjection,
     UnsupportedSOPhaseGeometry,
     build_so_phase_frame,
     normalize_so_phase,
+    project_so_semantic_phase_local,
+    project_so_semantic_phase_wgs84,
 )
 from .so_template_fit import (
     NoLegalSOTemplateAssignment,
@@ -90,6 +94,7 @@ from .templates import (
 )
 
 __all__ = [
+    "AmbiguousSOPhaseProjection",
     "ChangeKind",
     "CheckpointCompatibilityError",
     "ClosedRoute",
@@ -120,6 +125,7 @@ __all__ = [
     "SOPhaseFrame",
     "SORouteInstance",
     "SORouteKind",
+    "SOSemanticProjection",
     "SOSlotRelation",
     "SOTemplate",
     "SOTemplateFit",
@@ -150,6 +156,8 @@ __all__ = [
     "normalized_curvature_error",
     "point_at_phase",
     "project_onto_closed_polyline",
+    "project_so_semantic_phase_local",
+    "project_so_semantic_phase_wgs84",
     "project_wgs84",
     "quarter_relation",
     "resample_closed_polyline",
