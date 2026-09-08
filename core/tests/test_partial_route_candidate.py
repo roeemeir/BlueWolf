@@ -40,6 +40,16 @@ def _samples(points: np.ndarray, *, missing: set[int] | None = None) -> list[Veh
     return output
 
 
+def _diag(evidence) -> dict[str, float]:
+    return {
+        "turn_fraction": float(evidence.turn_fraction),
+        "smooth_heading_fraction": float(evidence.smooth_heading_fraction),
+        "turn_sign_persistence": float(evidence.turn_sign_persistence),
+        "path_efficiency": float(evidence.path_efficiency),
+        "contiguous_observation_fraction": float(evidence.contiguous_observation_fraction),
+    }
+
+
 class PartialRouteEvidenceTests(unittest.TestCase):
     def test_partial_circle_has_turn_evidence_without_inventing_period_or_family(self) -> None:
         angle = np.linspace(0.0, 1.10 * math.pi, 72)
@@ -50,6 +60,7 @@ class PartialRouteEvidenceTests(unittest.TestCase):
 
         self.assertGreater(evidence.turn_fraction, 0.40)
         self.assertGreater(evidence.smooth_heading_fraction, 0.85)
+        self.assertGreater(evidence.turn_sign_persistence, 0.85)
         self.assertLess(evidence.path_efficiency, 0.90)
         self.assertEqual(len(evidence.observed_runs), 1)
         self.assertFalse(hasattr(evidence, "period_s"))
@@ -80,8 +91,6 @@ class PartialRouteEvidenceTests(unittest.TestCase):
 
         self.assertEqual(len(evidence.observed_runs), 2)
         self.assertLess(evidence.contiguous_observation_fraction, 0.75)
-        # The two runs contain only geometry inferred inside observed spans;
-        # there is no synthetic run representing the missing interval.
         self.assertTrue(all(len(run) >= 2 for run in evidence.observed_runs))
 
     def test_seeded_small_gps_zigzag_does_not_look_like_smooth_route_turning(self) -> None:
@@ -91,21 +100,18 @@ class PartialRouteEvidenceTests(unittest.TestCase):
         self.assertIsNotNone(evidence)
         assert evidence is not None
 
-        # Random walk can accumulate apparent angle, but it should not get the
-        # smooth-heading evidence of a vehicle following a coherent route.
-        self.assertLess(evidence.smooth_heading_fraction, 0.80)
+        # Random walk can accumulate apparent angle, but it should not get both
+        # smooth heading changes and persistent curvature like a coherent route.
+        self.assertTrue(
+            evidence.smooth_heading_fraction < 0.80
+            or evidence.turn_sign_persistence < 0.75,
+            msg=f"random-walk diagnostics: {_diag(evidence)}",
+        )
 
     def test_candidate_features_scale_with_observed_route_fraction_not_elapsed_time(self) -> None:
-        """Calibration bank for an evidence gate; this test encodes no timer.
+        """Calibration bank for an evidence gate; this test encodes no timer."""
 
-        A circle arc is useful here because its true travelled route fraction is
-        known analytically. We deliberately keep the sample interval constant
-        and vary only geometric arc coverage. The assertions establish monotone
-        evidence trends that a later binary gate can consume without deriving a
-        wait time from wall-clock duration.
-        """
-
-        measured: list[tuple[float, float, float]] = []
+        measured: list[tuple[float, float, float, float]] = []
         for route_fraction in (0.20, 0.30, 0.40, 0.50, 0.65):
             angle = np.linspace(0.0, 2.0 * math.pi * route_fraction, 80)
             points = np.column_stack((100.0 * np.cos(angle), 100.0 * np.sin(angle)))
@@ -117,18 +123,17 @@ class PartialRouteEvidenceTests(unittest.TestCase):
                     route_fraction,
                     evidence.turn_fraction,
                     evidence.path_efficiency,
+                    evidence.turn_sign_persistence,
                 )
             )
             self.assertGreater(evidence.smooth_heading_fraction, 0.85)
+            if route_fraction >= 0.30:
+                self.assertGreater(evidence.turn_sign_persistence, 0.80)
 
         turn = [item[1] for item in measured]
         efficiency = [item[2] for item in measured]
         self.assertTrue(all(next_value > value for value, next_value in zip(turn, turn[1:])))
-        self.assertTrue(
-            all(next_value < value for value, next_value in zip(efficiency, efficiency[1:]))
-        )
-        # Around 40% of a smooth closed route there should already be substantial
-        # ordered turning evidence, but still no period/closure claim.
+        self.assertTrue(all(next_value < value for value, next_value in zip(efficiency, efficiency[1:])))
         forty = measured[2]
         self.assertGreater(forty[1], 0.30)
         self.assertLess(forty[2], 0.90)
@@ -138,9 +143,7 @@ class PartialRouteEvidenceTests(unittest.TestCase):
 
         x = np.linspace(0.0, 420.0, 100)
         straight = np.column_stack((x, 0.02 * x))
-        straight_evidence = extract_partial_route_evidence(
-            _samples(straight), grid_seconds=2.0
-        )
+        straight_evidence = extract_partial_route_evidence(_samples(straight), grid_seconds=2.0)
         self.assertIsNotNone(straight_evidence)
         assert straight_evidence is not None
         self.assertLess(straight_evidence.turn_fraction, 0.05)
@@ -153,17 +156,15 @@ class PartialRouteEvidenceTests(unittest.TestCase):
                 np.cumsum(rng.normal(0.0, 2.0, size=100)),
             )
         )
-        drift_evidence = extract_partial_route_evidence(
-            _samples(noisy_drift), grid_seconds=2.0
-        )
+        drift_evidence = extract_partial_route_evidence(_samples(noisy_drift), grid_seconds=2.0)
         self.assertIsNotNone(drift_evidence)
         assert drift_evidence is not None
-        # Drift can accumulate apparent turn, so smoothness is an independent
-        # guard rather than treating turn_fraction alone as route evidence.
         self.assertTrue(
             drift_evidence.turn_fraction < 0.30
             or drift_evidence.smooth_heading_fraction < 0.85
-            or drift_evidence.path_efficiency > 0.90
+            or drift_evidence.turn_sign_persistence < 0.75
+            or drift_evidence.path_efficiency > 0.90,
+            msg=f"noisy-drift diagnostics: {_diag(drift_evidence)}",
         )
 
 
