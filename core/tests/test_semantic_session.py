@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import unittest
 from datetime import UTC, datetime, timedelta
 
@@ -218,6 +219,11 @@ class SemanticSessionTests(unittest.TestCase):
         self.assertEqual(first, second)
         assert first is not None
         self.assertAlmostEqual(math.hypot(first[0], first[1]), 1.0)
+
+    def test_naive_observed_until_preserves_parent_value_error_contract(self) -> None:
+        session = CoreSession()
+        with self.assertRaisesRegex(ValueError, "timezone-aware"):
+            session.process_batch((), observed_until_utc=datetime(2026, 1, 1))
 
 
 if __name__ == "__main__":
