@@ -10,9 +10,11 @@ Frame convention:
 - Q2 / semantic phase 0.5 is the opposite half-cycle position.
 - positive semantic progression leaves Q0 through the positive minor-axis side.
 
-The major-axis *line* comes from ``ClosedRoute.orientation_deg``. Its sign is
-made deterministic from world East/North axes by making the dominant component
-positive. The minor axis is then the 90-degree counter-clockwise vector.
+The major-axis *line* comes from ``ClosedRoute.orientation_deg``. Its sign can
+be aligned to a caller-supplied reference axis so every Route Instance in one SO
+chain uses the same end as Q0. Without a reference, a deterministic world-axis
+sign convention is used. The minor axis is the 90-degree counter-clockwise
+vector from the oriented major axis.
 
 For Figure-8 this frame only normalizes a raw phase that is already known. Live
 position projection at the self-crossing still requires heading-aware branch
@@ -57,6 +59,10 @@ class SOPhaseFrame:
                 raise ValueError(f"{name} must be finite")
         object.__setattr__(self, "anchor_phase", self.anchor_phase % 1.0)
 
+    @property
+    def major_axis(self) -> tuple[float, float]:
+        return self.major_east, self.major_north
+
     def normalize(self, raw_phase: float) -> float:
         """Convert one raw arc-length phase into the geometry-stable SO frame."""
 
@@ -68,16 +74,38 @@ class SOPhaseFrame:
         return delta
 
 
-def _deterministic_major_axis(orientation_deg: float) -> tuple[float, float]:
+def _unit_reference(value: tuple[float, float] | None) -> tuple[float, float] | None:
+    if value is None:
+        return None
+    east, north = float(value[0]), float(value[1])
+    if not math.isfinite(east) or not math.isfinite(north):
+        raise ValueError("reference_major_axis must be finite")
+    magnitude = math.hypot(east, north)
+    if magnitude <= _EPS:
+        raise ValueError("reference_major_axis must be non-zero")
+    return east / magnitude, north / magnitude
+
+
+def _oriented_major_axis(
+    orientation_deg: float,
+    reference_major_axis: tuple[float, float] | None,
+) -> tuple[float, float]:
     if not math.isfinite(orientation_deg):
         raise ValueError("route orientation must be finite")
     angle = math.radians(orientation_deg % 180.0)
     east = math.cos(angle)
     north = math.sin(angle)
 
-    # PCA/eigenvector orientation is an unoriented axis line. Choose one sign in
-    # a way that stays stable near vertical routes as well as horizontal routes:
-    # the dominant world component is always positive.
+    reference = _unit_reference(reference_major_axis)
+    if reference is not None:
+        if east * reference[0] + north * reference[1] < 0.0:
+            east, north = -east, -north
+        return east, north
+
+    # A standalone axis line still needs a deterministic sign. Making the
+    # dominant world component positive is stable around vertical and horizontal
+    # routes. Chains should pass the first frame's major_axis as a reference to
+    # subsequent Route Instances, which also removes sign-boundary edge cases.
     if abs(east) >= abs(north):
         if east < 0.0:
             east, north = -east, -north
@@ -111,15 +139,20 @@ def _anchor_vertex(
 ) -> int:
     """Choose the represented-polyline vertex at the positive major extreme."""
 
-    candidates = []
+    best_index = 0
+    best_key: tuple[float, float, float, float] | None = None
     for index, point in enumerate(points):
         major = _axis_value(point, major_east, major_north)
         minor = _axis_value(point, minor_east, minor_north)
         # Major extent owns the decision. Near a flat sampled apex, prefer the
-        # point closest to the major axis, then a deterministic world coordinate
-        # tie-break independent of polyline traversal order.
-        candidates.append((major, -abs(minor), point.x_m, point.y_m, index))
-    return max(candidates)[:5][-1]
+        # point closest to the major axis, then deterministic world coordinates.
+        # Index is intentionally not part of the key so reversing traversal does
+        # not change a non-ambiguous physical anchor.
+        key = (major, -abs(minor), point.x_m, point.y_m)
+        if best_key is None or key > best_key:
+            best_key = key
+            best_index = index
+    return best_index
 
 
 def _phase_direction_sign(
@@ -143,8 +176,17 @@ def _phase_direction_sign(
     return 1 if strongest_side > 0.0 else -1
 
 
-def build_so_phase_frame(route: ClosedRoute) -> SOPhaseFrame:
-    """Build a deterministic semantic phase frame from approved SO geometry."""
+def build_so_phase_frame(
+    route: ClosedRoute,
+    *,
+    reference_major_axis: tuple[float, float] | None = None,
+) -> SOPhaseFrame:
+    """Build a deterministic semantic phase frame from approved SO geometry.
+
+    For a multi-Route-Instance SO chain, build the first frame without a
+    reference and pass ``first.major_axis`` into the remaining calls. This keeps
+    all local Q0 anchors on the same oriented major-axis convention.
+    """
 
     if route.family is not RouteFamily.SO:
         raise UnsupportedSOPhaseGeometry("semantic SO phase requires an SO route")
@@ -162,7 +204,10 @@ def build_so_phase_frame(route: ClosedRoute) -> SOPhaseFrame:
         )
 
     points = route.canonical_points
-    major_east, major_north = _deterministic_major_axis(route.orientation_deg)
+    major_east, major_north = _oriented_major_axis(
+        route.orientation_deg,
+        reference_major_axis,
+    )
     minor_east, minor_north = -major_north, major_east
     anchor_index = _anchor_vertex(
         points,
@@ -190,7 +235,15 @@ def build_so_phase_frame(route: ClosedRoute) -> SOPhaseFrame:
     )
 
 
-def normalize_so_phase(route: ClosedRoute, raw_phase: float) -> float:
+def normalize_so_phase(
+    route: ClosedRoute,
+    raw_phase: float,
+    *,
+    reference_major_axis: tuple[float, float] | None = None,
+) -> float:
     """Convenience wrapper for one-off normalization; cache frames in live code."""
 
-    return build_so_phase_frame(route).normalize(raw_phase)
+    return build_so_phase_frame(
+        route,
+        reference_major_axis=reference_major_axis,
+    ).normalize(raw_phase)
