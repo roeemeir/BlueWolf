@@ -4,7 +4,18 @@ import unittest
 from datetime import UTC, datetime, timedelta
 
 from bluewolf_core.config import GroupingConfig
-from bluewolf_core.models import ChangeKind, Direction
+from bluewolf_core.geometry import local_m_to_wgs84
+from bluewolf_core.models import (
+    CanonicalPoint,
+    ChangeKind,
+    ClosedRoute,
+    Direction,
+    RouteFamily,
+    RouteSubtype,
+    RouteTopology,
+    VehicleSample,
+)
+from bluewolf_core.si_direction_evidence import live_si_direction
 from bluewolf_core.si_direction_lifecycle import (
     SIDirectionLifecycle,
     SIDirectionObservation,
@@ -28,11 +39,66 @@ def _pair(first: Direction, second: Direction):
     return (_obs(101, first), _obs(102, second))
 
 
+def _clockwise_square_route() -> ClosedRoute:
+    return ClosedRoute(
+        route_id="cw-square",
+        family=RouteFamily.SI,
+        subtype=RouteSubtype.COMPACT,
+        topology=RouteTopology.SIMPLE,
+        canonical_points=(
+            CanonicalPoint(10.0, 10.0),
+            CanonicalPoint(10.0, -10.0),
+            CanonicalPoint(-10.0, -10.0),
+            CanonicalPoint(-10.0, 10.0),
+        ),
+        center_latitude_deg=32.0,
+        center_longitude_deg=34.8,
+        length_m=80.0,
+        long_axis_a_m=10.0,
+        short_axis_b_m=10.0,
+        orientation_deg=0.0,
+        estimated_period_s=80.0,
+        direction=Direction.CLOCKWISE,
+        detection_quality=1.0,
+    )
+
+
+def _direction_sample(north_mps: float) -> VehicleSample:
+    latitude, longitude = local_m_to_wgs84(
+        CanonicalPoint(10.0, 0.0),
+        32.0,
+        34.8,
+    )
+    return VehicleSample(
+        sample_time_utc=START,
+        server_id=1,
+        vehicle_number=1,
+        vehicle_identifier=101,
+        active=True,
+        latitude_deg=latitude,
+        longitude_deg=longitude,
+        velocity_east_mps=0.0,
+        velocity_north_mps=north_mps,
+        reliability=1.0,
+    )
+
+
 class SIDirectionLifecycleTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = GroupingConfig(
             si_wrong_direction_alert_seconds=60,
             si_wrong_direction_exit_additional_seconds=300,
+        )
+
+    def test_live_direction_uses_canonical_tangent_without_clockwise_double_flip(self) -> None:
+        route = _clockwise_square_route()
+        self.assertIs(
+            live_si_direction(_direction_sample(-2.0), route),
+            Direction.CLOCKWISE,
+        )
+        self.assertIs(
+            live_si_direction(_direction_sample(2.0), route),
+            Direction.COUNTERCLOCKWISE,
         )
 
     def test_single_member_opposite_alerts_at_one_minute(self) -> None:
