@@ -56,7 +56,15 @@ class RouteClassifierV2Tests(unittest.TestCase):
         evidence = extract_periodic_evidence(track)
         self.assertIsNotNone(evidence)
         assert evidence is not None
-        return classify_route(track, evidence)
+        result = classify_route(track, evidence)
+        print(
+            "ROUTE_CLASSIFIER_DIAG",
+            shape.value,
+            double_opening_deg,
+            result.subtype.value,
+            dict(result.diagnostics),
+        )
+        return result
 
     def test_si_circle_octagon_and_free_closed_remain_compact_si(self) -> None:
         for index, shape in enumerate(
