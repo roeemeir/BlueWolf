@@ -165,17 +165,10 @@ class CoreSession(RouteCoreSession):
                 if group.family is RouteFamily.SI
             )
 
-        changes.sort(
-            key=lambda item: (
-                item.change_time_utc,
-                item.server_id,
-                item.vehicle_identifier
-                if item.vehicle_identifier is not None
-                else -1,
-                item.group_id or "",
-                item.kind.value,
-            )
-        )
+        # Preserve deterministic emission order. Some lifecycle events are
+        # intentionally backdated in change_time_utc after enough evidence is
+        # collected. Re-sorting by that retroactive time would make one large
+        # batch return a different event sequence than equivalent live batches.
         return CoreBatchResult(
             schema_version=1,
             algorithm_version=self.algorithm_version,
