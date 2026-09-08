@@ -29,7 +29,11 @@ from .models import (
     RouteSubtype,
     RouteTopology,
 )
-from .so_phase import SOSemanticProjection, project_so_semantic_phase_wgs84
+from .so_phase import (
+    SOSemanticProjection,
+    build_so_phase_frame,
+    project_so_semantic_phase_wgs84,
+)
 
 
 _EPS = 1e-12
@@ -80,9 +84,8 @@ def _component_route(parent: ClosedRoute, component: RouteComponent) -> ClosedRo
         long_axis_a_m=component.long_axis_a_m,
         short_axis_b_m=component.short_axis_b_m,
         orientation_deg=component.orientation_deg,
-        # The local period is not used by phase projection. Half the full period
-        # matches the already-approved Double base-period semantics and avoids
-        # inventing an independent component-period estimator here.
+        # Local period is not consumed by phase projection. Half the full period
+        # is the already-approved base-period representation for Double routes.
         estimated_period_s=parent.estimated_period_s / 2.0,
         direction=Direction.UNKNOWN,
         detection_quality=parent.detection_quality,
@@ -130,12 +133,7 @@ def project_double_active_lobe_wgs84(
     velocity_north_mps: float | None = None,
     ambiguity_distance_short_axis_ratio: float = 0.05,
 ) -> DoubleLobeSemanticProjection:
-    """Project one position onto the active logical Single Hippodrome.
-
-    ``ambiguity_distance_short_axis_ratio`` is the same route-distance good-band
-    concept used elsewhere in SO phase projection. It is not a lobe-switch timer
-    or a new Double opening-angle rule.
-    """
+    """Project one position onto the active logical Single Hippodrome."""
 
     if route.subtype is not RouteSubtype.DOUBLE_HIPPODROME:
         raise ValueError("active-lobe projection requires a Double Hippodrome")
@@ -146,11 +144,15 @@ def project_double_active_lobe_wgs84(
     projected: list[tuple[RouteComponent, SOSemanticProjection]] = []
     for component in components:
         child = _component_route(route, component)
+        child_frame = build_so_phase_frame(
+            child,
+            reference_major_axis=reference_major_axis,
+        )
         projection = project_so_semantic_phase_wgs84(
             child,
             latitude_deg,
             longitude_deg,
-            reference_major_axis=reference_major_axis,
+            frame=child_frame,
         )
         projected.append((component, projection))
 
