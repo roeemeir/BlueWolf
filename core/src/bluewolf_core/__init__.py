@@ -92,6 +92,13 @@ from .so_template_fit import (
     SOTemplateFit,
     fit_so_template,
 )
+from .so_template_selection import (
+    InvalidatedManualSelection,
+    InvalidSOTemplateSelection,
+    SOTemplateSelection,
+    SOTemplateSelectionRegistry,
+    SOTemplateSelectionSource,
+)
 from .so_templates import (
     Quarter,
     QuarterRelation,
@@ -133,7 +140,9 @@ __all__ = [
     "GroupMembershipLifecycle",
     "GroupObservation",
     "GroupingSnapshot",
+    "InvalidatedManualSelection",
     "InvalidSOTemplateBank",
+    "InvalidSOTemplateSelection",
     "MemberTemplateFit",
     "NoLegalSOTemplateAssignment",
     "NoLegalTemplateAssignment",
@@ -163,6 +172,9 @@ __all__ = [
     "SOTemplateBank",
     "SOTemplateBankEntry",
     "SOTemplateFit",
+    "SOTemplateSelection",
+    "SOTemplateSelectionRegistry",
+    "SOTemplateSelectionSource",
     "SOVehicleSlot",
     "StableGroupingEngine",
     "StateChange",
@@ -208,4 +220,4 @@ __all__ = [
     "template_relations",
 ]
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
