@@ -257,9 +257,12 @@ def _fit_single_hippodrome(
     axis_ratio: float,
     short_scale_m: float,
 ) -> _ModelFit:
-    candidates = np.unique(
-        np.clip(np.array((axis_ratio * 0.80, axis_ratio, axis_ratio * 1.20)), 1.01, 20.0)
-    )
+    # The observed axis ratio can be biased when both turn regions are missing.
+    # Search a broad logarithmic neighborhood instead of assuming the measured
+    # ratio is already within ±20% of the complete capsule. This expands only
+    # the numerical solver; the acceptance residual remains unchanged.
+    ratio_factors = np.array((0.50, 0.70, 1.00, 1.40, 2.00), dtype=float)
+    candidates = np.unique(np.clip(axis_ratio * ratio_factors, 1.01, 20.0))
     fits = [
         _fit_template(
             points,
@@ -344,6 +347,7 @@ def _base_diagnostics(
                 "single_normalized_rms": single_fit.normalized_rms,
             }
         )
+        diagnostics.update(single_fit.metadata)
     if double_fit is not None:
         diagnostics.update(
             {
@@ -422,9 +426,7 @@ def classify_route(
         concavity <= _COMPACT_DOUBLE_MAX_CONCAVITY_RATIO
         and double_improvement >= _COMPACT_DOUBLE_MIN_MODEL_IMPROVEMENT
     )
-    compact_double_topology = (
-        compact_double_strong_concavity or compact_double_mild_concavity
-    )
+    compact_double_topology = compact_double_strong_concavity or compact_double_mild_concavity
     double_topology_ok = (not compact) or compact_double_topology
 
     if double_absolute_ok and double_separated and double_topology_ok:
