@@ -5,9 +5,9 @@ Single Hippodromes that share the same turn-circle center. Synchronization uses
 those two logical Single-Hippodrome surfaces, while route lifecycle continues to
 use the full Double boundary.
 
-This module reconstructs the two fitted component boundaries from the exact
-Double model parameters already selected by ``route_classifier_v2``. No new
-shape classifier, opening-angle gate or time heuristic is introduced here.
+This module reconstructs the two fitted component boundaries from the same model
+family used by ``route_classifier_v2``. No new shape classifier, opening-angle
+gate or time heuristic is introduced here.
 """
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ from typing import Mapping
 import numpy as np
 from shapely.geometry import LineString
 
-from .models import CanonicalPoint, RouteComponent, RouteSubtype
-from .route_classifier_v2 import _align_template, _double_template
+from .models import CanonicalPoint, ClosedRoute, RouteComponent, RouteSubtype
+from .route_classifier_v2 import _align_template, _double_template, _fit_double_hippodrome
 from .vector_trajectory import robust_axis_frame
 
 
@@ -71,13 +71,7 @@ def _component_templates(opening_deg: float, radius_ratio: float) -> tuple[np.nd
 
 
 def _affine_map_from_correspondence(source: np.ndarray, target: np.ndarray) -> np.ndarray:
-    """Return the exact 2D similarity/reflection map selected by the fitter.
-
-    ``_align_template`` preserves vertex correspondence and applies one uniform
-    scale, an orthogonal/reflection basis and a translation. Solving the affine
-    map from those paired vertices lets the two component templates inherit the
-    *same* transform as the already-selected Double boundary.
-    """
+    """Return the exact 2D similarity/reflection map selected by the fitter."""
 
     source = np.asarray(source, dtype=float)
     target = np.asarray(target, dtype=float)
@@ -150,8 +144,6 @@ def derive_double_hippodrome_components(
             short_axis_b_m=float(np.min(half_axes)),
             orientation_deg=orientation,
         )
-        # Component ordering is diagnostic only; use world-local center position
-        # so it is independent of vehicle id, sample order and current occupant.
         prepared.append(((float(center[0]), float(center[1])), component))
 
     prepared.sort(key=lambda item: (item[0][0], item[0][1]))
@@ -173,3 +165,28 @@ def derive_double_hippodrome_components(
     if len(output) != 2:
         raise AssertionError("Double Hippodrome must reconstruct exactly two components")
     return output[0], output[1]
+
+
+def derive_double_hippodrome_components_from_route(
+    route: ClosedRoute,
+) -> tuple[RouteComponent, RouteComponent]:
+    """Derive logical lobes from a confirmed Double route when not persisted.
+
+    The fit runs against the route's small canonical polyline (<=64 points), not
+    raw history, and is deterministic. This makes the components recoverable
+    after checkpoint restore without introducing new persisted lifecycle state.
+    """
+
+    if route.subtype is not RouteSubtype.DOUBLE_HIPPODROME:
+        raise ValueError("route must be a Double Hippodrome")
+    if route.components:
+        if len(route.components) != 2:
+            raise ValueError("Double Hippodrome must contain exactly two components")
+        return route.components[0], route.components[1]
+
+    points = np.asarray(
+        [(point.x_m, point.y_m) for point in route.canonical_points],
+        dtype=float,
+    )
+    fit = _fit_double_hippodrome(points, max(route.short_axis_b_m, 1.0))
+    return derive_double_hippodrome_components(points, fit.metadata)
