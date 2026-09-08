@@ -7,9 +7,10 @@ Important distinction:
 - the classifier has NO 10..40 acceptance gate;
 - fitted opening is a continuous geometry parameter and model evidence decides.
 
-The classifier consumes phase-balanced vector evidence. Heavy sample-history
-operations live in vector_trajectory.py; model fits here operate on <=64
-canonical supported points and cached geometry templates.
+The classifier consumes phase-balanced recurrence evidence. Model fitting may
+also use real observed samples inside the recurrent time span so incomplete
+phase support does not turn an otherwise complete traversal into interpolated
+pseudo-topology. No missing coordinate is ever synthesized for that evidence.
 """
 from __future__ import annotations
 
@@ -36,18 +37,9 @@ _SPARSE_SINGLE_MAX_NORMALIZED_RMS = 0.40
 _SPARSE_SINGLE_MAX_SUPPORT_FRACTION = 0.75
 _DOUBLE_MAX_NORMALIZED_RMS = 0.24
 _DOUBLE_MIN_MODEL_IMPROVEMENT = 0.25
-# Phase order is independent evidence: a more complex Double model is not
-# allowed to win merely because some branch lies near the observed points.
-# Robust sweeps put true ordered separation down to ~0.45 while false
-# Single->Double fits stayed ~0.06 or negative. Keep a calibration margin.
 _DOUBLE_MIN_ORDERED_MODEL_IMPROVEMENT = 0.35
-# Strong concavity can itself identify the union boundary when missing phase
-# support makes bin-to-bin ordered comparison unreliable.
 _STRONG_DOUBLE_CONCAVITY_RATIO = 0.94
 _STRONG_DOUBLE_MODEL_IMPROVEMENT = 0.45
-# A Double can itself be compact (axis ratio <=1.5). In that ambiguous regime
-# topology evidence comes from the union boundary itself, not from an opening
-# angle rule. Mild concavity still requires a very strong model separation.
 _COMPACT_DOUBLE_MAX_CONCAVITY_RATIO = 0.97
 _COMPACT_DOUBLE_MIN_MODEL_IMPROVEMENT = 0.55
 
@@ -363,9 +355,47 @@ def _fit_double_hippodrome(points: np.ndarray, short_scale_m: float) -> _ModelFi
 
 def _polygon_concavity_ratio(canonical: np.ndarray) -> float:
     polygon = Polygon(canonical)
+    # Invalid geometry is absence of usable concavity evidence, not evidence of
+    # maximal concavity. Returning 0 here used to promote partial/noisy SI traces
+    # to Double through the strong-concavity fallback.
     if not polygon.is_valid or polygon.area <= _EPS:
-        return 0.0
+        return 1.0
     return float(polygon.area / max(polygon.convex_hull.area, _EPS))
+
+
+def _observed_recurrent_span(
+    track: VectorTrack,
+    evidence: FoldedRouteEvidence,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return real observations inside the recurrent envelope and one cycle.
+
+    Recurrence support marks only samples having a counterpart roughly one
+    period away. With ~1.5 cycles that can cover only half the phase bins even
+    though the vehicle actually traversed a complete route between the first
+    and last recurrent samples. Those intermediate samples are real evidence and
+    are therefore valid for model fitting; they are not allowed to add closure
+    credit or canonical support.
+    """
+
+    recurrent = np.flatnonzero(evidence.periodic_mask & track.observed_mask)
+    if len(recurrent) < 2:
+        return np.empty((0, 2), dtype=float), np.empty((0, 2), dtype=float)
+
+    first = int(recurrent[0])
+    last = int(recurrent[-1])
+    span_mask = track.observed_mask.copy()
+    span_mask[:first] = False
+    span_mask[last + 1 :] = False
+    span_points = track.xy_m[span_mask]
+
+    cycle_end_time = track.time_s[first] + evidence.period.period_s
+    cycle_mask = (
+        track.observed_mask
+        & (track.time_s >= track.time_s[first])
+        & (track.time_s <= cycle_end_time + 0.5 * track.sample_interval_s)
+    )
+    cycle_points = track.xy_m[cycle_mask]
+    return span_points, cycle_points
 
 
 def _phase_direction(points_major: np.ndarray, side_mask: np.ndarray) -> tuple[float, int]:
@@ -382,12 +412,7 @@ def _phase_direction(points_major: np.ndarray, side_mask: np.ndarray) -> tuple[f
 
 
 def _sparse_two_leg_evidence(evidence: FoldedRouteEvidence) -> dict[str, float | int | bool]:
-    """Identify the two recurrent straight legs when turn samples are absent.
-
-    This is intentionally not an elongated-route rule. It requires two
-    separately supported lateral bands, substantial longitudinal extent,
-    approximate symmetry, and opposite phase progression on the two bands.
-    """
+    """Identify the two recurrent straight legs when turn samples are absent."""
 
     canonical = evidence.canonical_xy_m
     support = evidence.canonical_support
@@ -462,12 +487,19 @@ def _base_diagnostics(
     double_fit: _ModelFit | None = None,
     double_improvement: float | None = None,
     concavity: float,
+    model_span_point_count: int = 0,
+    model_axis_ratio: float | None = None,
+    observed_cycle_point_count: int = 0,
 ) -> dict[str, float | int | bool | str]:
     diagnostics: dict[str, float | int | bool | str] = {
         "concavity_ratio": concavity,
         "period_score": evidence.period.score,
         "support_fraction": evidence.canonical_support_fraction,
+        "model_span_point_count": model_span_point_count,
+        "observed_cycle_point_count": observed_cycle_point_count,
     }
+    if model_axis_ratio is not None:
+        diagnostics["model_axis_ratio"] = model_axis_ratio
     if single_fit is not None:
         diagnostics.update(
             {
@@ -495,19 +527,28 @@ def classify_route(
     *,
     si_axis_ratio_max: float = 1.5,
 ) -> RouteClassification:
-    model_points = evidence.canonical_xy_m[evidence.canonical_support]
+    recurrent_span_points, observed_cycle_points = _observed_recurrent_span(track, evidence)
+    model_points = recurrent_span_points
+    if len(model_points) < 6:
+        model_points = evidence.canonical_xy_m[evidence.canonical_support]
     if len(model_points) < 6:
         model_points = track.xy_m[evidence.periodic_mask]
     if len(model_points) < 6:
         raise ValueError("classification requires periodic support")
 
-    short_scale = float(np.min(evidence.half_axes_m))
-    axis_ratio = evidence.axis_ratio
+    _, _, model_half_axes = robust_axis_frame(model_points)
+    short_scale = max(float(np.min(model_half_axes)), 1.0)
+    model_axis_ratio = float(np.max(model_half_axes) / max(np.min(model_half_axes), _EPS))
+    axis_ratio = model_axis_ratio
+
     crossings, crossing_angle = supported_self_crossings(
         evidence.canonical_xy_m,
         evidence.canonical_support,
     )
-    concavity = _polygon_concavity_ratio(evidence.canonical_xy_m)
+    concavity_points = (
+        observed_cycle_points if len(observed_cycle_points) >= 6 else evidence.canonical_xy_m
+    )
+    concavity = _polygon_concavity_ratio(concavity_points)
     base_quality = float(
         np.clip(
             0.45 * evidence.period.score + 0.55 * evidence.canonical_support_fraction,
@@ -532,6 +573,9 @@ def classify_route(
                 "concavity_ratio": concavity,
                 "period_score": evidence.period.score,
                 "support_fraction": evidence.canonical_support_fraction,
+                "model_span_point_count": len(model_points),
+                "observed_cycle_point_count": len(observed_cycle_points),
+                "model_axis_ratio": model_axis_ratio,
             },
         )
 
@@ -599,6 +643,12 @@ def classify_route(
     compact_double_topology = strong_double_shape_evidence or compact_double_mild_concavity
     double_topology_ok = (not compact) or compact_double_topology
 
+    common_diag = {
+        "model_span_point_count": len(model_points),
+        "model_axis_ratio": model_axis_ratio,
+        "observed_cycle_point_count": len(observed_cycle_points),
+    }
+
     if double_absolute_ok and double_separated and double_evidence_ok and double_topology_ok:
         diagnostics = _base_diagnostics(
             evidence,
@@ -606,6 +656,7 @@ def classify_route(
             double_fit=double_fit,
             double_improvement=double_improvement,
             concavity=concavity,
+            **common_diag,
         )
         diagnostics["ordered_gate_passed"] = double_ordered_separated
         diagnostics["strong_double_shape_evidence"] = strong_double_shape_evidence
@@ -640,6 +691,7 @@ def classify_route(
                 double_fit=double_fit,
                 double_improvement=double_improvement,
                 concavity=concavity,
+                **common_diag,
             ),
         )
 
@@ -658,6 +710,7 @@ def classify_route(
             double_fit=double_fit,
             double_improvement=double_improvement,
             concavity=concavity,
+            **common_diag,
         )
         diagnostics.update(sparse_leg_diagnostics)
         diagnostics["sparse_single_fallback"] = sparse_single_ok
@@ -679,6 +732,7 @@ def classify_route(
         double_fit=double_fit,
         double_improvement=double_improvement,
         concavity=concavity,
+        **common_diag,
     )
     diagnostics.update(sparse_leg_diagnostics)
     return RouteClassification(
