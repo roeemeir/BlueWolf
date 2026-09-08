@@ -1,4 +1,4 @@
-"""Geometry-stable semantic phase frames for SO synchronization.
+"""Geometry-stable semantic phase and heading-aware SO projection.
 
 Raw detector phase is local to one detected centerline: its zero point and its
 increasing direction depend on the canonical polyline ordering. Synchronization
@@ -16,24 +16,37 @@ chain uses the same end as Q0. Without a reference, a deterministic world-axis
 sign convention is used. The minor axis is the 90-degree counter-clockwise
 vector from the oriented major axis.
 
-For Figure-8 this frame only normalizes a raw phase that is already known. Live
-position projection at the self-crossing still requires heading-aware branch
-selection; position-only projection must not be treated as authoritative there.
+Figure-8 is self-crossing. Position-only nearest-segment projection is therefore
+not authoritative at the crossing. When a non-adjacent branch lies inside the
+same approved route-distance good band (5% of short axis by default), heading
+is required and selects the branch whose canonical tangent matches velocity.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
 
-from .geometry import closed_polyline_length, point_at_phase
+from .geometry import (
+    PolylineProjection,
+    closed_polyline_length,
+    point_at_phase,
+    project_onto_closed_polyline,
+    vector_angle_error_deg,
+    wgs84_to_local_m,
+)
 from .models import CanonicalPoint, ClosedRoute, RouteFamily, RouteSubtype
 
 
 _EPS = 1e-12
+_DEFAULT_AMBIGUITY_DISTANCE_SHORT_AXIS_RATIO = 0.05
 
 
 class UnsupportedSOPhaseGeometry(ValueError):
     """Raised when the approved geometry does not define an SO phase frame."""
+
+
+class AmbiguousSOPhaseProjection(ValueError):
+    """Figure-8 position is branch-ambiguous and heading evidence is unavailable."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +85,25 @@ class SOPhaseFrame:
         if self.phase_sign < 0:
             delta = (-delta) % 1.0
         return delta
+
+
+@dataclass(frozen=True, slots=True)
+class SOSemanticProjection:
+    projection: PolylineProjection
+    semantic_phase: float
+    heading_disambiguated: bool
+    competing_branch_count: int
+    heading_error_deg: float | None = None
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.semantic_phase):
+            raise ValueError("semantic_phase must be finite")
+        if not 0.0 <= self.semantic_phase < 1.0:
+            raise ValueError("semantic_phase must be in [0,1)")
+        if self.competing_branch_count < 1:
+            raise ValueError("competing_branch_count must be positive")
+        if self.heading_error_deg is not None and not math.isfinite(self.heading_error_deg):
+            raise ValueError("heading_error_deg must be finite when supplied")
 
 
 def _unit_reference(value: tuple[float, float] | None) -> tuple[float, float] | None:
@@ -144,10 +176,6 @@ def _anchor_vertex(
     for index, point in enumerate(points):
         major = _axis_value(point, major_east, major_north)
         minor = _axis_value(point, minor_east, minor_north)
-        # Major extent owns the decision. Near a flat sampled apex, prefer the
-        # point closest to the major axis, then deterministic world coordinates.
-        # Index is intentionally not part of the key so reversing traversal does
-        # not change a non-ambiguous physical anchor.
         key = (major, -abs(minor), point.x_m, point.y_m)
         if best_key is None or key > best_key:
             best_key = key
@@ -247,3 +275,185 @@ def normalize_so_phase(
         route,
         reference_major_axis=reference_major_axis,
     ).normalize(raw_phase)
+
+
+def _all_segment_projections(
+    points: tuple[CanonicalPoint, ...],
+    query: CanonicalPoint,
+) -> tuple[PolylineProjection, ...]:
+    lengths: list[float] = []
+    for index, start in enumerate(points):
+        end = points[(index + 1) % len(points)]
+        length = math.hypot(end.x_m - start.x_m, end.y_m - start.y_m)
+        if length <= _EPS:
+            raise ValueError("consecutive canonical points must be distinct")
+        lengths.append(length)
+    total = sum(lengths)
+
+    output: list[PolylineProjection] = []
+    before = 0.0
+    for index, (start, length) in enumerate(zip(points, lengths, strict=True)):
+        end = points[(index + 1) % len(points)]
+        dx = end.x_m - start.x_m
+        dy = end.y_m - start.y_m
+        raw_fraction = (
+            (query.x_m - start.x_m) * dx + (query.y_m - start.y_m) * dy
+        ) / (length * length)
+        fraction = min(1.0, max(0.0, raw_fraction))
+        projected = CanonicalPoint(start.x_m + dx * fraction, start.y_m + dy * fraction)
+        distance = math.hypot(query.x_m - projected.x_m, query.y_m - projected.y_m)
+        phase = (before + length * fraction) / total
+        output.append(
+            PolylineProjection(
+                phase=phase % 1.0,
+                distance_m=distance,
+                projected=projected,
+                tangent_east=dx / length,
+                tangent_north=dy / length,
+                segment_index=index,
+            )
+        )
+        before += length
+    return tuple(output)
+
+
+def _cyclic_segment_separation(first: int, second: int, count: int) -> int:
+    difference = abs(first - second)
+    return min(difference, count - difference)
+
+
+def _validated_velocity(
+    velocity_east_mps: float | None,
+    velocity_north_mps: float | None,
+) -> tuple[float, float] | None:
+    if (velocity_east_mps is None) != (velocity_north_mps is None):
+        raise ValueError("velocity east/north must both be supplied or both be absent")
+    if velocity_east_mps is None:
+        return None
+    east = float(velocity_east_mps)
+    north = float(velocity_north_mps)
+    if not math.isfinite(east) or not math.isfinite(north):
+        raise ValueError("velocity must be finite")
+    if math.hypot(east, north) <= _EPS:
+        return None
+    return east, north
+
+
+def _figure_eight_projection(
+    route: ClosedRoute,
+    query: CanonicalPoint,
+    *,
+    velocity_east_mps: float | None,
+    velocity_north_mps: float | None,
+    ambiguity_distance_short_axis_ratio: float,
+) -> tuple[PolylineProjection, bool, int, float | None]:
+    if not math.isfinite(ambiguity_distance_short_axis_ratio) or ambiguity_distance_short_axis_ratio < 0:
+        raise ValueError("ambiguity_distance_short_axis_ratio must be finite and non-negative")
+
+    candidates = sorted(
+        _all_segment_projections(route.canonical_points, query),
+        key=lambda item: (item.distance_m, item.segment_index, item.phase),
+    )
+    nearest = candidates[0]
+    ambiguity_band_m = route.short_axis_b_m * ambiguity_distance_short_axis_ratio
+    nearby = tuple(
+        item
+        for item in candidates
+        if item.distance_m <= nearest.distance_m + ambiguity_band_m + _EPS
+    )
+    segment_count = len(route.canonical_points)
+    competing = tuple(
+        item
+        for item in nearby
+        if _cyclic_segment_separation(
+            nearest.segment_index,
+            item.segment_index,
+            segment_count,
+        ) > 1
+    )
+    if not competing:
+        return nearest, False, 1, None
+
+    velocity = _validated_velocity(velocity_east_mps, velocity_north_mps)
+    if velocity is None:
+        raise AmbiguousSOPhaseProjection(
+            "Figure-8 crossing has multiple non-adjacent route branches; heading is required"
+        )
+
+    ranked: list[tuple[float, float, int, PolylineProjection]] = []
+    for item in nearby:
+        heading_error = vector_angle_error_deg(
+            velocity[0],
+            velocity[1],
+            item.tangent_east,
+            item.tangent_north,
+        )
+        ranked.append((heading_error, item.distance_m, item.segment_index, item))
+    heading_error, _, _, selected = min(ranked, key=lambda row: row[:3])
+    return selected, True, 1 + len(competing), heading_error
+
+
+def project_so_semantic_phase_local(
+    route: ClosedRoute,
+    query: CanonicalPoint,
+    *,
+    frame: SOPhaseFrame | None = None,
+    velocity_east_mps: float | None = None,
+    velocity_north_mps: float | None = None,
+    ambiguity_distance_short_axis_ratio: float = _DEFAULT_AMBIGUITY_DISTANCE_SHORT_AXIS_RATIO,
+) -> SOSemanticProjection:
+    """Project one local SO position and return geometry-stable semantic phase."""
+
+    active_frame = frame or build_so_phase_frame(route)
+    if active_frame.route_id != route.route_id:
+        raise ValueError("phase frame belongs to a different route")
+
+    if route.subtype is RouteSubtype.FIGURE_EIGHT:
+        projection, disambiguated, candidate_count, heading_error = _figure_eight_projection(
+            route,
+            query,
+            velocity_east_mps=velocity_east_mps,
+            velocity_north_mps=velocity_north_mps,
+            ambiguity_distance_short_axis_ratio=ambiguity_distance_short_axis_ratio,
+        )
+    else:
+        projection = project_onto_closed_polyline(route.canonical_points, query)
+        disambiguated = False
+        candidate_count = 1
+        heading_error = None
+
+    return SOSemanticProjection(
+        projection=projection,
+        semantic_phase=active_frame.normalize(projection.phase),
+        heading_disambiguated=disambiguated,
+        competing_branch_count=candidate_count,
+        heading_error_deg=heading_error,
+    )
+
+
+def project_so_semantic_phase_wgs84(
+    route: ClosedRoute,
+    latitude_deg: float,
+    longitude_deg: float,
+    *,
+    frame: SOPhaseFrame | None = None,
+    velocity_east_mps: float | None = None,
+    velocity_north_mps: float | None = None,
+    ambiguity_distance_short_axis_ratio: float = _DEFAULT_AMBIGUITY_DISTANCE_SHORT_AXIS_RATIO,
+) -> SOSemanticProjection:
+    """WGS84 wrapper used by live/offline session integration."""
+
+    query = wgs84_to_local_m(
+        latitude_deg,
+        longitude_deg,
+        route.center_latitude_deg,
+        route.center_longitude_deg,
+    )
+    return project_so_semantic_phase_local(
+        route,
+        query,
+        frame=frame,
+        velocity_east_mps=velocity_east_mps,
+        velocity_north_mps=velocity_north_mps,
+        ambiguity_distance_short_axis_ratio=ambiguity_distance_short_axis_ratio,
+    )
