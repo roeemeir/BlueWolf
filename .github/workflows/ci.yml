@@ -13,9 +13,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install Python core
+        working-directory: core
+        run: python -m pip install -e .
       - name: Run deterministic core tests
         working-directory: core
-        run: PYTHONPATH=src python -m unittest discover -s tests -v
+        run: python -m unittest discover -s tests -v
 
   web:
     name: Web application
