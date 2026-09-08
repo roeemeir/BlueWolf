@@ -6,6 +6,15 @@ InfluxDB, SQLite, HTTP, maps, reports, or display time zones.
 """
 
 from .config import CoreConfig
+from .double_lobe_geometry import (
+    derive_double_hippodrome_components,
+    derive_double_hippodrome_components_from_route,
+)
+from .double_lobe_phase import (
+    AmbiguousDoubleLobeProjection,
+    DoubleLobeSemanticProjection,
+    project_double_active_lobe_wgs84,
+)
 from .geometry import (
     PolylineProjection,
     circular_phase_distance,
@@ -42,6 +51,7 @@ from .models import (
     Direction,
     FieldQuality,
     PrimitiveMetrics,
+    RouteComponent,
     RouteFamily,
     RouteSubtype,
     StateChange,
@@ -107,6 +117,7 @@ from .templates import (
 )
 
 __all__ = [
+    "AmbiguousDoubleLobeProjection",
     "AmbiguousSOPhaseProjection",
     "ChangeKind",
     "CheckpointCompatibilityError",
@@ -115,6 +126,7 @@ __all__ = [
     "CoreConfig",
     "CoreSession",
     "Direction",
+    "DoubleLobeSemanticProjection",
     "FieldQuality",
     "GroupCompatibility",
     "GroupLifecycleResult",
@@ -130,6 +142,7 @@ __all__ = [
     "PolylineProjection",
     "Quarter",
     "QuarterRelation",
+    "RouteComponent",
     "RouteDetection",
     "RouteFamily",
     "RouteGroup",
@@ -169,6 +182,8 @@ __all__ = [
     "circular_phase_distance",
     "closed_polyline_length",
     "curvature_at_phase",
+    "derive_double_hippodrome_components",
+    "derive_double_hippodrome_components_from_route",
     "detect_closed_route",
     "discover_structural_groups",
     "fit_so_template",
@@ -176,6 +191,7 @@ __all__ = [
     "normalize_so_phase",
     "normalized_curvature_error",
     "point_at_phase",
+    "project_double_active_lobe_wgs84",
     "project_onto_closed_polyline",
     "project_so_semantic_phase_local",
     "project_so_semantic_phase_wgs84",
@@ -192,4 +208,4 @@ __all__ = [
     "template_relations",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
