@@ -31,6 +31,30 @@ def _closed_length(points: np.ndarray) -> float:
     return float(np.sum(np.linalg.norm(np.roll(points, -1, axis=0) - points, axis=1)))
 
 
+def _phase_coverage_fraction(support: np.ndarray, max_phase_gap: float) -> float:
+    """Measure circular phase coverage without depending on sample density.
+
+    Directly occupied canonical bins remain authoritative observations. Gaps
+    between observed phases receive coverage only when the circular phase gap is
+    small enough to represent continuous traversal at the available cadence.
+    A sparse but evenly distributed 5-second stream can therefore cover a fast
+    route fully, while one contiguous half-route cannot claim the missing half.
+    """
+
+    supported = np.flatnonzero(np.asarray(support, dtype=bool))
+    bins = len(support)
+    if bins <= 0 or len(supported) == 0:
+        return 0.0
+    direct_fraction = len(supported) / bins
+    if len(supported) == 1:
+        return float(direct_fraction)
+
+    phase = supported.astype(float) / bins
+    circular = np.diff(np.concatenate((phase, (phase[:1] + 1.0))))
+    connected = float(np.sum(circular[circular <= max_phase_gap + _EPS]))
+    return float(np.clip(max(direct_fraction, connected), 0.0, 1.0))
+
+
 def _polyline_distances(points: np.ndarray, canonical: np.ndarray) -> np.ndarray:
     """Vectorized point-to-closed-polyline distances."""
 
@@ -131,13 +155,7 @@ def detect_closed_route_vector(
     require_confirmation: bool = True,
     grid_seconds: float | None = None,
 ) -> RouteDetection | None:
-    """Detect an approved closed route using the vector V2 pipeline.
-
-    Expensive topology classification is intentionally delayed until generic
-    recurrence evidence has already passed every topology-independent gate. The
-    ordering is an optimization only: the same fit/coverage/cycle/closure gates
-    still decide whether a periodic candidate or confirmation can be returned.
-    """
+    """Detect an approved closed route using the vector V2 pipeline."""
 
     detection = config or DetectionConfig()
     materialized = tuple(samples)
@@ -165,7 +183,11 @@ def detect_closed_route_vector(
     fitted = residual <= tolerance_m
     fit_fraction = float(np.mean(fitted))
     inlier_fraction = fit_fraction
-    coverage_fraction = evidence.canonical_support_fraction
+    direct_support_fraction = evidence.canonical_support_fraction
+    coverage_fraction = _phase_coverage_fraction(
+        evidence.canonical_support,
+        detection.coverage_interpolation_max_phase_gap,
+    )
 
     periodic_indices = np.flatnonzero(evidence.periodic_mask)
     if len(periodic_indices) < 2:
@@ -289,7 +311,9 @@ def detect_closed_route_vector(
             "closure_ok": closure_ok,
             "period_score": evidence.period.score,
             "period_support_pairs": evidence.period.support_pairs,
-            "canonical_support_fraction": coverage_fraction,
+            "direct_canonical_support_fraction": direct_support_fraction,
+            "phase_coverage_fraction": coverage_fraction,
+            "canonical_support_fraction": direct_support_fraction,
             "grid_seconds": prepared.grid_seconds,
             "source_sample_count": prepared.source_sample_count,
             "observed_grid_count": prepared.observed_grid_count,
