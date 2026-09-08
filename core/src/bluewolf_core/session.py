@@ -27,16 +27,22 @@ from .models import (
     VehicleFrameResult,
     VehicleSample,
 )
+from .partial_route_candidate import (
+    PartialRouteEvidence,
+    extract_partial_route_evidence,
+    partial_candidate_ready,
+)
 from .route_change import (
     compare_routes,
     estimate_change_onset,
     replacement_evidence_supports_new_route,
     route_change_suspected,
 )
-from .route_detection import RouteDetection, detect_closed_route
+from .route_detection import RouteDetection
+from .vector_route_detection import detect_closed_route_vector
 
 
-CHECKPOINT_SCHEMA_VERSION = 2
+CHECKPOINT_SCHEMA_VERSION = 3
 RESULT_SCHEMA_VERSION = 1
 
 
@@ -60,7 +66,7 @@ class _VehicleRuntimeState:
 @dataclass(slots=True)
 class _RouteRuntimeState:
     history: list[VehicleSample] = field(default_factory=list)
-    candidate: ClosedRoute | None = None
+    candidate_evidence: PartialRouteEvidence | None = None
     confirmed: ClosedRoute | None = None
     last_evaluation_time_utc: datetime | None = None
 
@@ -70,6 +76,14 @@ class _AdaptiveRouteMatch:
     detection: RouteDetection
     window_start_utc: datetime
     window_seconds: float
+
+
+@dataclass(frozen=True, slots=True)
+class _PartialCandidateMatch:
+    evidence: PartialRouteEvidence
+    window_start_utc: datetime
+    window_seconds: float
+    sample_count: int
 
 
 def _utc(value: datetime) -> datetime:
@@ -97,7 +111,7 @@ class CoreSession:
     def __init__(
         self,
         config: CoreConfig | None = None,
-        algorithm_version: str = "0.4.0",
+        algorithm_version: str = "0.5.0",
     ) -> None:
         self.config = config or CoreConfig()
         self.algorithm_version = algorithm_version
@@ -275,10 +289,9 @@ class CoreSession:
             return []
         route_state.last_evaluation_time_utc = sample.sample_time_utc
 
-        # Once a route is confirmed, acquisition never freezes. The current
-        # sample first passes a cheap residual/speed/direction gate. Stable
-        # motion therefore stays O(1); only a mismatch opens the expensive
-        # evidence-driven multi-window replacement search.
+        # Once a route is confirmed, acquisition never freezes. Stable motion
+        # remains cheap; only a current mismatch opens the evidence-driven V2
+        # replacement search.
         if route_state.confirmed is not None:
             if not route_change_suspected(
                 sample,
@@ -299,7 +312,6 @@ class CoreSession:
             next_route = replacement.detection.effective
             delta = compare_routes(previous_route, next_route, self.config.detection)
             if not delta.changed:
-                route_state.candidate = previous_route
                 return []
 
             if not replacement_evidence_supports_new_route(
@@ -319,7 +331,7 @@ class CoreSession:
                 replacement.window_start_utc,
                 self.config.detection,
             )
-            route_state.candidate = next_route
+            route_state.candidate_evidence = None
             route_state.confirmed = next_route
             return [
                 self._route_change(
@@ -340,21 +352,18 @@ class CoreSession:
             ]
 
         changes: list[StateChange] = []
-        if route_state.candidate is None:
-            candidate = _find_adaptive_route(
+        if route_state.candidate_evidence is None:
+            candidate = _find_partial_candidate(
                 route_state.history,
                 self.config.detection,
-                require_confirmation=False,
             )
             if candidate is not None:
-                route_state.candidate = candidate.detection.effective
-                changes.append(
-                    self._route_change(sample, ChangeKind.ROUTE_CANDIDATE, candidate)
-                )
+                route_state.candidate_evidence = candidate.evidence
+                changes.append(self._partial_candidate_change(sample, candidate))
 
-        # A strict confirmation implies the candidate evidence gates as well.
-        # Avoid a second expensive multi-window fit until a candidate exists.
-        if route_state.candidate is None:
+        # The partial candidate is only permission to spend on recurrence and
+        # topology inference. It does not supply a route identity itself.
+        if route_state.candidate_evidence is None:
             return changes
 
         confirmed = _find_adaptive_route(
@@ -363,12 +372,38 @@ class CoreSession:
             require_confirmation=True,
         )
         if confirmed is not None:
-            route_state.candidate = confirmed.detection.effective
+            route_state.candidate_evidence = None
             route_state.confirmed = confirmed.detection.effective
             changes.append(
                 self._route_change(sample, ChangeKind.ROUTE_CONFIRMED, confirmed)
             )
         return changes
+
+    def _partial_candidate_change(
+        self,
+        sample: VehicleSample,
+        match: _PartialCandidateMatch,
+    ) -> StateChange:
+        evidence = match.evidence
+        return StateChange(
+            sample.sample_time_utc,
+            ChangeKind.ROUTE_CANDIDATE,
+            sample.server_id,
+            sample.vehicle_identifier,
+            details={
+                "candidate_kind": "partial_route_evidence",
+                "turn_fraction": evidence.turn_fraction,
+                "smooth_heading_fraction": evidence.smooth_heading_fraction,
+                "turn_sign_persistence": evidence.turn_sign_persistence,
+                "path_efficiency": evidence.path_efficiency,
+                "contiguous_observation_fraction": evidence.contiguous_observation_fraction,
+                "observed_travel_m": evidence.observed_travel_m,
+                "evidence_window_start_utc": _iso(match.window_start_utc),
+                "evidence_window_seconds": match.window_seconds,
+                "evidence_sample_count": match.sample_count,
+                "history_ceiling_seconds": self.config.detection.max_history_seconds,
+            },
+        )
 
     def _route_change(
         self,
@@ -387,6 +422,7 @@ class CoreSession:
             "route_id": route.route_id,
             "family": route.family.value,
             "subtype": route.subtype.value,
+            "topology": route.topology.value,
             "direction": route.direction.value,
             "estimated_period_s": route.estimated_period_s,
             "long_axis_a_m": route.long_axis_a_m,
@@ -397,6 +433,7 @@ class CoreSession:
             "coverage_fraction": detection.coverage_fraction,
             "completed_cycles": detection.completed_cycles,
             "closure_ok": bool(detection.diagnostics.get("closure_ok", False)),
+            "detector": str(detection.diagnostics.get("detector", "unknown")),
             "evidence_window_start_utc": _iso(match.window_start_utc),
             "evidence_window_seconds": match.window_seconds,
             "history_ceiling_seconds": self.config.detection.max_history_seconds,
@@ -493,9 +530,9 @@ class CoreSession:
                         if item.last_evaluation_time_utc is not None
                         else None
                     ),
-                    "candidate": (
-                        _route_to_dict(item.candidate)
-                        if item.candidate is not None
+                    "candidate_evidence": (
+                        _partial_evidence_to_dict(item.candidate_evidence)
+                        if item.candidate_evidence is not None
                         else None
                     ),
                     "confirmed": (
@@ -527,7 +564,7 @@ class CoreSession:
         checkpoint: bytes | str,
         *,
         config: CoreConfig | None = None,
-        algorithm_version: str = "0.4.0",
+        algorithm_version: str = "0.5.0",
     ) -> CoreSession:
         config = config or CoreConfig()
         raw: Mapping[str, Any] = json.loads(
@@ -571,12 +608,12 @@ class CoreSession:
         for value in raw.get("routes", []):
             key = (int(value["server_id"]), int(value["vehicle_identifier"]))
             last_evaluation = value.get("last_evaluation_time_utc")
-            candidate_raw = value.get("candidate")
+            candidate_raw = value.get("candidate_evidence")
             confirmed_raw = value.get("confirmed")
             session._routes[key] = _RouteRuntimeState(
                 history=[_sample_from_dict(item) for item in value.get("history", [])],
-                candidate=(
-                    _route_from_dict(candidate_raw)
+                candidate_evidence=(
+                    _partial_evidence_from_dict(candidate_raw)
                     if isinstance(candidate_raw, Mapping)
                     else None
                 ),
@@ -598,6 +635,7 @@ class CoreSession:
         routes = []
         for key in sorted(self._routes):
             item = self._routes[key]
+            candidate = item.candidate_evidence
             routes.append(
                 {
                     "server_id": key[0],
@@ -609,8 +647,12 @@ class CoreSession:
                     "history_end_utc": (
                         _iso(item.history[-1].sample_time_utc) if item.history else None
                     ),
-                    "candidate_route_id": (
-                        item.candidate.route_id if item.candidate is not None else None
+                    "candidate_active": candidate is not None,
+                    "candidate_window_start_utc": (
+                        _iso(candidate.window_start_utc) if candidate is not None else None
+                    ),
+                    "candidate_turn_fraction": (
+                        candidate.turn_fraction if candidate is not None else None
                     ),
                     "confirmed_route_id": (
                         item.confirmed.route_id if item.confirmed is not None else None
@@ -633,25 +675,65 @@ class CoreSession:
         }
 
 
+def _find_partial_candidate(
+    history: Sequence[VehicleSample],
+    config: DetectionConfig,
+) -> _PartialCandidateMatch | None:
+    """Find a recent topology-neutral candidate by sample evidence, not time.
+
+    Window sizes grow by sample count. This avoids translating the 1s/2s/5s
+    navigation cadence into an implicit waiting timer while keeping free-motion
+    evaluation bounded. The growth factor controls search cost/precision only.
+    """
+
+    if len(history) < 8:
+        return None
+
+    counts: list[int] = []
+    current = min(8, len(history))
+    while current < len(history):
+        counts.append(current)
+        current = min(
+            len(history),
+            max(current + 1, int(math.ceil(current * config.adaptive_window_growth_factor))),
+        )
+    if not counts or counts[-1] != len(history):
+        counts.append(len(history))
+
+    for count in counts:
+        window = tuple(history[-count:])
+        evidence = extract_partial_route_evidence(window)
+        if evidence is None or not partial_candidate_ready(evidence, config):
+            continue
+        window_seconds = (
+            window[-1].sample_time_utc - window[0].sample_time_utc
+        ).total_seconds()
+        return _PartialCandidateMatch(
+            evidence=evidence,
+            window_start_utc=window[0].sample_time_utc,
+            window_seconds=window_seconds,
+            sample_count=len(window),
+        )
+    return None
+
+
 def _find_adaptive_route(
     history: Sequence[VehicleSample],
     config: DetectionConfig,
     *,
     require_confirmation: bool,
 ) -> _AdaptiveRouteMatch | None:
-    """Return the shortest recent evidence window that satisfies route gates.
+    """Return the shortest recent evidence window that satisfies V2 route gates.
 
     Confirmation first uses geometric re-observation: earlier samples nearest
     the current position (with compatible velocity heading when available) are
     candidate cycle boundaries. This finds the actual repeated path even when
-    older free/approach motion exists in the 40-minute buffer, avoiding the
-    false monotonic assumption that every longer suffix must fit better.
+    older free/approach motion exists in the 40-minute buffer.
 
-    A bounded geometric suffix search remains as fallback and as the early
-    candidate mechanism. Its refinement resolution is search precision only,
-    never a waiting timer.
+    A bounded geometric suffix search remains as fallback. Its refinement
+    resolution is search precision only, never a waiting timer.
     """
-    if len(history) < 12:
+    if len(history) < 8:
         return None
 
     if require_confirmation:
@@ -767,9 +849,6 @@ def _closure_guided_durations(
         )
         candidates.append((math.hypot(local.x_m, local.y_m), duration))
 
-    # Prefer the closest revisits, but prevent a dense cluster around one pass
-    # from consuming all hypotheses. A full-cycle revisit then naturally ranks
-    # ahead of arbitrary elapsed-time windows.
     selected: list[float] = []
     separation = max(10.0, float(config.adaptive_window_refine_seconds))
     for _, duration in sorted(candidates, key=lambda item: (item[0], item[1])):
@@ -801,9 +880,9 @@ def _detect_suffix(
     end_time = history[-1].sample_time_utc
     cutoff = end_time - timedelta(seconds=max(duration_seconds, 0.0))
     window = tuple(sample for sample in history if sample.sample_time_utc >= cutoff)
-    if len(window) < 12:
+    if len(window) < 8:
         return None
-    detection = detect_closed_route(
+    detection = detect_closed_route_vector(
         window,
         config,
         require_confirmation=require_confirmation,
@@ -817,6 +896,52 @@ def _detect_suffix(
         detection=detection,
         window_start_utc=window[0].sample_time_utc,
         window_seconds=window_seconds,
+    )
+
+
+def _partial_evidence_to_dict(evidence: PartialRouteEvidence) -> dict[str, Any]:
+    return {
+        "stream_key": [evidence.stream_key[0], evidence.stream_key[1]],
+        "window_start_utc": _iso(evidence.window_start_utc),
+        "window_end_utc": _iso(evidence.window_end_utc),
+        "source_sample_count": evidence.source_sample_count,
+        "observed_grid_count": evidence.observed_grid_count,
+        "observed_travel_m": evidence.observed_travel_m,
+        "turn_fraction": evidence.turn_fraction,
+        "smooth_heading_fraction": evidence.smooth_heading_fraction,
+        "turn_sign_persistence": evidence.turn_sign_persistence,
+        "path_efficiency": evidence.path_efficiency,
+        "contiguous_observation_fraction": evidence.contiguous_observation_fraction,
+        "observed_runs": [
+            [{"x_m": point.x_m, "y_m": point.y_m} for point in run]
+            for run in evidence.observed_runs
+        ],
+    }
+
+
+def _partial_evidence_from_dict(value: Mapping[str, Any]) -> PartialRouteEvidence:
+    stream_key = list(value.get("stream_key", (0, 0)))
+    if len(stream_key) != 2:
+        raise CheckpointCompatibilityError("invalid partial candidate stream key")
+    return PartialRouteEvidence(
+        stream_key=(int(stream_key[0]), int(stream_key[1])),
+        window_start_utc=_parse_time(str(value["window_start_utc"])),
+        window_end_utc=_parse_time(str(value["window_end_utc"])),
+        source_sample_count=int(value["source_sample_count"]),
+        observed_grid_count=int(value["observed_grid_count"]),
+        observed_travel_m=float(value["observed_travel_m"]),
+        turn_fraction=float(value["turn_fraction"]),
+        smooth_heading_fraction=float(value["smooth_heading_fraction"]),
+        turn_sign_persistence=float(value["turn_sign_persistence"]),
+        path_efficiency=float(value["path_efficiency"]),
+        contiguous_observation_fraction=float(value["contiguous_observation_fraction"]),
+        observed_runs=tuple(
+            tuple(
+                CanonicalPoint(float(point["x_m"]), float(point["y_m"]))
+                for point in run
+            )
+            for run in value.get("observed_runs", [])
+        ),
     )
 
 
