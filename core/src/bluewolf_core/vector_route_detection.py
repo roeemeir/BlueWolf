@@ -203,6 +203,10 @@ def detect_closed_route_vector(
         prepared.track,
         minimum_period_s=max(2.0 * prepared.grid_seconds, 20.0),
         canonical_bins=min(detection.canonical_point_limit, 64),
+        heading_tolerance_deg=max(
+            60.0,
+            detection.closure_direction_error_deg * 2.0,
+        ),
     )
     if evidence is None:
         return None
