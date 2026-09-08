@@ -68,6 +68,13 @@ from .so_scoring import (
     SOScoringObservation,
     score_so_template,
 )
+from .so_template_bank import (
+    InvalidSOTemplateBank,
+    SOConstellationRoute,
+    SOConstellationSignature,
+    SOTemplateBank,
+    SOTemplateBankEntry,
+)
 from .so_template_fit import (
     NoLegalSOTemplateAssignment,
     SOMemberTemplateFit,
@@ -114,6 +121,7 @@ __all__ = [
     "GroupMembershipLifecycle",
     "GroupObservation",
     "GroupingSnapshot",
+    "InvalidSOTemplateBank",
     "MemberTemplateFit",
     "NoLegalSOTemplateAssignment",
     "NoLegalTemplateAssignment",
@@ -126,6 +134,8 @@ __all__ = [
     "RouteFamily",
     "RouteGroup",
     "RouteSubtype",
+    "SOConstellationRoute",
+    "SOConstellationSignature",
     "SOGroupScoringResult",
     "SOMemberScoringResult",
     "SOMemberTemplateFit",
@@ -137,6 +147,8 @@ __all__ = [
     "SOSemanticProjection",
     "SOSlotRelation",
     "SOTemplate",
+    "SOTemplateBank",
+    "SOTemplateBankEntry",
     "SOTemplateFit",
     "SOVehicleSlot",
     "StableGroupingEngine",
