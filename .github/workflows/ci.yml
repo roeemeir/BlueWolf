@@ -71,6 +71,8 @@ jobs:
             tests: test_so_template_fit
           - shard: so-phase
             tests: test_so_phase
+          - shard: double-lobe-phase
+            tests: test_double_lobe_phase
           - shard: so-scoring
             tests: test_so_scoring
           - shard: so-template-bank
