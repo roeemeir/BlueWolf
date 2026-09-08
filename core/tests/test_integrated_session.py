@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from bluewolf_core import ChangeKind, CoreConfig, CoreSession
+from bluewolf_core import ChangeKind, CoreConfig, CoreSession, Direction
 from bluewolf_core.config import GroupingConfig
 from bluewolf_core.simulator import SimulatedVehicle, generate_si_circle_samples
 
@@ -15,16 +15,78 @@ VEHICLES = (
 )
 
 
-def group_scenario(duration_seconds: int = 220):
+def group_scenario(
+    duration_seconds: int = 220,
+    *,
+    sample_interval_seconds: int = 1,
+):
     return generate_si_circle_samples(
         start_time_utc=START,
         duration_seconds=duration_seconds,
         vehicles=VEHICLES,
         radius_m=100,
         period_seconds=120,
+        sample_interval_seconds=sample_interval_seconds,
         position_noise_std_m=0.25,
         seed=2026,
     )
+
+
+def _reversal_scenario(*, common_reversal: bool):
+    """Return a confirmed-group prefix and a physically continuous reversal tail.
+
+    The prefix ends at t=220. At that instant the two clockwise phases are 60°
+    and 240°. The tail starts at t=221. Vehicle 101 either continues clockwise
+    from 57° or reverses from the same 60° point; vehicle 102 reverses from 240°.
+    A five-second tail cadence keeps this long lifecycle regression inexpensive
+    without turning the 60s/360s rules into sample-count rules.
+    """
+
+    prefix = group_scenario(220, sample_interval_seconds=5)
+    transition = START + timedelta(seconds=221)
+    if common_reversal:
+        first_tail = generate_si_circle_samples(
+            start_time_utc=transition,
+            duration_seconds=370,
+            vehicles=(SimulatedVehicle(1, 101, 60),),
+            radius_m=100,
+            period_seconds=120,
+            direction=Direction.COUNTERCLOCKWISE,
+            sample_interval_seconds=5,
+            seed=3101,
+        )
+    else:
+        first_tail = generate_si_circle_samples(
+            start_time_utc=transition,
+            duration_seconds=370,
+            vehicles=(SimulatedVehicle(1, 101, 57),),
+            radius_m=100,
+            period_seconds=120,
+            direction=Direction.CLOCKWISE,
+            sample_interval_seconds=5,
+            seed=3101,
+        )
+    second_tail = generate_si_circle_samples(
+        start_time_utc=transition,
+        duration_seconds=370,
+        vehicles=(SimulatedVehicle(2, 102, 240),),
+        radius_m=100,
+        period_seconds=120,
+        direction=Direction.COUNTERCLOCKWISE,
+        sample_interval_seconds=5,
+        seed=3102,
+    )
+    tail = tuple(
+        sorted(
+            first_tail + second_tail,
+            key=lambda sample: (
+                sample.sample_time_utc,
+                sample.server_id,
+                sample.vehicle_identifier,
+            ),
+        )
+    )
+    return prefix, transition, tail
 
 
 class IntegratedGroupingSessionTests(unittest.TestCase):
@@ -156,6 +218,77 @@ class IntegratedGroupingSessionTests(unittest.TestCase):
                 for change in expired.changes
             )
         )
+
+    def test_single_si_reversal_alerts_at_60s_but_holds_group_until_360s(self) -> None:
+        prefix, transition, tail = _reversal_scenario(common_reversal=False)
+        session = CoreSession()
+        prefix_result = session.process_batch(prefix)
+        confirmed = [
+            change
+            for change in prefix_result.changes
+            if change.kind is ChangeKind.GROUP_CONFIRMED
+        ]
+        self.assertEqual(len(confirmed), 1)
+        original_group_id = confirmed[0].group_id
+
+        before_exit_end = transition + timedelta(seconds=355)
+        before_exit = tuple(
+            sample for sample in tail if sample.sample_time_utc <= before_exit_end
+        )
+        after_exit = tuple(
+            sample for sample in tail if sample.sample_time_utc > before_exit_end
+        )
+        held = session.process_batch(before_exit)
+
+        direction_alerts = [
+            change
+            for change in held.changes
+            if change.kind is ChangeKind.ALERT_OPENED
+            and change.details.get("reason") == "si_wrong_direction"
+        ]
+        self.assertEqual(len(direction_alerts), 1)
+        self.assertEqual(direction_alerts[0].vehicle_identifier, 102)
+        self.assertEqual(
+            direction_alerts[0].change_time_utc,
+            transition + timedelta(seconds=60),
+        )
+        self.assertEqual(len(session.grouping_snapshot().groups), 1)
+        self.assertEqual(session.grouping_snapshot().groups[0].group_id, original_group_id)
+        self.assertGreaterEqual(session.wrong_direction_seconds()[(1, 102)], 355.0)
+
+        removed = session.process_batch(after_exit)
+        self.assertEqual(session.grouping_snapshot().groups, ())
+        self.assertTrue(
+            any(
+                change.kind is ChangeKind.GROUP_CHANGED
+                and bool(change.details.get("dissolved"))
+                for change in removed.changes
+            )
+        )
+
+    def test_common_si_reversal_preserves_group_id_without_direction_alert(self) -> None:
+        prefix, _, tail = _reversal_scenario(common_reversal=True)
+        session = CoreSession()
+        prefix_result = session.process_batch(prefix)
+        confirmed = [
+            change
+            for change in prefix_result.changes
+            if change.kind is ChangeKind.GROUP_CONFIRMED
+        ]
+        self.assertEqual(len(confirmed), 1)
+        original_group_id = confirmed[0].group_id
+
+        reversed_result = session.process_batch(tail)
+        self.assertFalse(
+            any(
+                change.kind is ChangeKind.ALERT_OPENED
+                and change.details.get("reason") == "si_wrong_direction"
+                for change in reversed_result.changes
+            )
+        )
+        self.assertEqual(len(session.grouping_snapshot().groups), 1)
+        self.assertEqual(session.grouping_snapshot().groups[0].group_id, original_group_id)
+        self.assertEqual(session.wrong_direction_seconds(), {})
 
 
 if __name__ == "__main__":
