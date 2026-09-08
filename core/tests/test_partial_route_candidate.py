@@ -9,6 +9,7 @@ import numpy as np
 from bluewolf_core.geometry import local_m_to_wgs84
 from bluewolf_core.models import CanonicalPoint, VehicleSample
 from bluewolf_core.partial_route_candidate import extract_partial_route_evidence
+from bluewolf_core.trajectory_simulator import RouteShape, make_route
 
 
 START = datetime(2026, 9, 8, 8, 0, tzinfo=UTC)
@@ -38,6 +39,28 @@ def _samples(points: np.ndarray, *, missing: set[int] | None = None) -> list[Veh
             )
         )
     return output
+
+
+def _route_arc(
+    shape: RouteShape,
+    *,
+    start_fraction: float,
+    route_fraction: float,
+    opening_deg: float | None = None,
+    sample_count: int = 90,
+) -> np.ndarray:
+    route = make_route(
+        shape,
+        point_count=2048,
+        rotation_deg=23.0,
+        variant=0.35,
+        double_opening_deg=opening_deg,
+    )
+    n = len(route.xy_m)
+    start = int(round(start_fraction * n)) % n
+    span = max(3, int(round(route_fraction * n)))
+    indices = (start + np.linspace(0, span, sample_count, endpoint=True).astype(int)) % n
+    return route.xy_m[indices]
 
 
 def _diag(evidence) -> dict[str, float]:
@@ -100,8 +123,6 @@ class PartialRouteEvidenceTests(unittest.TestCase):
         self.assertIsNotNone(evidence)
         assert evidence is not None
 
-        # Random walk can accumulate apparent angle, but it should not get both
-        # smooth heading changes and persistent curvature like a coherent route.
         self.assertTrue(
             evidence.smooth_heading_fraction < 0.80
             or evidence.turn_sign_persistence < 0.75,
@@ -166,6 +187,55 @@ class PartialRouteEvidenceTests(unittest.TestCase):
             or drift_evidence.path_efficiency > 0.90,
             msg=f"noisy-drift diagnostics: {_diag(drift_evidence)}",
         )
+
+    def test_partial_route_feature_ranges_across_approved_families(self) -> None:
+        """Collect calibration evidence across shapes and phase origins.
+
+        This test intentionally does not define the final candidate gate. It
+        guarantees that the topology-neutral extractor produces finite evidence
+        on partial arcs of every approved V2 family before that gate is chosen.
+        """
+
+        cases = (
+            (RouteShape.SI_CIRCLE, None),
+            (RouteShape.SI_FREE_CLOSED, None),
+            (RouteShape.SO_HIPPODROME, None),
+            (RouteShape.SO_DOUBLE_HIPPODROME, 25.0),
+            (RouteShape.SO_DOUBLE_HIPPODROME, 55.0),
+            (RouteShape.SO_FIGURE_EIGHT, None),
+        )
+        for shape, opening in cases:
+            for start_fraction in (0.00, 0.17, 0.41, 0.73):
+                for route_fraction in (0.35, 0.45, 0.55):
+                    with self.subTest(
+                        shape=shape,
+                        opening=opening,
+                        start=start_fraction,
+                        fraction=route_fraction,
+                    ):
+                        points = _route_arc(
+                            shape,
+                            start_fraction=start_fraction,
+                            route_fraction=route_fraction,
+                            opening_deg=opening,
+                        )
+                        evidence = extract_partial_route_evidence(
+                            _samples(points), grid_seconds=2.0
+                        )
+                        self.assertIsNotNone(evidence)
+                        assert evidence is not None
+                        values = _diag(evidence)
+                        self.assertTrue(all(math.isfinite(value) for value in values.values()))
+                        self.assertGreater(evidence.observed_travel_m, 0.0)
+                        self.assertFalse(hasattr(evidence, "period_s"))
+                        print(
+                            "PARTIAL_ROUTE_DIAG",
+                            shape.value,
+                            opening,
+                            start_fraction,
+                            route_fraction,
+                            values,
+                        )
 
 
 if __name__ == "__main__":
