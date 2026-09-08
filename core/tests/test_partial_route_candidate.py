@@ -8,7 +8,10 @@ import numpy as np
 
 from bluewolf_core.geometry import local_m_to_wgs84
 from bluewolf_core.models import CanonicalPoint, VehicleSample
-from bluewolf_core.partial_route_candidate import extract_partial_route_evidence
+from bluewolf_core.partial_route_candidate import (
+    extract_partial_route_evidence,
+    partial_candidate_ready,
+)
 from bluewolf_core.trajectory_simulator import RouteShape, make_route
 
 
@@ -81,6 +84,7 @@ class PartialRouteEvidenceTests(unittest.TestCase):
         self.assertIsNotNone(evidence)
         assert evidence is not None
 
+        self.assertTrue(partial_candidate_ready(evidence))
         self.assertGreater(evidence.turn_fraction, 0.40)
         self.assertGreater(evidence.smooth_heading_fraction, 0.85)
         self.assertGreater(evidence.turn_sign_persistence, 0.85)
@@ -97,6 +101,7 @@ class PartialRouteEvidenceTests(unittest.TestCase):
         self.assertIsNotNone(evidence)
         assert evidence is not None
 
+        self.assertFalse(partial_candidate_ready(evidence))
         self.assertLess(evidence.turn_fraction, 0.03)
         self.assertGreater(evidence.smooth_heading_fraction, 0.95)
         self.assertGreater(evidence.path_efficiency, 0.80)
@@ -115,23 +120,24 @@ class PartialRouteEvidenceTests(unittest.TestCase):
         self.assertEqual(len(evidence.observed_runs), 2)
         self.assertLess(evidence.contiguous_observation_fraction, 0.75)
         self.assertTrue(all(len(run) >= 2 for run in evidence.observed_runs))
+        self.assertTrue(partial_candidate_ready(evidence), msg=f"outage diagnostics: {_diag(evidence)}")
 
-    def test_seeded_small_gps_zigzag_does_not_look_like_smooth_route_turning(self) -> None:
+    def test_seeded_small_gps_zigzag_is_not_a_candidate(self) -> None:
         rng = np.random.default_rng(44)
         points = np.cumsum(rng.normal(0.0, 1.0, size=(90, 2)), axis=0)
         evidence = extract_partial_route_evidence(_samples(points), grid_seconds=2.0)
         self.assertIsNotNone(evidence)
         assert evidence is not None
 
-        self.assertTrue(
-            evidence.smooth_heading_fraction < 0.80
-            or evidence.turn_sign_persistence < 0.75,
+        self.assertFalse(
+            partial_candidate_ready(evidence),
             msg=f"random-walk diagnostics: {_diag(evidence)}",
         )
 
     def test_candidate_features_scale_with_observed_route_fraction_not_elapsed_time(self) -> None:
-        """Calibration bank for an evidence gate; this test encodes no timer."""
+        """Evidence becomes sufficient from geometry, not a wall-clock delay."""
 
+        ready_by_fraction: dict[float, bool] = {}
         measured: list[tuple[float, float, float, float]] = []
         for route_fraction in (0.20, 0.30, 0.40, 0.50, 0.65):
             angle = np.linspace(0.0, 2.0 * math.pi * route_fraction, 80)
@@ -139,6 +145,7 @@ class PartialRouteEvidenceTests(unittest.TestCase):
             evidence = extract_partial_route_evidence(_samples(points), grid_seconds=2.0)
             self.assertIsNotNone(evidence)
             assert evidence is not None
+            ready_by_fraction[route_fraction] = partial_candidate_ready(evidence)
             measured.append(
                 (
                     route_fraction,
@@ -147,28 +154,21 @@ class PartialRouteEvidenceTests(unittest.TestCase):
                     evidence.turn_sign_persistence,
                 )
             )
-            self.assertGreater(evidence.smooth_heading_fraction, 0.85)
-            if route_fraction >= 0.30:
-                self.assertGreater(evidence.turn_sign_persistence, 0.80)
 
         turn = [item[1] for item in measured]
         efficiency = [item[2] for item in measured]
         self.assertTrue(all(next_value > value for value, next_value in zip(turn, turn[1:])))
         self.assertTrue(all(next_value < value for value, next_value in zip(efficiency, efficiency[1:])))
-        forty = measured[2]
-        self.assertGreater(forty[1], 0.30)
-        self.assertLess(forty[2], 0.90)
+        self.assertFalse(ready_by_fraction[0.20])
+        self.assertTrue(ready_by_fraction[0.40])
 
-    def test_partial_candidate_features_reject_non_route_motion_bank(self) -> None:
-        """Keep obvious non-route motion separated before choosing a gate."""
-
+    def test_partial_candidate_rejects_non_route_motion_bank(self) -> None:
         x = np.linspace(0.0, 420.0, 100)
         straight = np.column_stack((x, 0.02 * x))
         straight_evidence = extract_partial_route_evidence(_samples(straight), grid_seconds=2.0)
         self.assertIsNotNone(straight_evidence)
         assert straight_evidence is not None
-        self.assertLess(straight_evidence.turn_fraction, 0.05)
-        self.assertGreater(straight_evidence.path_efficiency, 0.80)
+        self.assertFalse(partial_candidate_ready(straight_evidence))
 
         rng = np.random.default_rng(712)
         noisy_drift = np.column_stack(
@@ -180,21 +180,25 @@ class PartialRouteEvidenceTests(unittest.TestCase):
         drift_evidence = extract_partial_route_evidence(_samples(noisy_drift), grid_seconds=2.0)
         self.assertIsNotNone(drift_evidence)
         assert drift_evidence is not None
-        self.assertTrue(
-            drift_evidence.turn_fraction < 0.30
-            or drift_evidence.smooth_heading_fraction < 0.85
-            or drift_evidence.turn_sign_persistence < 0.75
-            or drift_evidence.path_efficiency > 0.90,
+        self.assertFalse(
+            partial_candidate_ready(drift_evidence),
             msg=f"noisy-drift diagnostics: {_diag(drift_evidence)}",
         )
 
-    def test_partial_route_feature_ranges_across_approved_families(self) -> None:
-        """Collect calibration evidence across shapes and phase origins.
+        # A single smooth road bend is coherent motion but is deliberately kept
+        # below candidate strength; no recurrence or timer is used to promote it.
+        angle = np.linspace(0.0, math.radians(115.0), 90)
+        road_bend = np.column_stack((180.0 * np.cos(angle), 180.0 * np.sin(angle)))
+        bend_evidence = extract_partial_route_evidence(_samples(road_bend), grid_seconds=2.0)
+        self.assertIsNotNone(bend_evidence)
+        assert bend_evidence is not None
+        self.assertFalse(
+            partial_candidate_ready(bend_evidence),
+            msg=f"road-bend diagnostics: {_diag(bend_evidence)}",
+        )
 
-        This test intentionally does not define the final candidate gate. It
-        guarantees that the topology-neutral extractor produces finite evidence
-        on partial arcs of every approved V2 family before that gate is chosen.
-        """
+    def test_every_approved_family_reaches_candidate_by_observed_geometry(self) -> None:
+        """No family has a hidden elapsed-time requirement for candidate state."""
 
         cases = (
             (RouteShape.SI_CIRCLE, None),
@@ -206,36 +210,25 @@ class PartialRouteEvidenceTests(unittest.TestCase):
         )
         for shape, opening in cases:
             for start_fraction in (0.00, 0.17, 0.41, 0.73):
-                for route_fraction in (0.35, 0.45, 0.55):
-                    with self.subTest(
-                        shape=shape,
-                        opening=opening,
-                        start=start_fraction,
-                        fraction=route_fraction,
-                    ):
+                with self.subTest(shape=shape, opening=opening, start=start_fraction):
+                    observations: list[tuple[float, bool, dict[str, float]]] = []
+                    for route_fraction in (0.35, 0.45, 0.55):
                         points = _route_arc(
                             shape,
                             start_fraction=start_fraction,
                             route_fraction=route_fraction,
                             opening_deg=opening,
                         )
-                        evidence = extract_partial_route_evidence(
-                            _samples(points), grid_seconds=2.0
-                        )
+                        evidence = extract_partial_route_evidence(_samples(points), grid_seconds=2.0)
                         self.assertIsNotNone(evidence)
                         assert evidence is not None
-                        values = _diag(evidence)
-                        self.assertTrue(all(math.isfinite(value) for value in values.values()))
-                        self.assertGreater(evidence.observed_travel_m, 0.0)
-                        self.assertFalse(hasattr(evidence, "period_s"))
-                        print(
-                            "PARTIAL_ROUTE_DIAG",
-                            shape.value,
-                            opening,
-                            start_fraction,
-                            route_fraction,
-                            values,
+                        observations.append(
+                            (route_fraction, partial_candidate_ready(evidence), _diag(evidence))
                         )
+                    self.assertTrue(
+                        any(ready for _, ready, _ in observations),
+                        msg=f"candidate never formed: {shape.value} {opening} {start_fraction}: {observations}",
+                    )
 
 
 if __name__ == "__main__":
