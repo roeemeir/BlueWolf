@@ -33,6 +33,11 @@ class PartialRouteEvidence:
     It is topology-neutral: a Figure-8 may change turn sign while still
     accumulating substantial absolute turning.
 
+    `turn_sign_persistence` measures whether meaningful curvature keeps its sign
+    over adjacent heading changes. It does not require one global CW/CCW sign:
+    a Figure-8 may change sign between lobes while still having long coherent
+    runs. Random GPS meander tends to alternate sign much more frequently.
+
     `path_efficiency` is robust spatial extent / observed travelled distance.
     A straight approach tends toward one; a path that bends around an area falls
     below one. It is evidence only, not an acceptance gate.
@@ -50,6 +55,7 @@ class PartialRouteEvidence:
     observed_travel_m: float
     turn_fraction: float
     smooth_heading_fraction: float
+    turn_sign_persistence: float
     path_efficiency: float
     contiguous_observation_fraction: float
     observed_runs: tuple[tuple[CanonicalPoint, ...], ...]
@@ -58,16 +64,20 @@ class PartialRouteEvidence:
         for name in (
             "turn_fraction",
             "smooth_heading_fraction",
+            "turn_sign_persistence",
             "path_efficiency",
             "contiguous_observation_fraction",
         ):
             value = float(getattr(self, name))
             if not math.isfinite(value) or value < 0.0:
                 raise ValueError(f"{name} must be finite and non-negative")
-        if not 0.0 <= self.smooth_heading_fraction <= 1.0:
-            raise ValueError("smooth_heading_fraction must be in [0,1]")
-        if not 0.0 <= self.contiguous_observation_fraction <= 1.0:
-            raise ValueError("contiguous_observation_fraction must be in [0,1]")
+        for name in (
+            "smooth_heading_fraction",
+            "turn_sign_persistence",
+            "contiguous_observation_fraction",
+        ):
+            if not 0.0 <= float(getattr(self, name)) <= 1.0:
+                raise ValueError(f"{name} must be in [0,1]")
         if self.observed_travel_m <= 0.0:
             raise ValueError("observed_travel_m must be positive")
         if not self.observed_runs or any(len(run) < 2 for run in self.observed_runs):
@@ -110,7 +120,7 @@ def _wrapped_angle_delta(first: np.ndarray, second: np.ndarray) -> np.ndarray:
 
 
 def _run_metrics(points: np.ndarray) -> tuple[float, np.ndarray, np.ndarray]:
-    """Return observed travel, heading changes and a bounded diagnostic path."""
+    """Return observed travel, signed heading changes and bounded display path."""
 
     if len(points) < 2:
         return 0.0, np.zeros(0, dtype=float), points.copy()
@@ -133,8 +143,8 @@ def _run_metrics(points: np.ndarray) -> tuple[float, np.ndarray, np.ndarray]:
     if len(chord) < 2:
         return raw_travel, np.zeros(0, dtype=float), sampled
     heading = np.arctan2(chord[:, 1], chord[:, 0])
-    turn = np.abs(_wrapped_angle_delta(heading[:-1], heading[1:]))
-    return raw_travel, turn, sampled
+    signed_turn = _wrapped_angle_delta(heading[:-1], heading[1:])
+    return raw_travel, signed_turn, sampled
 
 
 def extract_partial_route_evidence(
@@ -158,12 +168,15 @@ def extract_partial_route_evidence(
     total_turn = 0.0
     heading_turn_count = 0
     smooth_turn_count = 0
+    persistent_sign_pairs = 0
+    meaningful_sign_pairs = 0
     diagnostic_runs: list[tuple[CanonicalPoint, ...]] = []
 
     for run in usable:
-        travel, turn, sampled = _run_metrics(prepared.track.xy_m[run])
+        travel, signed_turn, sampled = _run_metrics(prepared.track.xy_m[run])
         total_travel += travel
-        if len(turn):
+        if len(signed_turn):
+            turn = np.abs(signed_turn)
             # One spike may not contribute an arbitrary amount of apparent
             # coverage. The cap is a numerical robustness guard, not a vehicle
             # dynamics or route-shape limit.
@@ -171,6 +184,15 @@ def extract_partial_route_evidence(
             total_turn += float(np.sum(capped))
             heading_turn_count += len(turn)
             smooth_turn_count += int(np.count_nonzero(turn <= math.radians(45.0)))
+
+            # Ignore tiny sign changes dominated by measurement noise. The
+            # threshold is a numerical evidence filter, not a route curvature
+            # limit. Persistence is computed inside each observed run only.
+            meaningful = signed_turn[turn >= math.radians(3.0)]
+            if len(meaningful) >= 2:
+                signs = np.sign(meaningful)
+                meaningful_sign_pairs += len(signs) - 1
+                persistent_sign_pairs += int(np.count_nonzero(signs[:-1] == signs[1:]))
         if len(sampled) >= 2:
             diagnostic_runs.append(
                 tuple(
@@ -192,6 +214,11 @@ def extract_partial_route_evidence(
 
     longest_run = max(len(run) for run in runs)
     contiguous_fraction = longest_run / max(prepared.observed_grid_count, 1)
+    sign_persistence = (
+        persistent_sign_pairs / meaningful_sign_pairs
+        if meaningful_sign_pairs > 0
+        else 0.0
+    )
 
     ordered_valid = sorted(
         (
@@ -216,6 +243,7 @@ def extract_partial_route_evidence(
         observed_travel_m=total_travel,
         turn_fraction=total_turn / (2.0 * math.pi),
         smooth_heading_fraction=smooth_turn_count / heading_turn_count,
+        turn_sign_persistence=sign_persistence,
         path_efficiency=path_efficiency,
         contiguous_observation_fraction=contiguous_fraction,
         observed_runs=tuple(diagnostic_runs),
