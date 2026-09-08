@@ -889,12 +889,34 @@ def _detect_suffix(
     )
     if detection is None:
         return None
-    window_seconds = (
-        window[-1].sample_time_utc - window[0].sample_time_utc
-    ).total_seconds()
+
+    # The suffix is a search envelope, not the route evidence interval. V2
+    # explicitly marks the first and last recurrent samples, so downstream
+    # lifecycle, replacement attribution and reports must use those proven
+    # bounds. Fall back to the search window only for older/foreign detectors
+    # that do not expose recurrence diagnostics.
+    evidence_start = window[0].sample_time_utc
+    evidence_end = window[-1].sample_time_utc
+    periodic_start = detection.diagnostics.get("periodic_start_utc")
+    periodic_end = detection.diagnostics.get("periodic_end_utc")
+    if periodic_start is not None and periodic_end is not None:
+        try:
+            recurrent_start = _parse_time(str(periodic_start))
+            recurrent_end = _parse_time(str(periodic_end))
+        except (TypeError, ValueError):
+            pass
+        else:
+            if recurrent_start <= recurrent_end:
+                evidence_start = recurrent_start
+                evidence_end = recurrent_end
+
+    window_seconds = max(
+        0.0,
+        (evidence_end - evidence_start).total_seconds(),
+    )
     return _AdaptiveRouteMatch(
         detection=detection,
-        window_start_utc=window[0].sample_time_utc,
+        window_start_utc=evidence_start,
         window_seconds=window_seconds,
     )
 
