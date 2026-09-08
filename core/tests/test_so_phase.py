@@ -13,9 +13,11 @@ from bluewolf_core.models import (
     RouteTopology,
 )
 from bluewolf_core.so_phase import (
+    AmbiguousSOPhaseProjection,
     UnsupportedSOPhaseGeometry,
     build_so_phase_frame,
     normalize_so_phase,
+    project_so_semantic_phase_local,
 )
 
 
@@ -52,6 +54,28 @@ def _diamond() -> tuple[CanonicalPoint, ...]:
         CanonicalPoint(0.0, 4.0),
         CanonicalPoint(-10.0, 0.0),
         CanonicalPoint(0.0, -4.0),
+    )
+
+
+def _figure_eight() -> tuple[CanonicalPoint, ...]:
+    return (
+        CanonicalPoint(8.0, 0.0),
+        CanonicalPoint(4.0, 3.0),
+        CanonicalPoint(0.0, 0.0),
+        CanonicalPoint(-4.0, 3.0),
+        CanonicalPoint(-8.0, 0.0),
+        CanonicalPoint(-4.0, -3.0),
+        CanonicalPoint(0.0, 0.0),
+        CanonicalPoint(4.0, -3.0),
+    )
+
+
+def _figure_eight_route() -> ClosedRoute:
+    return _route(
+        "figure8",
+        _figure_eight(),
+        subtype=RouteSubtype.FIGURE_EIGHT,
+        topology=RouteTopology.SELF_CROSSING,
     )
 
 
@@ -131,8 +155,6 @@ class SOPhaseNormalizationTests(unittest.TestCase):
             reference_major_axis=first_frame.major_axis,
         )
 
-        # The standalone world convention legitimately changes sign at one
-        # projective-axis boundary; a Route Instance chain must not.
         standalone_dot = (
             first_frame.major_east * second_without_reference.major_east
             + first_frame.major_north * second_without_reference.major_north
@@ -159,24 +181,60 @@ class SOPhaseNormalizationTests(unittest.TestCase):
         self.assertAlmostEqual(frame.normalize(_raw_phase(route, CanonicalPoint(10.0, 0.0))), 0.0)
 
     def test_figure_eight_can_normalize_an_already_known_raw_phase(self) -> None:
-        points = (
-            CanonicalPoint(8.0, 0.0),
-            CanonicalPoint(4.0, 3.0),
-            CanonicalPoint(0.0, 0.0),
-            CanonicalPoint(-4.0, 3.0),
-            CanonicalPoint(-8.0, 0.0),
-            CanonicalPoint(-4.0, -3.0),
-            CanonicalPoint(0.0, 0.0),
-            CanonicalPoint(4.0, -3.0),
-        )
-        route = _route(
-            "figure8",
-            points,
-            subtype=RouteSubtype.FIGURE_EIGHT,
-            topology=RouteTopology.SELF_CROSSING,
-        )
+        route = _figure_eight_route()
         frame = build_so_phase_frame(route)
         self.assertAlmostEqual(frame.normalize(_raw_phase(route, CanonicalPoint(8.0, 0.0))), 0.0)
+
+    def test_figure_eight_crossing_requires_heading(self) -> None:
+        route = _figure_eight_route()
+        with self.assertRaises(AmbiguousSOPhaseProjection):
+            project_so_semantic_phase_local(route, CanonicalPoint(0.0, 0.0))
+
+    def test_figure_eight_heading_selects_distinct_crossing_phases(self) -> None:
+        route = _figure_eight_route()
+        first_branch = project_so_semantic_phase_local(
+            route,
+            CanonicalPoint(0.0, 0.0),
+            velocity_east_mps=-4.0,
+            velocity_north_mps=3.0,
+        )
+        second_branch = project_so_semantic_phase_local(
+            route,
+            CanonicalPoint(0.0, 0.0),
+            velocity_east_mps=4.0,
+            velocity_north_mps=-3.0,
+        )
+
+        self.assertTrue(first_branch.heading_disambiguated)
+        self.assertTrue(second_branch.heading_disambiguated)
+        self.assertGreaterEqual(first_branch.candidate_count, 4)
+        self.assertGreaterEqual(second_branch.candidate_count, 4)
+        self.assertAlmostEqual(first_branch.heading_error_deg or 0.0, 0.0)
+        self.assertAlmostEqual(second_branch.heading_error_deg or 0.0, 0.0)
+        self.assertAlmostEqual(first_branch.semantic_phase, 0.25)
+        self.assertAlmostEqual(second_branch.semantic_phase, 0.75)
+
+    def test_figure_eight_position_only_is_valid_away_from_crossing(self) -> None:
+        route = _figure_eight_route()
+        result = project_so_semantic_phase_local(route, CanonicalPoint(-2.0, 1.5))
+        self.assertFalse(result.heading_disambiguated)
+        self.assertEqual(result.candidate_count, 1)
+        self.assertAlmostEqual(result.semantic_phase, 0.3125)
+
+    def test_simple_so_projection_does_not_require_velocity(self) -> None:
+        route = _route("r", _diamond())
+        result = project_so_semantic_phase_local(route, CanonicalPoint(10.0, 0.0))
+        self.assertAlmostEqual(result.semantic_phase, 0.0)
+        self.assertFalse(result.heading_disambiguated)
+
+    def test_velocity_components_must_be_supplied_together(self) -> None:
+        route = _route("r", _diamond())
+        with self.assertRaises(ValueError):
+            project_so_semantic_phase_local(
+                route,
+                CanonicalPoint(10.0, 0.0),
+                velocity_east_mps=2.0,
+            )
 
     def test_double_figure_eight_remains_explicitly_undefined(self) -> None:
         route = _route(
