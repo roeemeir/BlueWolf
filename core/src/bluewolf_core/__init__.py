@@ -52,6 +52,20 @@ from .models import (
 from .route_detection import RouteDetection, detect_closed_route
 from .scoring import aggregate_group_scores, score_error, score_vehicle
 from .session import CheckpointCompatibilityError
+from .so_templates import (
+    Quarter,
+    QuarterRelation,
+    SORouteInstance,
+    SORouteKind,
+    SOSlotRelation,
+    SOTemplate,
+    SOVehicleSlot,
+    UndefinedSOGeometryError,
+    quarter_relation,
+    slot_relation,
+    synchronization_route_kind,
+    template_relations,
+)
 from .templates import (
     MemberTemplateFit,
     NoLegalTemplateAssignment,
@@ -81,10 +95,17 @@ __all__ = [
     "ObservedMember",
     "PrimitiveMetrics",
     "PolylineProjection",
+    "Quarter",
+    "QuarterRelation",
     "RouteDetection",
     "RouteFamily",
     "RouteGroup",
     "RouteSubtype",
+    "SORouteInstance",
+    "SORouteKind",
+    "SOSlotRelation",
+    "SOTemplate",
+    "SOVehicleSlot",
     "StableGroupingEngine",
     "StateChange",
     "StructuralGroup",
@@ -92,6 +113,7 @@ __all__ = [
     "SynchronizationTemplate",
     "TemplateFit",
     "TemplateSlot",
+    "UndefinedSOGeometryError",
     "VehicleFrameResult",
     "VehicleSample",
     "VehicleScores",
@@ -107,11 +129,15 @@ __all__ = [
     "point_at_phase",
     "project_onto_closed_polyline",
     "project_wgs84",
+    "quarter_relation",
     "resample_closed_polyline",
     "routes_compatible",
     "score_error",
     "score_vehicle",
+    "slot_relation",
+    "synchronization_route_kind",
     "tangent_error_deg",
+    "template_relations",
 ]
 
 __version__ = "0.4.0"
