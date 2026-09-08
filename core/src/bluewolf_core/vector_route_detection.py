@@ -17,11 +17,24 @@ import numpy as np
 
 from .config import DetectionConfig
 from .geometry import local_m_to_wgs84
-from .models import CanonicalPoint, ClosedRoute, Direction, RouteFamily, RouteTopology, VehicleSample
+from .models import (
+    CanonicalPoint,
+    ClosedRoute,
+    Direction,
+    RouteFamily,
+    RouteTopology,
+    VehicleSample,
+)
 from .route_classifier_v2 import RouteClassification, classify_route
 from .route_detection import RouteDetection
 from .vector_sample_adapter import PreparedVectorTrack, build_vector_track
-from .vector_trajectory import FoldedRouteEvidence, VectorTrack, extract_periodic_evidence, robust_axis_frame
+from .vector_trajectory import (
+    FoldedRouteEvidence,
+    VectorTrack,
+    extract_periodic_evidence,
+    fold_periodic_route,
+    robust_axis_frame,
+)
 
 
 _EPS = 1e-12
@@ -76,20 +89,30 @@ def _polyline_distances(points: np.ndarray, canonical: np.ndarray) -> np.ndarray
     return np.sqrt(np.min(squared, axis=1))
 
 
-def _phase_fold_mean(track: VectorTrack, evidence: FoldedRouteEvidence) -> np.ndarray:
-    """Raw/observed phase fold used only for the `observed` route view."""
+def _phase_fold_mean(
+    track: VectorTrack,
+    evidence: FoldedRouteEvidence,
+    mask: np.ndarray,
+    fallback: np.ndarray,
+) -> np.ndarray:
+    """Mean phase fold for the raw/observed route view.
 
-    bins = len(evidence.canonical_xy_m)
-    periodic = evidence.periodic_mask & track.observed_mask
-    indices = np.flatnonzero(periodic)
+    The mask is restricted to the recurrent traversal span. Missing slots remain
+    missing; unsupported bins use the effective hypothesis only so the observed
+    API stays a complete closed polyline without inventing confirmation credit.
+    """
+
+    bins = len(fallback)
+    selected_mask = np.asarray(mask, dtype=bool) & track.observed_mask
+    indices = np.flatnonzero(selected_mask)
     if len(indices) < 3:
-        return evidence.canonical_xy_m.copy()
+        return fallback.copy()
     phase_origin = track.time_s[indices[0]]
     phase = np.mod((track.time_s - phase_origin) / evidence.period.period_s, 1.0)
     bin_index = np.floor(phase * bins).astype(int) % bins
-    result = evidence.canonical_xy_m.copy()
+    result = fallback.copy()
     for index in range(bins):
-        selected = periodic & (bin_index == index)
+        selected = selected_mask & (bin_index == index)
         if np.any(selected):
             result[index] = np.mean(track.xy_m[selected], axis=0)
     return result
@@ -103,7 +126,11 @@ def _direction(canonical_absolute: np.ndarray, topology: RouteTopology) -> Direc
     signed_twice_area = float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y))
     if abs(signed_twice_area) <= 1e-6:
         return Direction.UNKNOWN
-    return Direction.COUNTERCLOCKWISE if signed_twice_area > 0 else Direction.CLOCKWISE
+    return (
+        Direction.COUNTERCLOCKWISE
+        if signed_twice_area > 0
+        else Direction.CLOCKWISE
+    )
 
 
 def _to_route(
@@ -129,7 +156,10 @@ def _to_route(
     short_axis = float(np.min(half_axes))
     long_index = int(np.argmax(half_axes))
     long_vector = vectors[:, long_index]
-    orientation = math.degrees(math.atan2(float(long_vector[1]), float(long_vector[0]))) % 180.0
+    orientation = (
+        math.degrees(math.atan2(float(long_vector[1]), float(long_vector[0])))
+        % 180.0
+    )
     return ClosedRoute(
         route_id=route_id,
         family=classification.family,
@@ -155,7 +185,14 @@ def detect_closed_route_vector(
     require_confirmation: bool = True,
     grid_seconds: float | None = None,
 ) -> RouteDetection | None:
-    """Detect an approved closed route using the vector V2 pipeline."""
+    """Detect an approved closed route using the vector V2 pipeline.
+
+    Recurrence proves that motion repeats. Geometry and phase coverage are then
+    estimated from every *observed* position between the first and last recurrent
+    samples. This distinction is important: a point need not itself have a
+    one-period partner to be valid route geometry once it lies inside a proven
+    recurrent traversal span.
+    """
 
     detection = config or DetectionConfig()
     materialized = tuple(samples)
@@ -170,25 +207,6 @@ def detect_closed_route_vector(
     if evidence is None:
         return None
 
-    periodic_points = prepared.track.xy_m[evidence.periodic_mask]
-    if len(periodic_points) < 6:
-        return None
-    effective_canonical = evidence.canonical_xy_m
-    short_axis = max(float(np.min(evidence.half_axes_m)), 1.0)
-    tolerance_m = max(
-        1.0,
-        short_axis * detection.closure_distance_short_axis_ratio,
-    )
-    residual = _polyline_distances(periodic_points, effective_canonical)
-    fitted = residual <= tolerance_m
-    fit_fraction = float(np.mean(fitted))
-    inlier_fraction = fit_fraction
-    direct_support_fraction = evidence.canonical_support_fraction
-    coverage_fraction = _phase_coverage_fraction(
-        evidence.canonical_support,
-        detection.coverage_interpolation_max_phase_gap,
-    )
-
     periodic_indices = np.flatnonzero(evidence.periodic_mask)
     if len(periodic_indices) < 2:
         return None
@@ -200,7 +218,49 @@ def detect_closed_route_vector(
         prepared.track.time_s[periodic_end_index]
         - prepared.track.time_s[periodic_start_index]
     )
-    completed_cycles = max(0.0, periodic_span_s / max(evidence.period.period_s, _EPS))
+    completed_cycles = max(
+        0.0,
+        periodic_span_s / max(evidence.period.period_s, _EPS),
+    )
+
+    # Recurrence establishes trustworthy traversal bounds. Inside those bounds,
+    # use every real observation to estimate the route; never synthesize samples
+    # across network holes. fold_periodic_route may interpolate unsupported bins
+    # only inside the geometry hypothesis, while traversal_support records what
+    # was actually observed and therefore owns the coverage gate.
+    traversal_mask = np.zeros_like(prepared.track.observed_mask, dtype=bool)
+    traversal_mask[periodic_start_index : periodic_end_index + 1] = (
+        prepared.track.observed_mask[periodic_start_index : periodic_end_index + 1]
+    )
+    try:
+        effective_canonical, traversal_support, traversal_counts = fold_periodic_route(
+            prepared.track,
+            evidence.period,
+            traversal_mask,
+            canonical_bins=len(evidence.canonical_xy_m),
+        )
+    except ValueError:
+        return None
+
+    traversal_points = prepared.track.xy_m[traversal_mask]
+    if len(traversal_points) < 6:
+        return None
+    _, _, traversal_half_axes = robust_axis_frame(effective_canonical)
+    short_axis = max(float(np.min(traversal_half_axes)), 1.0)
+    tolerance_m = max(
+        1.0,
+        short_axis * detection.closure_distance_short_axis_ratio,
+    )
+    residual = _polyline_distances(traversal_points, effective_canonical)
+    fitted = residual <= tolerance_m
+    fit_fraction = float(np.mean(fitted))
+    inlier_fraction = fit_fraction
+    direct_support_fraction = float(np.mean(traversal_support))
+    recurrence_support_fraction = evidence.canonical_support_fraction
+    coverage_fraction = _phase_coverage_fraction(
+        traversal_support,
+        detection.coverage_interpolation_max_phase_gap,
+    )
 
     minimum_recurrence_pairs = max(
         8,
@@ -213,6 +273,11 @@ def detect_closed_route_vector(
         if require_confirmation
         else detection.candidate_fit_fraction
     )
+    required_coverage = (
+        detection.confirmation_coverage_fraction
+        if require_confirmation
+        else detection.candidate_coverage_fraction
+    )
     required_cycles = (
         detection.required_completed_cycles
         if require_confirmation
@@ -220,7 +285,7 @@ def detect_closed_route_vector(
     )
     generic_ready = (
         fit_fraction + _EPS >= required_fit
-        and coverage_fraction + _EPS >= detection.candidate_coverage_fraction
+        and coverage_fraction + _EPS >= required_coverage
         and completed_cycles + _EPS >= required_cycles
         and closure_ok
     )
@@ -244,7 +309,7 @@ def detect_closed_route_vector(
     confirmation_ready = (
         recognized_route
         and fit_fraction + _EPS >= detection.required_fit_fraction
-        and coverage_fraction + _EPS >= detection.candidate_coverage_fraction
+        and coverage_fraction + _EPS >= detection.confirmation_coverage_fraction
         and completed_cycles + _EPS >= detection.required_completed_cycles
         and closure_ok
     )
@@ -276,7 +341,12 @@ def detect_closed_route_vector(
         return None
     server_id, vehicle_identifier = ordered_valid[0].stream_key
     prefix = f"{server_id}:{vehicle_identifier}"
-    observed_canonical = _phase_fold_mean(prepared.track, evidence)
+    observed_canonical = _phase_fold_mean(
+        prepared.track,
+        evidence,
+        traversal_mask,
+        effective_canonical,
+    )
     observed = _to_route(
         route_id=f"{prefix}:observed:v2",
         classification=classification,
@@ -312,8 +382,11 @@ def detect_closed_route_vector(
             "period_score": evidence.period.score,
             "period_support_pairs": evidence.period.support_pairs,
             "direct_canonical_support_fraction": direct_support_fraction,
+            "recurrence_canonical_support_fraction": recurrence_support_fraction,
             "phase_coverage_fraction": coverage_fraction,
             "canonical_support_fraction": direct_support_fraction,
+            "traversal_supported_bins": int(np.count_nonzero(traversal_support)),
+            "traversal_observation_count": int(np.sum(traversal_counts)),
             "grid_seconds": prepared.grid_seconds,
             "source_sample_count": prepared.source_sample_count,
             "observed_grid_count": prepared.observed_grid_count,
