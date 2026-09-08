@@ -12,6 +12,7 @@ gate or time heuristic is introduced here.
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from typing import Mapping
 
 import numpy as np
@@ -96,12 +97,7 @@ def derive_double_hippodrome_components(
     canonical_absolute_xy_m: np.ndarray,
     diagnostics: Mapping[str, float | int | bool | str],
 ) -> tuple[RouteComponent, RouteComponent]:
-    """Reconstruct the two fitted logical Single-Hippodrome components.
-
-    The returned labels are deterministic diagnostics only. They never encode a
-    permanent vehicle role; live role/quarter assignment is recomputed from the
-    active component and semantic phase.
-    """
+    """Reconstruct the two fitted logical Single-Hippodrome components."""
 
     opening_raw = diagnostics.get("opening_deg")
     radius_raw = diagnostics.get("radius_ratio")
@@ -167,14 +163,25 @@ def derive_double_hippodrome_components(
     return output[0], output[1]
 
 
+@lru_cache(maxsize=256)
+def _cached_components_from_signature(
+    canonical_signature: tuple[tuple[float, float], ...],
+    short_axis_b_m: float,
+) -> tuple[RouteComponent, RouteComponent]:
+    points = np.asarray(canonical_signature, dtype=float)
+    fit = _fit_double_hippodrome(points, max(float(short_axis_b_m), 1.0))
+    return derive_double_hippodrome_components(points, fit.metadata)
+
+
 def derive_double_hippodrome_components_from_route(
     route: ClosedRoute,
 ) -> tuple[RouteComponent, RouteComponent]:
     """Derive logical lobes from a confirmed Double route when not persisted.
 
     The fit runs against the route's small canonical polyline (<=64 points), not
-    raw history, and is deterministic. This makes the components recoverable
-    after checkpoint restore without introducing new persisted lifecycle state.
+    raw history. Results are cached by immutable geometry signature, so live
+    projection pays this cost once per distinct detected Double geometry while
+    checkpoint restart remains deterministic.
     """
 
     if route.subtype is not RouteSubtype.DOUBLE_HIPPODROME:
@@ -184,9 +191,5 @@ def derive_double_hippodrome_components_from_route(
             raise ValueError("Double Hippodrome must contain exactly two components")
         return route.components[0], route.components[1]
 
-    points = np.asarray(
-        [(point.x_m, point.y_m) for point in route.canonical_points],
-        dtype=float,
-    )
-    fit = _fit_double_hippodrome(points, max(route.short_axis_b_m, 1.0))
-    return derive_double_hippodrome_components(points, fit.metadata)
+    signature = tuple((float(point.x_m), float(point.y_m)) for point in route.canonical_points)
+    return _cached_components_from_signature(signature, float(route.short_axis_b_m))
