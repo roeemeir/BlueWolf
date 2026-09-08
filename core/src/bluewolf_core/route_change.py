@@ -47,6 +47,10 @@ def route_change_suspected(
     checks only the current point, speed and direction against the confirmed
     route. It never confirms a change; it merely opens the expensive adaptive
     multi-window search when the current route stops explaining the motion.
+
+    V2 canonical points are ordered by observed phase/time, so the polyline
+    tangent already represents ``route.direction``. Do not flip clockwise
+    tangents a second time.
     """
 
     if (
@@ -88,16 +92,11 @@ def route_change_suspected(
         east = float(sample.velocity_east_mps)
         north = float(sample.velocity_north_mps)
         if math.hypot(east, north) > _EPSILON:
-            tangent_east = projection.tangent_east
-            tangent_north = projection.tangent_north
-            if route.direction is Direction.CLOCKWISE:
-                tangent_east = -tangent_east
-                tangent_north = -tangent_north
             direction_error = vector_angle_error_deg(
                 east,
                 north,
-                tangent_east,
-                tangent_north,
+                projection.tangent_east,
+                projection.tangent_north,
             )
             if direction_error > max(
                 45.0,
