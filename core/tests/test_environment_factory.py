@@ -213,6 +213,26 @@ class EnvironmentFactoryTests(unittest.TestCase):
         assert host is not None
         self.assertEqual(len(host.loop.pipelines), 1)
 
+    def test_shipped_operational_example_builds_without_network_access(self) -> None:
+        repository_root = Path(__file__).resolve().parents[2]
+        path = repository_root / "deploy" / "runtime" / "operational-config.example.json"
+        config = load_operational_config(path)
+        with patch.dict(os.environ, {"BLUEWOLF_INFLUX_TOKEN": "example-secret"}, clear=False):
+            loop = build_operational_runtime(config, RuntimeSnapshotStore())
+
+        self.assertEqual(len(loop.pipelines), 1)
+        pipeline = loop.pipelines[0]
+        self.assertEqual(pipeline.server_id, 1)
+        self.assertEqual(pipeline.coordinator.server_tag_value, "server-1")
+        self.assertEqual(
+            pipeline.coordinator.reader.adapter.connection.url,
+            "http://influxdb2.internal:8086",
+        )
+        self.assertEqual(
+            pipeline.coordinator.reader.adapter.connection.token,
+            "example-secret",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
