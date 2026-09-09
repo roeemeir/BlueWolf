@@ -5,14 +5,15 @@ Validated producers publish snapshots into ``RuntimeSnapshotStore``; the ASGI
 transport exposes the latest snapshot and a bounded live-history cache.
 
 The history cache is deliberately a live-operator facility, not the after-action
-archive. It is bounded, process-local, ordered by ``observedAt`` and supports
-same-timestamp replacement so a corrected publication does not create duplicate
-points. Operational restart persistence may serialize this cache separately.
+archive. It is bounded by an observed-time window and a defensive item cap,
+process-local, ordered by ``observedAt`` and supports same-timestamp replacement
+so a corrected publication does not create duplicate points. Operational restart
+persistence may serialize this cache separately.
 """
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hmac
 import json
 import os
@@ -24,7 +25,9 @@ from urllib.parse import parse_qs
 from .contract import LIVE_RUNTIME_SCHEMA_VERSION
 
 _SERVER_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
-_MAX_HISTORY_REQUEST = 1000
+_DEFAULT_HISTORY_WINDOW_SECONDS = 30 * 60
+_DEFAULT_HISTORY_LIMIT = 2000
+_MAX_HISTORY_REQUEST = 5000
 
 
 def _utc_now() -> datetime:
@@ -56,6 +59,13 @@ def _positive_integer(name: str, value: int) -> int:
     return value
 
 
+def _history_limit(name: str, value: int) -> int:
+    limit = _positive_integer(name, value)
+    if limit > _MAX_HISTORY_REQUEST:
+        raise ValueError(f"{name} must be <= {_MAX_HISTORY_REQUEST}")
+    return limit
+
+
 def _validate_snapshot(snapshot: Mapping[str, Any]) -> tuple[str, datetime]:
     if snapshot.get("schemaVersion") != LIVE_RUNTIME_SCHEMA_VERSION:
         raise ValueError("unsupported live runtime schema")
@@ -73,13 +83,36 @@ def _validate_snapshot(snapshot: Mapping[str, Any]) -> tuple[str, datetime]:
 
 
 class RuntimeSnapshotStore:
-    """Thread-safe latest snapshot plus bounded live history per server."""
+    """Thread-safe latest snapshot plus time-bounded live history per server."""
 
-    def __init__(self, *, history_limit: int = 360) -> None:
-        self.history_limit = _positive_integer("history_limit", history_limit)
+    def __init__(
+        self,
+        *,
+        history_limit: int = _DEFAULT_HISTORY_LIMIT,
+        history_window_seconds: float = _DEFAULT_HISTORY_WINDOW_SECONDS,
+    ) -> None:
+        self.history_limit = _history_limit("history_limit", history_limit)
+        self.history_window_seconds = _positive_seconds(
+            "history_window_seconds", history_window_seconds
+        )
         self._lock = RLock()
         self._snapshots: dict[str, dict[str, Any]] = {}
         self._history: dict[str, list[dict[str, Any]]] = {}
+
+    def _trim_history(self, history: list[dict[str, Any]]) -> None:
+        if not history:
+            return
+        newest = _parse_utc(history[-1]["observedAt"])
+        cutoff = newest - timedelta(seconds=self.history_window_seconds)
+        keep_from = 0
+        while keep_from < len(history):
+            if _parse_utc(history[keep_from]["observedAt"]) >= cutoff:
+                break
+            keep_from += 1
+        if keep_from:
+            del history[:keep_from]
+        if len(history) > self.history_limit:
+            del history[: len(history) - self.history_limit]
 
     def publish(self, snapshot: Mapping[str, Any]) -> None:
         server_id, observed_at = _validate_snapshot(snapshot)
@@ -96,8 +129,7 @@ class RuntimeSnapshotStore:
             if not replaced:
                 history.append(deepcopy(frozen))
                 history.sort(key=lambda item: _parse_utc(item["observedAt"]))
-            if len(history) > self.history_limit:
-                del history[: len(history) - self.history_limit]
+            self._trim_history(history)
 
             current = self._snapshots.get(server_id)
             if current is None or observed_at >= _parse_utc(current["observedAt"]):
@@ -113,9 +145,7 @@ class RuntimeSnapshotStore:
     def history(self, server_id: str, *, limit: int | None = None) -> list[dict[str, Any]]:
         if not _SERVER_PATTERN.fullmatch(server_id):
             raise ValueError("invalid serverId")
-        requested = self.history_limit if limit is None else _positive_integer("limit", limit)
-        if requested > _MAX_HISTORY_REQUEST:
-            raise ValueError(f"limit must be <= {_MAX_HISTORY_REQUEST}")
+        requested = self.history_limit if limit is None else _history_limit("limit", limit)
         with self._lock:
             rows = self._history.get(server_id, [])
             return deepcopy(rows[-requested:])
@@ -375,15 +405,30 @@ def create_app(
 
 
 def _history_limit_from_environment() -> int:
-    raw = os.environ.get("BLUEWOLF_RUNTIME_HISTORY_LIMIT", "360")
+    raw = os.environ.get("BLUEWOLF_RUNTIME_HISTORY_LIMIT", str(_DEFAULT_HISTORY_LIMIT))
     try:
         value = int(raw)
     except ValueError as exc:
         raise ValueError("BLUEWOLF_RUNTIME_HISTORY_LIMIT must be an integer") from exc
-    return _positive_integer("BLUEWOLF_RUNTIME_HISTORY_LIMIT", value)
+    return _history_limit("BLUEWOLF_RUNTIME_HISTORY_LIMIT", value)
 
 
-runtime_store = RuntimeSnapshotStore(history_limit=_history_limit_from_environment())
+def _history_window_from_environment() -> float:
+    raw = os.environ.get(
+        "BLUEWOLF_RUNTIME_HISTORY_SECONDS",
+        str(_DEFAULT_HISTORY_WINDOW_SECONDS),
+    )
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise ValueError("BLUEWOLF_RUNTIME_HISTORY_SECONDS must be numeric") from exc
+    return _positive_seconds("BLUEWOLF_RUNTIME_HISTORY_SECONDS", value)
+
+
+runtime_store = RuntimeSnapshotStore(
+    history_limit=_history_limit_from_environment(),
+    history_window_seconds=_history_window_from_environment(),
+)
 operational_host: Any | None = None
 
 
