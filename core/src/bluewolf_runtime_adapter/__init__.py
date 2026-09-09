@@ -17,6 +17,14 @@ from .operational_pipeline import (
     OperationalServerPipeline,
     OperationalTick,
 )
+from .operational_state import (
+    OPERATIONAL_STATE_SCHEMA_VERSION,
+    AtomicOperationalStateStore,
+    CheckpointedOperationalRuntimeLoop,
+    OperationalStateCompatibilityError,
+    export_operational_state,
+    restore_operational_state,
+)
 from .position_enrichment import (
     PositionEnrichedLiveRuntimeProducer,
     enrich_runtime_snapshot_positions,
@@ -47,9 +55,12 @@ from .service import (
 
 __all__ = [
     "LIVE_RUNTIME_SCHEMA_VERSION",
+    "OPERATIONAL_STATE_SCHEMA_VERSION",
+    "AtomicOperationalStateStore",
     "AwakeResolver",
     "BindingResolver",
     "BlueWolfRuntimeASGI",
+    "CheckpointedOperationalRuntimeLoop",
     "DisplayedScoreResolver",
     "DisplayedScoreValue",
     "IngestPollResult",
@@ -61,6 +72,7 @@ __all__ = [
     "OperationalPipelineResult",
     "OperationalRuntimeLoop",
     "OperationalServerPipeline",
+    "OperationalStateCompatibilityError",
     "OperationalTick",
     "PositionEnrichedLiveRuntimeProducer",
     "RuntimePublicationResult",
@@ -72,7 +84,9 @@ __all__ = [
     "build_so_live_runtime_snapshot",
     "create_app",
     "enrich_runtime_snapshot_positions",
+    "export_operational_state",
     "host_from_environment",
     "load_operational_loop_factory",
+    "restore_operational_state",
     "runtime_store",
 ]
