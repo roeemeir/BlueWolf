@@ -68,6 +68,10 @@ def _configuration_fingerprint(config_path: str) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def _normalized_path(value: str | os.PathLike[str]) -> Path:
+    return Path(value).expanduser().resolve(strict=False)
+
+
 @dataclass(frozen=True, slots=True)
 class OperationalHostSnapshot:
     enabled: bool
@@ -168,10 +172,11 @@ def host_from_environment(store: Any) -> OperationalLoopHost | None:
     JSON factory is selected. With neither variable, the service remains
     transport-only and no polling thread is created.
 
-    When ``BLUEWOLF_OPERATIONAL_STATE_PATH`` is set, the constructed loop is
-    wrapped in ``CheckpointedOperationalRuntimeLoop``. Checkpoint compatibility
-    is tied to a SHA-256 fingerprint of the canonical public JSON config; secret
-    environment values never enter the persisted state or fingerprint.
+    Persistence may be enabled either by ``persistence.path`` in the JSON
+    configuration (handled by the built-in factory) or by
+    ``BLUEWOLF_OPERATIONAL_STATE_PATH`` at the deployment boundary. If both are
+    supplied they must resolve to the same file. This prevents an environment
+    override from silently changing restart continuity semantics.
     """
 
     spec = os.environ.get("BLUEWOLF_OPERATIONAL_FACTORY", "").strip()
@@ -187,15 +192,23 @@ def host_from_environment(store: Any) -> OperationalLoopHost | None:
         raise TypeError("operational factory must return OperationalRuntimeLoop")
 
     if state_path:
-        if not config_path:
-            raise ValueError(
-                "BLUEWOLF_OPERATIONAL_STATE_PATH requires BLUEWOLF_OPERATIONAL_CONFIG "
-                "so checkpoint compatibility can be verified"
-            )
-        if not isinstance(loop, CheckpointedOperationalRuntimeLoop):
+        requested_state_path = _normalized_path(state_path)
+        if isinstance(loop, CheckpointedOperationalRuntimeLoop):
+            configured_state_path = _normalized_path(loop.state_store.path)
+            if requested_state_path != configured_state_path:
+                raise ValueError(
+                    "BLUEWOLF_OPERATIONAL_STATE_PATH conflicts with persistence.path "
+                    "from the operational configuration"
+                )
+        else:
+            if not config_path:
+                raise ValueError(
+                    "BLUEWOLF_OPERATIONAL_STATE_PATH requires BLUEWOLF_OPERATIONAL_CONFIG "
+                    "so checkpoint compatibility can be verified"
+                )
             loop = CheckpointedOperationalRuntimeLoop(
                 loop.pipelines,
-                state_store=AtomicOperationalStateStore(state_path),
+                state_store=AtomicOperationalStateStore(requested_state_path),
                 config_fingerprint=_configuration_fingerprint(config_path),
             )
 
