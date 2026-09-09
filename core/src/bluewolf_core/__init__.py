@@ -50,6 +50,12 @@ from .grouping import (
     discover_structural_groups,
     routes_compatible,
 )
+from .live_so_event_runtime import (
+    LiveSOEventRuntime,
+    LiveSOEventRuntimeResult,
+    TemplateComparisonDimension,
+    build_so_event_context_key,
+)
 from .live_so_scoring import (
     LiveSOGroupScorer,
     LiveSOGroupScoringResult,
@@ -162,6 +168,8 @@ __all__ = [
     "InvalidatedManualSelection",
     "InvalidSOTemplateBank",
     "InvalidSOTemplateSelection",
+    "LiveSOEventRuntime",
+    "LiveSOEventRuntimeResult",
     "LiveSOGroupScorer",
     "LiveSOGroupScoringResult",
     "LiveSOMemberInput",
@@ -205,6 +213,7 @@ __all__ = [
     "StructuralGroup",
     "StructuralGroupEvidence",
     "SynchronizationTemplate",
+    "TemplateComparisonDimension",
     "TemplateFit",
     "TemplateSlot",
     "UndefinedSOGeometryError",
@@ -214,6 +223,7 @@ __all__ = [
     "VehicleScores",
     "aggregate_group_scores",
     "base_period_seconds",
+    "build_so_event_context_key",
     "build_so_phase_frame",
     "circular_phase_distance",
     "closed_polyline_length",
