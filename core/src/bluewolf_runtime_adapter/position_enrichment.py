@@ -116,20 +116,34 @@ def enrich_runtime_snapshot_positions(
     return MappingProxyType(enriched)
 
 
-class PositionEnrichedLiveRuntimeProducer(LiveRuntimeProducer):
-    """LiveRuntimeProducer that republishes the committed snapshot with map evidence.
+class _DiscardingStore:
+    """Prevent the parent producer from exposing an intermediate snapshot."""
 
-    The parent producer remains the source of grouping/scoring/event semantics.
-    This subclass only adds presentation coordinates from the same poll. The
-    final store value is the enriched snapshot.
+    def publish(self, snapshot: Mapping[str, object]) -> None:
+        del snapshot
+
+
+class PositionEnrichedLiveRuntimeProducer(LiveRuntimeProducer):
+    """Publish exactly one committed snapshot after adding real map evidence.
+
+    ``LiveRuntimeProducer`` normally commits its serialized snapshot directly.
+    This subclass must enrich coordinates first, so it temporarily routes that
+    internal commit to a discard sink and then performs one atomic publish to
+    the real process-local store. HTTP readers can therefore never observe the
+    same runtime frame first without coordinates and then with coordinates.
     """
 
     def publish_poll(self, poll: IngestPollResult) -> RuntimePublicationResult:
-        result = super().publish_poll(poll)
+        real_store = self.store
+        self.store = _DiscardingStore()  # type: ignore[assignment]
+        try:
+            result = super().publish_poll(poll)
+        finally:
+            self.store = real_store
         if result.snapshot is None:
             return result
         enriched = enrich_runtime_snapshot_positions(result.snapshot, poll.samples)
-        self.store.publish(enriched)
+        real_store.publish(enriched)
         return RuntimePublicationResult(
             enriched,
             result.published_group_ids,
