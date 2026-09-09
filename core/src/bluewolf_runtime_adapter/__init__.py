@@ -5,8 +5,16 @@ This package may know about transport/presentation contracts. The public
 other application concerns.
 """
 
-from .contract import LIVE_RUNTIME_SCHEMA_VERSION, build_so_live_runtime_snapshot
+from .contract import (
+    LIVE_RUNTIME_SCHEMA_VERSION,
+    RuntimeVehiclePosition,
+    build_so_live_runtime_snapshot,
+)
 from .ingest_coordinator import AwakeResolver, IngestPollResult, LiveCoreIngestCoordinator
+from .position_enrichment import (
+    PositionEnrichedLiveRuntimeProducer,
+    enrich_runtime_snapshot_positions,
+)
 from .producer import (
     BindingResolver,
     DisplayedScoreResolver,
@@ -34,12 +42,15 @@ __all__ = [
     "IngestPollResult",
     "LiveCoreIngestCoordinator",
     "LiveRuntimeProducer",
+    "PositionEnrichedLiveRuntimeProducer",
     "RuntimePublicationResult",
     "RuntimeSnapshotStore",
+    "RuntimeVehiclePosition",
     "SOOperationalGroupBinding",
     "SOOperationalMemberBinding",
     "app",
     "build_so_live_runtime_snapshot",
     "create_app",
+    "enrich_runtime_snapshot_positions",
     "runtime_store",
 ]
