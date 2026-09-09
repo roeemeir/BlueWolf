@@ -83,6 +83,8 @@ jobs:
             tests: test_live_so_scoring
           - shard: event-alert
             tests: test_event_alert
+          - shard: live-so-event-runtime
+            tests: test_live_so_event_runtime
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
