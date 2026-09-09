@@ -4,11 +4,9 @@ The service is application-facing and remains outside ``bluewolf_core``.
 Validated producers publish snapshots into ``RuntimeSnapshotStore``; the ASGI
 transport exposes the latest snapshot and a bounded live-history cache.
 
-The history cache is deliberately a live-operator facility, not the after-action
-archive. It is bounded by an observed-time window and a defensive item cap,
-process-local, ordered by ``observedAt`` and supports same-timestamp replacement
-so a corrected publication does not create duplicate points. Operational restart
-persistence may serialize this cache separately.
+The latest cache keeps the complete live snapshot. History deliberately stores a
+separate compact, versioned group-score contract so a 30-minute operator timeline
+does not replicate map positions and all per-member fields at every poll.
 """
 from __future__ import annotations
 
@@ -19,10 +17,15 @@ import json
 import os
 import re
 from threading import RLock
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import parse_qs
 
 from .contract import LIVE_RUNTIME_SCHEMA_VERSION
+from .history_contract import (
+    LIVE_RUNTIME_HISTORY_SCHEMA_VERSION,
+    compact_runtime_history_point,
+    normalize_runtime_history_point,
+)
 
 _SERVER_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _DEFAULT_HISTORY_WINDOW_SECONDS = 30 * 60
@@ -83,7 +86,7 @@ def _validate_snapshot(snapshot: Mapping[str, Any]) -> tuple[str, datetime]:
 
 
 class RuntimeSnapshotStore:
-    """Thread-safe latest snapshot plus time-bounded live history per server."""
+    """Thread-safe full latest snapshot plus compact time-bounded history."""
 
     def __init__(
         self,
@@ -114,26 +117,60 @@ class RuntimeSnapshotStore:
         if len(history) > self.history_limit:
             del history[: len(history) - self.history_limit]
 
+    def _merge_history_point(self, server_id: str, point: Mapping[str, Any]) -> None:
+        normalized = normalize_runtime_history_point(
+            point,
+            expected_server_id=server_id,
+        )
+        observed_at = _parse_utc(normalized["observedAt"])
+        history = self._history.setdefault(server_id, [])
+        replaced = False
+        for index in range(len(history) - 1, -1, -1):
+            existing_time = _parse_utc(history[index]["observedAt"])
+            if existing_time == observed_at:
+                history[index] = normalized
+                replaced = True
+                break
+        if not replaced:
+            history.append(normalized)
+            history.sort(key=lambda item: _parse_utc(item["observedAt"]))
+        self._trim_history(history)
+
     def publish(self, snapshot: Mapping[str, Any]) -> None:
         server_id, observed_at = _validate_snapshot(snapshot)
         frozen = deepcopy(dict(snapshot))
+        history_point = compact_runtime_history_point(snapshot)
         with self._lock:
-            history = self._history.setdefault(server_id, [])
-            replaced = False
-            for index in range(len(history) - 1, -1, -1):
-                existing_time = _parse_utc(history[index]["observedAt"])
-                if existing_time == observed_at:
-                    history[index] = deepcopy(frozen)
-                    replaced = True
-                    break
-            if not replaced:
-                history.append(deepcopy(frozen))
-                history.sort(key=lambda item: _parse_utc(item["observedAt"]))
-            self._trim_history(history)
-
+            self._merge_history_point(server_id, history_point)
             current = self._snapshots.get(server_id)
             if current is None or observed_at >= _parse_utc(current["observedAt"]):
                 self._snapshots[server_id] = frozen
+
+    def restore_history(
+        self,
+        server_id: str,
+        rows: Sequence[Mapping[str, Any]],
+    ) -> None:
+        """Restore compact V1 history and transparently migrate old full snapshots."""
+
+        if not _SERVER_PATTERN.fullmatch(server_id):
+            raise ValueError("invalid serverId")
+        normalized: list[dict[str, Any]] = []
+        for row in rows:
+            if row.get("schemaVersion") == LIVE_RUNTIME_SCHEMA_VERSION:
+                point = compact_runtime_history_point(row)
+            else:
+                point = normalize_runtime_history_point(
+                    row,
+                    expected_server_id=server_id,
+                )
+            if point["serverId"] != server_id:
+                raise ValueError("runtime history point belongs to a different server")
+            normalized.append(point)
+        with self._lock:
+            self._history[server_id] = []
+            for point in normalized:
+                self._merge_history_point(server_id, point)
 
     def get(self, server_id: str) -> dict[str, Any] | None:
         if not _SERVER_PATTERN.fullmatch(server_id):
@@ -300,7 +337,7 @@ class BlueWolfRuntimeASGI:
                     if len(raw_limit) != 1:
                         raise ValueError("limit must be singular")
                     limit = int(raw_limit[0])
-                snapshots = self.store.history(server_id, limit=limit)
+                points = self.store.history(server_id, limit=limit)
             except (TypeError, ValueError):
                 await self._send_json(
                     send,
@@ -312,9 +349,9 @@ class BlueWolfRuntimeASGI:
                 send,
                 200,
                 {
-                    "schemaVersion": LIVE_RUNTIME_SCHEMA_VERSION,
+                    "schemaVersion": LIVE_RUNTIME_HISTORY_SCHEMA_VERSION,
                     "serverId": server_id,
-                    "snapshots": snapshots,
+                    "points": points,
                 },
             )
             return
