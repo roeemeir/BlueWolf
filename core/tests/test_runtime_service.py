@@ -3,8 +3,12 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 import json
+import os
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
+import bluewolf_runtime_adapter.service as service_module
 from bluewolf_runtime_adapter.contract import LIVE_RUNTIME_SCHEMA_VERSION
 from bluewolf_runtime_adapter.service import RuntimeSnapshotStore, create_app
 
@@ -157,6 +161,33 @@ class RuntimeServiceTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["running"])
         self.assertEqual(payload["tickCount"], 3)
+
+    def test_builtin_operational_readiness_waits_for_first_completed_tick(self) -> None:
+        class Host:
+            def __init__(self, tick_count: int) -> None:
+                self.tick_count = tick_count
+
+            def snapshot(self):
+                return SimpleNamespace(
+                    thread_error=None,
+                    running=True,
+                    tick_count=self.tick_count,
+                    last_tick_utc=NOW if self.tick_count else None,
+                    last_errors=(),
+                )
+
+        with patch.dict(os.environ, {"BLUEWOLF_OPERATIONAL_CONFIG": "runtime.json"}, clear=True):
+            with patch.object(service_module, "operational_host", Host(0)):
+                pending = service_module._operational_readiness()
+            with patch.object(service_module, "operational_host", Host(1)):
+                ready = service_module._operational_readiness()
+
+        self.assertFalse(pending["ok"])
+        self.assertEqual(pending["tickCount"], 0)
+        self.assertIn("first tick", pending["error"])
+        self.assertTrue(ready["ok"])
+        self.assertEqual(ready["tickCount"], 1)
+        self.assertEqual(ready["lastTickUtc"], NOW.isoformat().replace("+00:00", "Z"))
 
     def test_live_runtime_requires_bearer_token_when_configured(self) -> None:
         store = RuntimeSnapshotStore()
