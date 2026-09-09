@@ -1,12 +1,12 @@
 """InfluxDB 2 Flux adapter that emits raw points for the deterministic join layer.
 
-This module deliberately stops at ``RawMetricPoint``.  It does not interpolate,
-forward-fill, detect routes, group vehicles or calculate scores.  Those concerns
+This module deliberately stops at ``RawMetricPoint``. It does not interpolate,
+forward-fill, detect routes, group vehicles or calculate scores. Those concerns
 already have validated implementations elsewhere.
 
-The physical Influx schema is configurable.  In particular, Blue Wolf V1
+The physical Influx schema is configurable. In particular, Blue Wolf V1
 requires joining by ``(server_id, vehicle_number)`` but does not prescribe the
-Influx tag/column names that carry those identities.  The adapter therefore
+Influx tag/column names that carry those identities. The adapter therefore
 never hard-codes a TTAG, ``server_id`` tag or ``vehicle_number`` tag.
 """
 from __future__ import annotations
@@ -128,10 +128,22 @@ def _default_client_factory(connection: InfluxDB2Connection) -> _InfluxClient:
     )
 
 
-def _iso(value: datetime) -> str:
+def _utc(value: datetime, *, name: str) -> datetime:
     if value.tzinfo is None:
-        raise ValueError("InfluxDB2 query bounds must be timezone-aware")
+        raise ValueError(f"{name} must be timezone-aware")
+    return value.astimezone(UTC)
+
+
+def _iso(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _query_bounds(start_time_utc: datetime, stop_time_utc: datetime) -> tuple[datetime, datetime]:
+    start = _utc(start_time_utc, name="start_time_utc")
+    stop = _utc(stop_time_utc, name="stop_time_utc")
+    if stop <= start:
+        raise ValueError("stop_time_utc must be after start_time_utc")
+    return start, stop
 
 
 def _flux_string(value: object) -> str:
@@ -191,6 +203,21 @@ def _mapping_index(
     return index
 
 
+def _by_bucket(
+    mappings: Iterable[InfluxDB2MetricMapping],
+) -> tuple[tuple[str, tuple[InfluxDB2MetricMapping, ...]], ...]:
+    grouped: dict[str, list[InfluxDB2MetricMapping]] = defaultdict(list)
+    for mapping in mappings:
+        grouped[mapping.bucket].append(mapping)
+    return tuple(
+        (
+            bucket,
+            tuple(sorted(bucket_mappings, key=lambda item: (item.measurement, item.field))),
+        )
+        for bucket, bucket_mappings in sorted(grouped.items())
+    )
+
+
 def _build_bucket_query(
     bucket: str,
     mappings: Iterable[InfluxDB2MetricMapping],
@@ -219,7 +246,7 @@ def _build_bucket_query(
             "  |> filter(fn: (r) => "
             f'r[{_flux_string(schema.server_column)}] == {_flux_string(server_tag_value)})'
         )
-    lines.append("  |> sort(columns: [\"_time\"])")
+    lines.append('  |> sort(columns: ["_time"])')
     return "\n".join(lines)
 
 
@@ -250,26 +277,17 @@ class InfluxDB2Adapter:
         start_time_utc: datetime,
         stop_time_utc: datetime,
     ) -> tuple[str, ...]:
-        start = _iso(start_time_utc)
-        stop = _iso(stop_time_utc)
-        if datetime.fromisoformat(stop.replace("Z", "+00:00")) <= datetime.fromisoformat(
-            start.replace("Z", "+00:00")
-        ):
-            raise ValueError("stop_time_utc must be after start_time_utc")
-
-        by_bucket: dict[str, list[InfluxDB2MetricMapping]] = defaultdict(list)
-        for mapping in self.mappings:
-            by_bucket[mapping.bucket].append(mapping)
+        start, stop = _query_bounds(start_time_utc, stop_time_utc)
         return tuple(
             _build_bucket_query(
                 bucket,
-                sorted(bucket_mappings, key=lambda item: (item.measurement, item.field)),
+                bucket_mappings,
                 schema=self.schema,
                 server_tag_value=server_tag_value,
-                start_time_utc=start_time_utc,
-                stop_time_utc=stop_time_utc,
+                start_time_utc=start,
+                stop_time_utc=stop,
             )
-            for bucket, bucket_mappings in sorted(by_bucket.items())
+            for bucket, bucket_mappings in _by_bucket(self.mappings)
         )
 
     def query_points(
@@ -280,19 +298,23 @@ class InfluxDB2Adapter:
         start_time_utc: datetime,
         stop_time_utc: datetime,
     ) -> tuple[RawMetricPoint, ...]:
-        if isinstance(server_id, bool) or server_id < 0:
+        if isinstance(server_id, bool) or not isinstance(server_id, int) or server_id < 0:
             raise ValueError("server_id must be a non-negative integer")
-        queries = self.flux_queries(
-            server_tag_value=server_tag_value,
-            start_time_utc=start_time_utc,
-            stop_time_utc=stop_time_utc,
-        )
+        start, stop = _query_bounds(start_time_utc, stop_time_utc)
 
         client = self.client_factory(self.connection)
         points: list[RawMetricPoint] = []
         try:
             query_api = client.query_api()
-            for query in queries:
+            for bucket, bucket_mappings in _by_bucket(self.mappings):
+                query = _build_bucket_query(
+                    bucket,
+                    bucket_mappings,
+                    schema=self.schema,
+                    server_tag_value=server_tag_value,
+                    start_time_utc=start,
+                    stop_time_utc=stop,
+                )
                 tables = query_api.query(org=self.connection.organization, query=query)
                 for table in tables:
                     for record in table.records:
@@ -300,13 +322,13 @@ class InfluxDB2Adapter:
                         field = str(record.get_field())
                         matching = [
                             mapping
-                            for mapping in self.mappings
+                            for mapping in bucket_mappings
                             if mapping.measurement == measurement and mapping.field == field
                         ]
                         if len(matching) != 1:
                             raise InfluxDB2AdapterError(
                                 "Influx record does not match exactly one configured metric: "
-                                f"measurement={measurement!r}, field={field!r}"
+                                f"bucket={bucket!r}, measurement={measurement!r}, field={field!r}"
                             )
                         mapping = matching[0]
                         record_time = record.get_time()
