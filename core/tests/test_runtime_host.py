@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 import sys
+import tempfile
 import time
 import types
 import unittest
@@ -9,6 +12,7 @@ from datetime import UTC, datetime
 from unittest.mock import patch
 
 from bluewolf_runtime_adapter.operational_pipeline import OperationalRuntimeLoop, OperationalTick
+from bluewolf_runtime_adapter.operational_state import CheckpointedOperationalRuntimeLoop
 from bluewolf_runtime_adapter.runtime_host import (
     OperationalLoopHost,
     host_from_environment,
@@ -107,6 +111,61 @@ class RuntimeHostTests(unittest.TestCase):
         assert host is not None
         self.assertEqual(seen, [store])
         self.assertEqual(host.loop_sleep_seconds, 0.25)
+
+    def test_environment_state_path_wraps_loop_with_config_fingerprint(self) -> None:
+        module = types.ModuleType("bluewolf_test_checkpoint_factory")
+        module.make_loop = lambda store: OperationalRuntimeLoop(())
+        sys.modules[module.__name__] = module
+        self.addCleanup(sys.modules.pop, module.__name__, None)
+
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "runtime.json"
+            state_path = Path(directory) / "state" / "runtime-state.json"
+            config_path.write_text(
+                json.dumps({"servers": [{"id": 1}], "marker": "public-config"}),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "BLUEWOLF_OPERATIONAL_FACTORY": f"{module.__name__}:make_loop",
+                    "BLUEWOLF_OPERATIONAL_CONFIG": str(config_path),
+                    "BLUEWOLF_OPERATIONAL_STATE_PATH": str(state_path),
+                },
+                clear=True,
+            ):
+                host = host_from_environment(object())
+
+            self.assertIsNotNone(host)
+            assert host is not None
+            self.assertIsInstance(host.loop, CheckpointedOperationalRuntimeLoop)
+            checkpointed = host.loop
+            assert isinstance(checkpointed, CheckpointedOperationalRuntimeLoop)
+            self.assertEqual(len(checkpointed.config_fingerprint), 64)
+            checkpointed.save_checkpoint()
+            saved = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["configFingerprint"], checkpointed.config_fingerprint)
+            self.assertEqual(saved["servers"], [])
+            self.assertNotIn("public-config", state_path.read_text(encoding="utf-8"))
+
+    def test_state_path_without_config_is_rejected(self) -> None:
+        module = types.ModuleType("bluewolf_test_checkpoint_requires_config")
+        module.make_loop = lambda store: OperationalRuntimeLoop(())
+        sys.modules[module.__name__] = module
+        self.addCleanup(sys.modules.pop, module.__name__, None)
+
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "runtime-state.json"
+            with patch.dict(
+                os.environ,
+                {
+                    "BLUEWOLF_OPERATIONAL_FACTORY": f"{module.__name__}:make_loop",
+                    "BLUEWOLF_OPERATIONAL_STATE_PATH": str(state_path),
+                },
+                clear=True,
+            ):
+                with self.assertRaisesRegex(ValueError, "requires BLUEWOLF_OPERATIONAL_CONFIG"):
+                    host_from_environment(object())
 
 
 if __name__ == "__main__":
