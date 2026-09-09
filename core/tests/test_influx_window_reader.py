@@ -40,10 +40,14 @@ class InfluxWindowReaderTests(unittest.TestCase):
             point(-5, MetricName.ACTIVE, True),
             point(0, MetricName.ACTIVE, True),
             point(2, MetricName.ACTIVE, True),
-            point(-5, MetricName.LATITUDE, 30.0),
-            point(5, MetricName.LATITUDE, 40.0),
-            point(-5, MetricName.LONGITUDE, 34.0),
-            point(5, MetricName.LONGITUDE, 35.0),
+            # Both numeric originals are outside the requested [0, 2] window,
+            # but each stays within the five-second join tolerance for every
+            # requested logical second. Identity/active also remain provable at
+            # both bracket endpoints, so interpolation is legal.
+            point(-3, MetricName.LATITUDE, 30.0),
+            point(4, MetricName.LATITUDE, 40.0),
+            point(-3, MetricName.LONGITUDE, 34.0),
+            point(4, MetricName.LONGITUDE, 35.0),
         ])
         reader = InfluxDB2WindowReader(adapter, TemporalJoinConfig(tolerance_seconds=5))
         samples = reader.read_samples(
@@ -60,13 +64,18 @@ class InfluxWindowReaderTests(unittest.TestCase):
             START + timedelta(seconds=1),
             START + timedelta(seconds=2),
         ])
-        self.assertAlmostEqual(samples[0].latitude_deg, 35.0)
-        self.assertAlmostEqual(samples[2].longitude_deg, 34.7)
+        self.assertAlmostEqual(samples[0].latitude_deg, 30.0 + 3.0 / 7.0 * 10.0)
+        self.assertAlmostEqual(samples[2].longitude_deg, 34.0 + 5.0 / 7.0)
 
     def test_exact_plus_tolerance_point_survives_exclusive_flux_stop(self):
         target = START + timedelta(seconds=2)
         adapter = FakeAdapter([
+            # Identity is known at both interpolation bracket endpoints. The
+            # +7 numeric point is exactly +5 seconds from the requested target,
+            # so the reader's exclusive Flux stop must still include it.
+            point(-3, MetricName.VEHICLE_IDENTIFIER, 107),
             point(2, MetricName.VEHICLE_IDENTIFIER, 107),
+            point(-3, MetricName.ACTIVE, True),
             point(2, MetricName.ACTIVE, True),
             point(-3, MetricName.LATITUDE, 30.0),
             point(7, MetricName.LATITUDE, 40.0),
