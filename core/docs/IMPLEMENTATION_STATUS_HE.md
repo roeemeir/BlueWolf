@@ -2,19 +2,21 @@
 
 ## התשובה הקצרה
 
-הליבה האלגוריתמית נמצאת כעת על baseline מאומת הכולל רכישת נתיב אדפטיבית, החלפת נתיב אדפטיבית, סיווג SI/SO/Figure-8/Double Hippodrome, קיבוץ מבני יציב, semantic phase, מודל SO מנורמל, template fit, template bank, template selection, live SO scoring, Double active-lobe / role switching ו־Event/Alert + Template Recommendation lifecycle.
+הליבה האלגוריתמית נמצאת כעת על baseline מאומת הכולל רכישת והחלפת נתיב אדפטיביות, סיווג SI/SO/Figure-8/Double Hippodrome, קיבוץ מבני יציב, semantic phase, מודל SO מנורמל, template fit/bank/selection, live SO scoring, Double active-lobe / role switching, Event/Alert + Template Recommendation lifecycle, ו־runtime composition שמחבר scoring פעיל וחלופי ל־Event Engine בלי לקדם temporal evidence פעמיים.
 
 Baseline מאומת לפני commits תיעודיים:
 
-`spec-conformant-vector-core @ f9442f0716c37b5cf6f96bc778bec745eaad7eef`
+`spec-conformant-vector-core @ 7b938ca87747031ab299500ec55c33ebc11c4f50`
 
-`Blue Wolf CI` run `652` עבר במלואו, כולל shard ייעודי `event-alert`, כל shards של route lifecycle/grouping/SO, ו־Web.
+`Blue Wolf CI` run `659` עבר במלואו, כולל shard ייעודי `live-so-event-runtime`, כל shards של route lifecycle/grouping/SO, ו־Web (`lint`, TypeScript ו־tests).
 
-העיקרון המחייב לרכישת/שינוי Route הוא `ADAPTIVE_ROUTE_LIFECYCLE_HE.md`: זמן שחלף אינו ראיה. 40 דקות הן תקרת history בלבד ולא זמן המתנה.
+המסמכים המחייבים המרכזיים הם:
 
-`DOUBLE_HIPPODROME_SCORING_SEMANTICS_HE.md` קובע את משמעות ה־Double לצורך synchronization: נתיב פיזי רציף אחד, שני Hippodromes לוגיים לציון, active-lobe semantic phase והחלפת roles ללא תלות ב־vehicle ID.
-
-`EVENT_ALERT_LIFECYCLE_HE.md` קובע את הפרדת event/alert/recommendation מ־route detection, grouping ו־active template selection.
+- `ADAPTIVE_ROUTE_LIFECYCLE_HE.md` — זמן שחלף אינו evidence; 40 דקות הן תקרת history בלבד.
+- `DOUBLE_HIPPODROME_SCORING_SEMANTICS_HE.md` — Double הוא Route פיזי רציף עם active-lobe semantic phase לציון.
+- `TEMPLATE_SELECTION_LIFECYCLE_HE.md` — selection ו־recommendation הם שכבות נפרדות.
+- `EVENT_ALERT_LIFECYCLE_HE.md` — event/alert/recommendation אינם משנים route/group membership.
+- `LIVE_SO_EVENT_RUNTIME_HE.md` — composition של metric snapshot יחיד לתבנית פעילה, חלופות ו־Event Engine.
 
 ## אבן דרך 1 — חוזי ליבה, גאומטריה וציון בסיסי — הושלמה
 
@@ -23,39 +25,25 @@ Baseline מאומת לפני commits תיעודיים:
 - ייצוג גנרי לנתיב סגור עם canonical polyline עד 64 נקודות.
 - גאומטריית פאזה לפי אורך קשת, projection, tangent ו־curvature.
 - משקולות וספי ציון מאושרים.
-- ציון קבוצה נגזר מציוני הרכבים התקפים בלבד; אין נוסחת קבוצה עצמאית.
+- ציון קבוצה נגזר מציוני הרכבים התקפים בלבד.
 - checkpoint ושקילות Batch/Incremental כעקרון תכן.
 - Join זמני בסיסי למטריקות Influx נפרדות ללא `TTAG`.
 
 ## אבן דרך 2 — סימולטור גאומטרי/הפרעות — הושלמה עבור הצורות המוגדרות
 
-הסימולטור הדטרמיניסטי תומך ב־Ground Truth `approach/route/exit` ובמשפחות:
+הסימולטור הדטרמיניסטי תומך ב־Ground Truth `approach/route/exit` ובמשפחות SI Circle/Octagon/Free Closed, SO Hippodrome, Figure-8 ו־Double Hippodrome. תרחישי ההפרעה כוללים cadence של 1/2/5 שניות, GPS noise/spikes, רוח, dropout רגיל ותלוי־פנייה, contiguous outages ו־approach/exit. זוויות Double של 10°–40° הן QA priority ולא detector gate.
 
-- SI Circle.
-- SI Octagon.
-- SI Free Closed.
-- SO Hippodrome.
-- SO Figure-8 עם legs שיכולים להיות רכים.
-- SO Double Hippodrome לפי exterior boundary של union של שני capsule/hippodrome areas בעלי shared turn-circle center.
-
-תרחישי הפרעה כוללים cadence של 1/2/5 שניות, GPS Gaussian noise ו־spikes, רוח משתנה, base dropout, turn-dependent dropout, contiguous outages, approach/exit ו־sweep של Double opening angle. הטווח 10°–40° הוא QA priority בלבד ואינו gate של detector.
-
-`DOUBLE_FIGURE_EIGHT` נשאר Undefined גאומטרית ואסור לממש אותו ללא אפיון מפורש נוסף.
+`DOUBLE_FIGURE_EIGHT` נשאר Undefined ואסור לממש אותו ללא אפיון מפורש נוסף.
 
 ## אבן דרך 3 — Vectorized automatic route detection V2 — הושלמה
 
-- `VehicleSample` מותאם ל־`VectorTrack` אחיד עם `observed_mask` מפורש.
-- אין interpolation של מיקום לתוך חורי תקשורת לצורך evidence.
-- masked spatial recurrence מחושב באמצעות FFT correlations בעלות `O(N log N)` במקום מטריצת `N×N`.
-- period proposal עובר local lag refinement קטן וחסום.
-- periodic support סובל jitter וחוסר דגימות.
-- velocity consistency אופציונלית מונעת approach crossing שווא.
-- phase folding מפיק canonical centerline ו־support/count לכל phase bin.
-- Coverage הוא circular phase coverage ואינו תלוי ישירות ב־cadence.
-- confirmed geometry משתמשת בכל observations האמיתיים בתוך recurrent traversal span.
-- מרכז וצירים נגזרים ממעטפת מרחבית רובוסטית.
-
-ממומשים ומכוסים ברגרסיות: SI compact, Single Hippodrome, Figure-8, Double Hippodrome ו־Free/Unknown.
+- `VectorTrack` עם `observed_mask` מפורש; אין השלמת מיקום לתוך חורי תקשורת לצורך evidence.
+- masked spatial recurrence באמצעות FFT correlations בעלות `O(N log N)` במקום מטריצת `N×N`.
+- local lag refinement, periodic support עם jitter ו־heading consistency אופציונלי.
+- phase folding ו־circular phase coverage שאינו תלוי ישירות ב־cadence.
+- confirmed geometry מכל observations האמיתיים בתוך recurrent traversal span.
+- מעטפת מרחבית רובוסטית למרכז וצירים.
+- SI compact, Single Hippodrome, Figure-8, Double Hippodrome ו־Free/Unknown מכוסים ברגרסיות.
 
 ## אבן דרך 4 — Adaptive route lifecycle — הושלמה
 
@@ -71,120 +59,99 @@ Baseline מאומת לפני commits תיעודיים:
 
 - Route מאושר אינו ננעל.
 - cheap suspicion gate מונע fit יקר כשהישן עדיין מסביר את הדגימה.
-- שינוי חומרי מכויל סביב 20% geometry/period לצד family/subtype/topology/direction.
+- שינוי חומרי נבחן סביב 20% geometry/period לצד family/subtype/topology/direction.
 - אין timer קבוע של 120 שניות לשינוי.
 - replacement דורש evidence purity שמעדיף B על A.
-- period-only replacement משתמש ב־observed speed ודורש רוב ברור של המשטר החדש.
-- onset מיוחס רטרואקטיבית; `detection_time_utc` נשמר בנפרד.
+- period-only replacement דורש רוב ברור של משטר המהירות החדש.
+- onset מיוחס רטרואקטיבית ו־`detection_time_utc` נשמר בנפרד.
 - checkpoint באמצע A→B שקול לריצה רציפה.
 
 ## אבן דרך 5 — Structural Grouping V2 — הושלמה
 
 Membership תלוי רק ב־geometry + period + reliability/lifecycle; synchronization score אינו משפיע על membership.
 
-- SI משתמש complete-link.
-- SO משתמש connected structural chain.
-- Single/Double period comparison משתמש base period normalization כאשר נדרש.
+- SI משתמש complete-link; SO משתמש connected structural chain.
+- Single/Double period comparison משתמש base-period normalization כאשר נדרש.
 - membership evidence של 120s נמדד מתוך המידע שכבר נאסף.
 - `group_id` נשמר ב־60% overlap; merge יוצר ID חדש.
 - membership hold הוא 300s.
-- SI wrong-direction: alert לאחר 60s; removal רק לאחר 300s נוספים; היפוך משותף אינו מפרק את הקבוצה.
+- SI wrong-direction: alert לאחר 60s; removal רק לאחר 300s נוספים; היפוך משותף אינו מפרק קבוצה.
 - Batch/Incremental/checkpoint equivalence מכוסה.
 
-## אבן דרך 6 — Semantic Phase ו־SO normalized templates — הושלמה
+## אבן דרך 6 — Semantic Phase ותבניות SO — הושלמה
 
-### Semantic phase
-
-- `VehicleFrameResult.phase` נשאר raw/legacy phase.
-- נוסף `semantic_phase` עבור SO.
-- frame גאומטרי קנוני מסיר raw phase-zero ו־polyline ordering differences.
-- Route Instances מיושרים באמצעות projective mean של major-axis orientations.
-- Figure-8 משתמש heading-aware branch selection; ללא evidence מספיק `semantic_phase=None`.
-
-### מודל SO מנורמל
-
-`SO Template -> Route Instances -> Vehicle Slots -> Quarter`
-
-- `Single` עד שני Vehicle Slots; `Double` עד ארבעה.
-- `Q0/Q1/Q2/Q3`.
-- Same/Opposite/Mixed נגזרים מהפרש quarters.
-- vehicle geometry/profile מופרד מסמנטיקת התבנית.
-- Figure-8 ממופה ל־Single-SO semantics.
-- Double Figure-8 נדחה במפורש כ־Undefined.
-
-### Template fit / bank / selection
-
+- `VehicleFrameResult.phase` נשאר raw/legacy; נוסף `semantic_phase` ל־SO.
+- frame גאומטרי קנוני מסיר phase-zero ו־polyline-order differences.
+- Figure-8 משתמש heading-aware branch selection; ללא evidence מספיק אין semantic phase מומצא.
+- מודל התבנית: `SO Template -> Route Instances -> Vehicle Slots -> Quarter`.
+- Single עד 2 slots; Double עד 4; Q0/Q1/Q2/Q3; Same/Opposite/Mixed נגזרים מן quarters.
 - template fit אינו תלוי ב־vehicle ID.
-- assignment מתבצע לפי Route Instance + vehicle type + semantic phase.
-- common phase/tie-break דטרמיניסטיים.
-- `SOTemplateBank` מסנן לפי constellation ללא vehicle IDs.
-- manual selection נשמר לפי `group_id + constellation`, default מגיע מן הבנק, ו־stale selection נפסל במפורש בשינוי bank.
+- `SOTemplateBank` מסנן לפי constellation; manual selection נשמר לפי `group_id + constellation`.
 
 ## אבן דרך 7 — Double Hippodrome active-lobe / role switching — הושלמה ומאומתת
 
 - full physical Double נשאר Route אחד ל־recurrence/full period/lifecycle.
 - synchronization רואה שני logical Single-Hippodrome scoring surfaces.
-- `active_so_component_id` נבחר לפי position ו־velocity/tangent כאשר החיבור עמום.
-- `semantic_phase` של Double מחושב על active lobe.
-- אין role/semantic phase מומצא כשאין evidence מספיק.
+- `active_so_component_id` נבחר לפי position, ובחיבור עמום לפי velocity/tangent.
+- semantic phase מחושב על ה־active lobe.
+- אין role/semantic phase מומצא כאשר evidence אינו מספיק.
 - roles אינם נשמרים לפי vehicle ID.
-- רכיבי ה־Double הם derived geometry דטרמיניסטי.
 
 ## אבן דרך 8 — Live SO scoring + Event/Alert lifecycle — הושלמה ומאומתת
 
 ### Live SO scoring
 
-- `LiveSOMetricsEngine` מחשב period/movement/route primitives ללא נוסחת score חלופית.
-- temporal derivative אינו מחבר בין Double lobes; lobe switch מאפס warmup לאותה דגימה.
-- excessive gap או phase step לא מזוהה מאפסים derivative state במקום להמציא תנועה.
-- `LiveSOGroupScorer` משתמש ב־active template מן registry ומעביר את התצפיות ל־`score_so_template`.
-- state של temporal metrics ושל template selection נשמר ב־checkpoint.
+- `LiveSOMetricsEngine` מחשב period/movement/route primitives ללא נוסחת score מקבילה.
+- Double lobe switch, temporal gap או phase ambiguity מאפסים derivative state במקום לפברק תנועה.
+- `LiveSOGroupScorer` משתמש ב־active template מן registry ומעביר ל־`score_so_template`.
+- metric state + template selection checkpointable.
 
 ### Event / Alert / Recommendation
 
-- אירוע נפתח לפי `group_id + context_key`; ירידת score לבדה אינה פותחת אירוע חדש.
-- low-score alert נפתח אחרי 10s מתחת ל־50 ונסגר אחרי 20s ב־60 ומעלה.
-- recommendation נפתחת רק לאחר יתרון 30 נקודות במשך 120s ונפסקת לאחר יתרון קטן מ־15 במשך 30s.
-- rejection נשמר עד סוף האירוע בלבד.
-- recommendation לעולם אינה מחליפה active template אוטומטית.
-- event finalization נדחה ב־120s לפי V1.
-- checkpoint משמר alert/recommendation streaks ולכן restart אינו מאפס evidence.
-- נוסף `EVENT_ALERT_LIFECYCLE_HE.md` ו־11 regressions ב־`test_event_alert`.
+- event לפי `group_id + context_key`; ירידת score לבדה אינה פותחת event חדש.
+- low-score alert: 10s מתחת ל־50; recovery: 20s ב־60 ומעלה.
+- recommendation: יתרון 30 נקודות ל־120s; סגירה כאשר היתרון קטן מ־15 ל־30s.
+- rejection עד סוף האירוע; אין החלפת template אוטומטית.
+- event finalization לאחר 120s.
+- checkpoint שומר alert/recommendation streaks.
 
-Baseline `f9442f0716c37b5cf6f96bc778bec745eaad7eef` עבר `Blue Wolf CI` run `652` במלואו.
+## אבן דרך 9 — Live SO Event Runtime composition — הושלמה ומאומתת
+
+נוסף `LiveSOEventRuntime` כדי לחבר את השכבות הקיימות לזרם דטרמיניסטי אחד:
+
+`SO members -> temporal metrics -> active template score -> alternate template scores -> EventAlertEngine`
+
+העקרונות שננעלו:
+
+- `LiveSOMetricsEngine` מתקדם פעם אחת בלבד לכל member/timestamp.
+- כל החלופות מנוקדות מאותו immutable `SOScoringObservation` snapshot; מספר התבניות בבנק אינו משנה temporal state.
+- `context_key` נגזר מ־constellation, active template ו־confirmed route identity/geometry-period metadata; progress רגיל ו־Double lobe switching אינם פותחים event חדש.
+- active template מגיע רק מ־`SOTemplateSelectionRegistry`; recommendation אינה משנה selection.
+- displayed/smoothed group score מוזן מבחוץ כי V1 אינו מגדיר את אלגוריתם smoothing.
+- ממד comparison של recommendation (`SYNC` או `TOTAL`) חייב להיות מפורש כי V1 אינו מגדיר איזו מן השתיים היא “30 נקודות טוב יותר”. אין default שקט.
+- checkpoint משמר comparison dimension, scorer state ו־Event Engine state.
+
+נוספו 5 regressions ב־`test_live_so_event_runtime`: reuse של temporal snapshot, recommendation אחרי 120s, context stability/change, checkpoint באמצע streak, ואיסור להחליף displayed score ב־raw score.
+
+Baseline `7b938ca87747031ab299500ec55c33ebc11c4f50` עבר `Blue Wolf CI` run `659` במלואו.
 
 ## מצב CI ואימות
 
-ה־workflow כולל `cancel-in-progress` ו־shards מקבילים. בין השערים הפעילים:
-
-- lifecycle smokes: fast acquisition, free-approach attribution, initial confirmation geometry, stable route, geometry replacement, period replacement.
-- route-change remainder.
-- session / integrated-session / semantic-session.
-- classifiers / route-vector / fundamentals.
-- SO templates / template fit / phase / scoring / template bank / template selection / live SO scoring.
-- Double active-lobe.
-- event-alert.
-- Web: lint, TypeScript, tests.
+ה־workflow כולל `cancel-in-progress` ו־shards מקבילים. השערים הפעילים כוללים lifecycle smokes, route-change remainder, session/integrated/semantic sessions, classifiers/route-vector/fundamentals, כל שכבות SO, `event-alert`, `live-so-event-runtime`, ו־Web (`lint`, TypeScript, tests).
 
 כשל אלגוריתמי שהתגלה הופך ל־regression קבוע לפני קידום baseline.
 
-### ביצועים
-
-לאחר הוספת cheap route-suspicion gate, חבילת 60 בדיקות ליבה ירדה באחת מריצות ה־CI מכ־183.3s לכ־58.7s ללא regression. זהו נתון תצפית CI ולא benchmark פורמלי. מאז הורחבה החבילה וחולקה ל־shards מקבילים.
-
 ## תיעוד מחקר
 
-`ALGORITHMIC_CORE_RESEARCH_LOG_HE.md` הוא יומן version-controlled לכל `Problem -> Hypothesis -> Experiment -> Result -> Change -> Regression -> Validation`.
-
-בנוסף מופק דוח Word מחקרי מעוצב. milestone אלגוריתמי משמעותי מתועד גם ביומן הריפו וגם בגרסה הבאה של הדוח.
+`ALGORITHMIC_CORE_RESEARCH_LOG_HE.md` הוא יומן version-controlled לכל `Problem -> Hypothesis -> Experiment -> Result -> Change -> Regression -> Validation`. בנוסף נשמר דוח Word מחקרי מעוצב ב־Drive ומסונכרן לאחר milestones משמעותיים.
 
 ## אבני הדרך הבאות
 
-1. **Runtime composition end-to-end** — בניית `context_key`, חיבור `Route -> Group -> Semantic phase -> Template -> Metrics -> Vehicle/Group scores -> Event/Alert` בזרם אחד, כולל scoring של alternate templates מאותו metric snapshot ללא עדכון temporal state כפול.
-2. **Late-data correction + local persistence** ושחזור גרסאות חישוב.
-3. **InfluxDB2 adapter** ומצב polling awake/sleep.
-4. חיבור Python Core האמיתי לכל זרימות Operator/Report/Developer ב־Web במקום שכבות demo.
-5. load/robustness campaign פורמלי עד סדר גודל של 10 שרתים / 150 כלי רכב.
-6. Windows/OpenShift packaging ו־release/preview מאומת.
+1. **Product decisions / smoothing contract** — לקבע במפרט את אלגוריתם ה־10s displayed smoothing ואת ממד recommendation (`sync` מול `total`) לפני חיבור אוטומטי מלא למעטפת.
+2. **Session/Operator integration** — לחבר את Python Core האמיתי ל־Operator/Report/Developer flows במקום שכבות demo, כולל event context ו־alerts בפועל.
+3. **Late-data correction + local persistence** — versioned recomputation, SQLite/Parquet ו־checkpoint operational.
+4. **InfluxDB2 adapter** — polling awake/sleep, late fetch, tokens ומיפוי streams.
+5. **Load/robustness campaign** — עד סדר גודל של 10 שרתים / 150 כלי רכב.
+6. **Windows/OpenShift packaging + Sites demo release** — הפריסה הציבורית נשארת הדגמה ואינה מחליפה את השירות המבצעי ברשת הסגורה.
 
 `DOUBLE_FIGURE_EIGHT` אינו milestone לביצוע עד שגאומטרייתו תוגדר מפורשות באיפיון.
