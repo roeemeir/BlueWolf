@@ -9,12 +9,19 @@ mapping, server tag, template bank or operational binding.
 contain ``runtimeSnapshot`` remain valid; newer checkpoints restore bounded
 operator history before the latest snapshot so a process restart does not reset
 the live timeline.
+
+Checkpoint writes are cadence-limited. The first state-changing tick is saved
+immediately; subsequent changes are marked dirty and written no more often than
+the configured interval. A graceful host shutdown calls ``flush_checkpoint`` so
+pending state is not lost merely because the interval has not elapsed yet.
 """
 from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
+from datetime import UTC, datetime
 import json
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -26,6 +33,7 @@ from .operational_pipeline import OperationalRuntimeLoop, OperationalServerPipel
 
 
 OPERATIONAL_STATE_SCHEMA_VERSION = "bluewolf.operational-state.v1"
+DEFAULT_CHECKPOINT_INTERVAL_SECONDS = 300.0
 
 
 class OperationalStateCompatibilityError(ValueError):
@@ -251,8 +259,14 @@ def restore_operational_state(
         _restore_pipeline(pipeline, by_id[pipeline.server_id])
 
 
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        raise ValueError("checkpoint time must be timezone-aware")
+    return value.astimezone(UTC)
+
+
 class CheckpointedOperationalRuntimeLoop(OperationalRuntimeLoop):
-    """Operational loop that restores once and checkpoints only after state changes."""
+    """Operational loop with bounded checkpoint I/O and explicit shutdown flush."""
 
     def __init__(
         self,
@@ -260,12 +274,19 @@ class CheckpointedOperationalRuntimeLoop(OperationalRuntimeLoop):
         *,
         state_store: AtomicOperationalStateStore,
         config_fingerprint: str,
+        checkpoint_interval_seconds: float = DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
     ) -> None:
         super().__init__(pipelines)
         if not config_fingerprint:
             raise ValueError("config_fingerprint is required")
+        interval = float(checkpoint_interval_seconds)
+        if not math.isfinite(interval) or interval <= 0.0:
+            raise ValueError("checkpoint_interval_seconds must be finite and positive")
         self.state_store = state_store
         self.config_fingerprint = config_fingerprint
+        self.checkpoint_interval_seconds = interval
+        self._dirty = False
+        self._last_checkpoint_utc: datetime | None = None
         restored = self.state_store.load()
         if restored is not None:
             restore_operational_state(
@@ -274,13 +295,42 @@ class CheckpointedOperationalRuntimeLoop(OperationalRuntimeLoop):
                 config_fingerprint=self.config_fingerprint,
             )
 
-    def save_checkpoint(self) -> None:
+    @property
+    def checkpoint_dirty(self) -> bool:
+        return self._dirty
+
+    @property
+    def last_checkpoint_utc(self) -> datetime | None:
+        return self._last_checkpoint_utc
+
+    def _write_checkpoint(self, *, at_utc: datetime | None) -> None:
         self.state_store.save(
             export_operational_state(
                 self,
                 config_fingerprint=self.config_fingerprint,
             )
         )
+        self._dirty = False
+        if at_utc is not None:
+            self._last_checkpoint_utc = _utc(at_utc)
+
+    def save_checkpoint(self) -> None:
+        """Force an immediate checkpoint, preserving the pre-cadence public API."""
+        self._write_checkpoint(at_utc=None)
+
+    def flush_checkpoint(self) -> bool:
+        """Persist pending state once; return whether a write was required."""
+        if not self._dirty:
+            return False
+        self._write_checkpoint(at_utc=None)
+        return True
+
+    def _checkpoint_due(self, at_utc: datetime) -> bool:
+        at = _utc(at_utc)
+        if self._last_checkpoint_utc is None:
+            return True
+        elapsed = (at - self._last_checkpoint_utc).total_seconds()
+        return elapsed >= self.checkpoint_interval_seconds
 
     def tick(self, now_utc) -> OperationalTick:
         tick = super().tick(now_utc)
@@ -288,11 +338,14 @@ class CheckpointedOperationalRuntimeLoop(OperationalRuntimeLoop):
             result.poll is not None for result in tick.results.values()
         )
         if changed:
-            self.save_checkpoint()
+            self._dirty = True
+            if self._checkpoint_due(tick.at_utc):
+                self._write_checkpoint(at_utc=tick.at_utc)
         return tick
 
 
 __all__ = [
+    "DEFAULT_CHECKPOINT_INTERVAL_SECONDS",
     "OPERATIONAL_STATE_SCHEMA_VERSION",
     "AtomicOperationalStateStore",
     "CheckpointedOperationalRuntimeLoop",
