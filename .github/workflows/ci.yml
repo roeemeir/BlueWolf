@@ -88,7 +88,7 @@ jobs:
           - shard: live-runtime-contract
             tests: test_live_runtime_contract
           - shard: runtime-service
-            tests: test_runtime_service test_runtime_history
+            tests: test_runtime_service test_runtime_history test_runtime_history_footprint
           - shard: runtime-producer
             tests: test_runtime_producer test_position_enrichment
           - shard: operational-pipeline
