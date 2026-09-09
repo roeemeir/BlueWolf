@@ -47,7 +47,8 @@ export function applyLiveRuntimeHistory(
   snapshots: LiveRuntimeSnapshot[],
   limit = DEFAULT_HISTORY_LIMIT,
 ) {
-  RUNTIME_HISTORY[serverId] = normalizedHistory(serverId, snapshots, limit);
+  const current = RUNTIME_HISTORY[serverId] ?? [];
+  RUNTIME_HISTORY[serverId] = normalizedHistory(serverId, [...current, ...snapshots], limit);
 }
 
 export function appendLiveRuntimeHistory(
