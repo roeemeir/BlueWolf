@@ -13,6 +13,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { DataMode } from "@/lib/bluewolf";
 import { applyLiveRuntimeSnapshot, fetchLiveRuntimeSnapshot, restoreSimulationScenario, unavailableRuntimeSnapshot, type RuntimeHealth } from "@/lib/live-runtime";
+import { applyLiveRuntimeHistory, appendLiveRuntimeHistory, fetchLiveRuntimeHistory } from "@/lib/live-runtime-history";
 import { DeveloperView } from "./developer-view";
 import { InvestigationView } from "./investigation-view";
 import { OperatorView } from "./operator-view";
@@ -50,11 +51,22 @@ function AppInner() {
   useEffect(() => {
     if (dataMode === "simulation") return;
     let cancelled = false;
+    const bootstrapHistory = async () => {
+      try {
+        const history = await fetchLiveRuntimeHistory(serverValue);
+        if (cancelled) return;
+        applyLiveRuntimeHistory(serverValue, history);
+        setRuntimeRevision((value) => value + 1);
+      } catch {
+        // History is optional for liveness: latest snapshots continue to drive the operator.
+      }
+    };
     const poll = async () => {
       try {
         const snapshot = await fetchLiveRuntimeSnapshot(serverValue);
         if (cancelled) return;
         applyLiveRuntimeSnapshot(snapshot);
+        appendLiveRuntimeHistory(snapshot);
         setRuntimeState(snapshot.source.health);
         setRuntimeDetail(snapshot.source.detail ?? `snapshot ${snapshot.observedAt}`);
       } catch (error) {
@@ -66,6 +78,7 @@ function AppInner() {
       }
       if (!cancelled) setRuntimeRevision((value) => value + 1);
     };
+    void bootstrapHistory();
     void poll();
     const timer = window.setInterval(() => void poll(), Math.max(1, state.settings.uiRefreshSeconds) * 1000);
     return () => { cancelled = true; window.clearInterval(timer); };
