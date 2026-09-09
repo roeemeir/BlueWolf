@@ -30,6 +30,13 @@ from .producer import (
     SOOperationalGroupBinding,
     SOOperationalMemberBinding,
 )
+from .runtime_host import (
+    OperationalHostSnapshot,
+    OperationalLoopFactory,
+    OperationalLoopHost,
+    host_from_environment,
+    load_operational_loop_factory,
+)
 from .service import (
     BlueWolfRuntimeASGI,
     RuntimeSnapshotStore,
@@ -48,6 +55,9 @@ __all__ = [
     "IngestPollResult",
     "LiveCoreIngestCoordinator",
     "LiveRuntimeProducer",
+    "OperationalHostSnapshot",
+    "OperationalLoopFactory",
+    "OperationalLoopHost",
     "OperationalPipelineResult",
     "OperationalRuntimeLoop",
     "OperationalServerPipeline",
@@ -62,5 +72,7 @@ __all__ = [
     "build_so_live_runtime_snapshot",
     "create_app",
     "enrich_runtime_snapshot_positions",
+    "host_from_environment",
+    "load_operational_loop_factory",
     "runtime_store",
 ]
