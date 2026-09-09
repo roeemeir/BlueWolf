@@ -1,5 +1,6 @@
 param(
     [string]$VenvPath = ".bluewolf-runtime-venv",
+    [string]$OperationalConfig = "",
     [int]$Port = 8080,
     [int]$StaleSeconds = 15,
     [int]$ExpireSeconds = 60
@@ -28,6 +29,16 @@ $env:BLUEWOLF_RUNTIME_HOST = "0.0.0.0"
 $env:BLUEWOLF_RUNTIME_PORT = [string]$Port
 $env:BLUEWOLF_RUNTIME_STALE_SECONDS = [string]$StaleSeconds
 $env:BLUEWOLF_RUNTIME_EXPIRE_SECONDS = [string]$ExpireSeconds
+
+if (-not [string]::IsNullOrWhiteSpace($OperationalConfig)) {
+    $ResolvedConfig = Resolve-Path $OperationalConfig -ErrorAction Stop
+    $env:BLUEWOLF_OPERATIONAL_CONFIG = [string]$ResolvedConfig
+    Write-Host "Operational polling enabled with config $ResolvedConfig"
+}
+else {
+    Remove-Item Env:BLUEWOLF_OPERATIONAL_CONFIG -ErrorAction SilentlyContinue
+    Write-Host "No operational config supplied; runtime will start in transport-only mode."
+}
 
 Write-Host "Starting Blue Wolf runtime on port $Port (single process)."
 & $RuntimeExe
