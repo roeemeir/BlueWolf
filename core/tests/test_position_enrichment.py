@@ -2,9 +2,15 @@ from __future__ import annotations
 
 import unittest
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from bluewolf_core.models import VehicleSample
-from bluewolf_runtime_adapter.position_enrichment import enrich_runtime_snapshot_positions
+from bluewolf_runtime_adapter.position_enrichment import (
+    PositionEnrichedLiveRuntimeProducer,
+    enrich_runtime_snapshot_positions,
+)
+from bluewolf_runtime_adapter.producer import LiveRuntimeProducer, RuntimePublicationResult
 
 
 START = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -98,6 +104,41 @@ class RuntimePositionEnrichmentTests(unittest.TestCase):
         self.assertEqual(member["latitude"], 12.0)
         self.assertEqual(member["longitude"], 34.0)
         self.assertNotIn("headingDeg", member)
+
+    def test_position_producer_commits_once_only_after_enrichment(self) -> None:
+        class RecordingStore:
+            def __init__(self) -> None:
+                self.published = []
+
+            def publish(self, snapshot) -> None:
+                self.published.append(snapshot)
+
+        producer = object.__new__(PositionEnrichedLiveRuntimeProducer)
+        real_store = RecordingStore()
+        producer.store = real_store
+        snapshot = _snapshot(START)
+        sample = _sample(START, latitude=12.0, longitude=34.0, east=1.0, north=0.0)
+        poll = SimpleNamespace(samples=(sample,))
+
+        def parent_publish(instance, supplied_poll):
+            self.assertIs(instance, producer)
+            self.assertIs(supplied_poll, poll)
+            # Simulate the parent producer's direct commit. It must be routed
+            # away from the real store while enrichment is still pending.
+            instance.store.publish(snapshot)
+            return RuntimePublicationResult(snapshot, ("g1",), {})
+
+        with patch.object(LiveRuntimeProducer, "publish_poll", autospec=True, side_effect=parent_publish):
+            result = producer.publish_poll(poll)
+
+        self.assertIs(producer.store, real_store)
+        self.assertEqual(len(real_store.published), 1)
+        committed = real_store.published[0]
+        member = committed["groupList"][0]["members"][0]
+        self.assertEqual(member["latitude"], 12.0)
+        self.assertEqual(member["longitude"], 34.0)
+        self.assertAlmostEqual(member["headingDeg"], 90.0)
+        self.assertIs(result.snapshot, committed)
 
 
 if __name__ == "__main__":
