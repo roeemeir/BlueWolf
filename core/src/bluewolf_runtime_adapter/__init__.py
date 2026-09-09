@@ -6,5 +6,20 @@ other application concerns.
 """
 
 from .contract import LIVE_RUNTIME_SCHEMA_VERSION, build_so_live_runtime_snapshot
+from .service import (
+    BlueWolfRuntimeASGI,
+    RuntimeSnapshotStore,
+    app,
+    create_app,
+    runtime_store,
+)
 
-__all__ = ["LIVE_RUNTIME_SCHEMA_VERSION", "build_so_live_runtime_snapshot"]
+__all__ = [
+    "LIVE_RUNTIME_SCHEMA_VERSION",
+    "BlueWolfRuntimeASGI",
+    "RuntimeSnapshotStore",
+    "app",
+    "build_so_live_runtime_snapshot",
+    "create_app",
+    "runtime_store",
+]
