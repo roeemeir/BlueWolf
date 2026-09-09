@@ -132,6 +132,20 @@ jobs:
           deployment = documents[0]
           assert deployment['spec']['replicas'] == 1
           assert deployment['spec']['strategy']['type'] == 'Recreate'
+          pod = deployment['spec']['template']['spec']
+          container = pod['containers'][0]
+          env = {item['name']: item for item in container['env']}
+          assert env['BLUEWOLF_OPERATIONAL_CONFIG']['value'] == '/etc/bluewolf/runtime.json'
+          assert env['BLUEWOLF_OPERATIONAL_STATE_PATH']['value'] == '/var/lib/bluewolf/runtime-state.json'
+          assert env['BLUEWOLF_CORE_API_TOKEN']['valueFrom']['secretKeyRef']['key'] == 'core-api-token'
+          assert env['BLUEWOLF_INFLUX_TOKEN']['valueFrom']['secretKeyRef']['key'] == 'influx-token'
+          mounts = {item['name']: item['mountPath'] for item in container['volumeMounts']}
+          assert mounts['operational-config'] == '/etc/bluewolf'
+          assert mounts['operational-state'] == '/var/lib/bluewolf'
+          volumes = {item['name']: item for item in pod['volumes']}
+          assert volumes['operational-config']['configMap']['name'] == 'bluewolf-runtime-config'
+          assert volumes['operational-state']['persistentVolumeClaim']['claimName'] == 'bluewolf-runtime-state'
+          assert container['securityContext']['runAsNonRoot'] is True
           PY
       - name: Validate Windows PowerShell syntax
         shell: pwsh
@@ -148,6 +162,9 @@ jobs:
           }
       - name: Build runtime image
         run: docker build -f deploy/runtime/Dockerfile -t bluewolf-runtime:ci .
+      - name: Validate non-root runtime image
+        run: |
+          test "$(docker image inspect bluewolf-runtime:ci --format '{{.Config.User}}')" = "10001:10001"
       - name: Smoke runtime image
         run: |
           docker run -d --name bluewolf-runtime-ci -e BLUEWOLF_CORE_API_TOKEN=ci-token -p 18080:8080 bluewolf-runtime:ci
