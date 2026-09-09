@@ -50,6 +50,7 @@ from .producer import (
     SOOperationalGroupBinding,
     SOOperationalMemberBinding,
 )
+from .sample_archive import JoinedSampleArchive
 
 
 _REQUIRED_METRICS = {
@@ -309,6 +310,15 @@ def _poll_config(config: Mapping[str, Any], join_tolerance_seconds: int) -> Live
     )
 
 
+def _sample_archive(config: Mapping[str, Any]) -> JoinedSampleArchive | None:
+    raw = config.get("archive")
+    if raw is None:
+        return None
+    archive = _object(raw, "archive")
+    path = _text(archive.get("path"), "archive.path")
+    return JoinedSampleArchive(path)
+
+
 def _binding_from_config(raw: object, index: int) -> tuple[frozenset[int], Callable[[str], SOOperationalGroupBinding]]:
     value = _object(raw, f"server.groups[{index}]")
     arena = _text(value.get("arena"), f"server.groups[{index}].arena")
@@ -439,6 +449,7 @@ def build_operational_runtime(config: Mapping[str, Any], store: Any) -> Operatio
     bank = _template_bank(config)
     reader, stream_schema = _connection_and_reader(config)
     poll_config = _poll_config(config, reader.join_config.tolerance_seconds)
+    sample_archive = _sample_archive(config)
     comparison = TemplateComparisonDimension(
         _text(config.get("comparisonDimension", "sync"), "comparisonDimension")
     )
@@ -480,6 +491,7 @@ def build_operational_runtime(config: Mapping[str, Any], store: Any) -> Operatio
             session=session,
             cursor=cursor,
             awake_resolver=_server_awake_at_latest_snapshot,
+            sample_archive=sample_archive,
         )
         producer = PositionEnrichedLiveRuntimeProducer(
             server_id=server_id,
