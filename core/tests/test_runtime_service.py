@@ -117,6 +117,47 @@ class RuntimeServiceTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["schemaVersion"], LIVE_RUNTIME_SCHEMA_VERSION)
 
+    def test_readiness_defaults_to_transport_only_when_no_probe_is_supplied(self) -> None:
+        app = create_app(RuntimeSnapshotStore(), token="secret", clock=lambda: NOW)
+        status, _, payload = asyncio.run(_request(app, "/readyz"))
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["mode"], "transport-only")
+        self.assertEqual(payload["schemaVersion"], LIVE_RUNTIME_SCHEMA_VERSION)
+
+    def test_readiness_returns_503_when_operational_probe_is_not_ready(self) -> None:
+        app = create_app(
+            RuntimeSnapshotStore(),
+            clock=lambda: NOW,
+            readiness_probe=lambda: {
+                "ok": False,
+                "mode": "operational",
+                "error": "polling thread stopped",
+            },
+        )
+        status, _, payload = asyncio.run(_request(app, "/readyz"))
+        self.assertEqual(status, 503)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["mode"], "operational")
+        self.assertEqual(payload["error"], "polling thread stopped")
+
+    def test_readiness_reports_running_operational_probe(self) -> None:
+        app = create_app(
+            RuntimeSnapshotStore(),
+            clock=lambda: NOW,
+            readiness_probe=lambda: {
+                "ok": True,
+                "mode": "operational",
+                "running": True,
+                "tickCount": 3,
+            },
+        )
+        status, _, payload = asyncio.run(_request(app, "/readyz"))
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["running"])
+        self.assertEqual(payload["tickCount"], 3)
+
     def test_live_runtime_requires_bearer_token_when_configured(self) -> None:
         store = RuntimeSnapshotStore()
         store.publish(_snapshot())
