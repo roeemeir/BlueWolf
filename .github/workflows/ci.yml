@@ -90,7 +90,7 @@ jobs:
           - shard: runtime-service
             tests: test_runtime_service
           - shard: influxdb2-adapter
-            tests: test_influxdb2_adapter
+            tests: test_influxdb2_adapter test_influx_window_reader
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
