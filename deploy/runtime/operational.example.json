@@ -1,0 +1,136 @@
+{
+  "influx": {
+    "url": "http://influxdb2.internal:8086",
+    "organization": "bluewolf",
+    "tokenEnv": "BLUEWOLF_INFLUX_TOKEN",
+    "timeoutMs": 10000,
+    "stream": {
+      "vehicleNumberColumn": "vehicle_number",
+      "serverColumn": "server"
+    },
+    "metrics": [
+      {
+        "metric": "vehicle_identifier",
+        "bucket": "navigation",
+        "measurement": "vehicle_id",
+        "field": "value"
+      },
+      {
+        "metric": "active",
+        "bucket": "navigation",
+        "measurement": "active",
+        "field": "color",
+        "valueMap": {
+          "green": true,
+          "red": false
+        }
+      },
+      {
+        "metric": "latitude_deg",
+        "bucket": "navigation",
+        "measurement": "latitude",
+        "field": "value"
+      },
+      {
+        "metric": "longitude_deg",
+        "bucket": "navigation",
+        "measurement": "longitude",
+        "field": "value"
+      },
+      {
+        "metric": "altitude_m",
+        "bucket": "navigation",
+        "measurement": "altitude",
+        "field": "value"
+      },
+      {
+        "metric": "velocity_north_mps",
+        "bucket": "navigation",
+        "measurement": "velocity_north",
+        "field": "value"
+      },
+      {
+        "metric": "velocity_east_mps",
+        "bucket": "navigation",
+        "measurement": "velocity_east",
+        "field": "value"
+      }
+    ]
+  },
+  "join": {
+    "logicalGridSeconds": 1,
+    "toleranceSeconds": 5,
+    "originalReliability": 1.0,
+    "approximatedReliability": 0.75
+  },
+  "polling": {
+    "logicalGridSeconds": 1,
+    "activePollSeconds": 5,
+    "idleProbeSeconds": 300,
+    "joinToleranceSeconds": 5,
+    "bootstrapHistorySeconds": 2400
+  },
+  "comparisonDimension": "sync",
+  "displayedScore": {
+    "mode": "invalid"
+  },
+  "templates": [
+    {
+      "id": "so-default-opposite",
+      "name": "SO default opposite",
+      "default": true,
+      "routes": [
+        {
+          "id": "r1",
+          "kind": "single",
+          "slots": [
+            {
+              "id": "front",
+              "vehicleType": "TYPE_A",
+              "quarter": "Q0"
+            },
+            {
+              "id": "back",
+              "vehicleType": "TYPE_A",
+              "quarter": "Q2"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "servers": [
+    {
+      "id": 1,
+      "tag": "server-1",
+      "awakePolicy": "any-active-sample",
+      "groups": [
+        {
+          "name": "SO Group A",
+          "arena": "Arena A",
+          "color": "#3366cc",
+          "routeInstances": [
+            {
+              "id": "r1",
+              "kind": "single"
+            }
+          ],
+          "members": [
+            {
+              "vehicleId": 101,
+              "vehicleType": "TYPE_A",
+              "routeInstanceId": "r1",
+              "workSpeedMps": 20.0
+            },
+            {
+              "vehicleId": 102,
+              "vehicleType": "TYPE_A",
+              "routeInstanceId": "r1",
+              "workSpeedMps": 20.0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
