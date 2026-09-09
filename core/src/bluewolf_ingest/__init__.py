@@ -9,6 +9,7 @@ from .influxdb2 import (
 )
 from .join import TemporalJoinConfig, TemporalJoinError, join_metric_points
 from .models import MetricName, RawMetricPoint
+from .window_reader import InfluxDB2WindowReader
 
 __all__ = [
     "InfluxDB2Adapter",
@@ -16,6 +17,7 @@ __all__ = [
     "InfluxDB2Connection",
     "InfluxDB2MetricMapping",
     "InfluxDB2StreamSchema",
+    "InfluxDB2WindowReader",
     "MetricName",
     "RawMetricPoint",
     "TemporalJoinConfig",
