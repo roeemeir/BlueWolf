@@ -1,9 +1,14 @@
 """Atomic restart continuity for the process-local operational runtime.
 
-A checkpoint contains only deterministic runtime state and the latest published
-snapshot. Secrets are never persisted. A configuration fingerprint prevents a
-watermark/session from being restored under a different Influx mapping, server
-tag, template bank or operational binding.
+A checkpoint contains only deterministic runtime state and the published live
+runtime cache. Secrets are never persisted. A configuration fingerprint
+prevents a watermark/session from being restored under a different Influx
+mapping, server tag, template bank or operational binding.
+
+``runtimeHistory`` is an optional V1 extension. Older V1 checkpoints that only
+contain ``runtimeSnapshot`` remain valid; newer checkpoints restore bounded
+operator history before the latest snapshot so a process restart does not reset
+the live timeline.
 """
 from __future__ import annotations
 
@@ -91,6 +96,21 @@ def _mapping(value: object, name: str) -> Mapping[str, Any]:
     return value
 
 
+def _runtime_history(pipeline: OperationalServerPipeline) -> list[dict[str, Any]]:
+    history = getattr(pipeline.producer.store, "history", None)
+    if not callable(history):
+        return []
+    rows = history(str(pipeline.server_id))
+    if not isinstance(rows, list):
+        raise ValueError("runtime store history() must return a list")
+    output: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise ValueError("runtime store history contains a non-object snapshot")
+        output.append(deepcopy(dict(row)))
+    return output
+
+
 def _server_state(pipeline: OperationalServerPipeline) -> dict[str, Any]:
     coordinator = pipeline.coordinator
     producer = pipeline.producer
@@ -106,6 +126,7 @@ def _server_state(pipeline: OperationalServerPipeline) -> dict[str, Any]:
         "cursor": coordinator.cursor.export_state(),
         "liveRuntime": producer.runtime.export_state(),
         "producer": producer.export_state(),
+        "runtimeHistory": _runtime_history(pipeline),
         "runtimeSnapshot": snapshot,
     }
 
@@ -122,6 +143,26 @@ def export_operational_state(
         "configFingerprint": config_fingerprint,
         "servers": [_server_state(pipeline) for pipeline in loop.pipelines],
     }
+
+
+def _restore_runtime_cache(producer, raw: Mapping[str, Any]) -> None:
+    history_raw = raw.get("runtimeHistory", [])
+    if not isinstance(history_raw, list):
+        raise OperationalStateCompatibilityError("runtimeHistory must be a list when supplied")
+    for index, snapshot in enumerate(history_raw):
+        if not isinstance(snapshot, Mapping):
+            raise OperationalStateCompatibilityError(
+                f"runtimeHistory[{index}] must be an object"
+            )
+        producer.store.publish(deepcopy(dict(snapshot)))
+
+    snapshot = raw.get("runtimeSnapshot")
+    if snapshot is not None:
+        if not isinstance(snapshot, Mapping):
+            raise OperationalStateCompatibilityError("runtimeSnapshot must be an object or null")
+        # Same-observedAt publication is idempotent in RuntimeSnapshotStore and
+        # keeps backward compatibility with checkpoints that only had this field.
+        producer.store.publish(deepcopy(dict(snapshot)))
 
 
 def _restore_pipeline(pipeline: OperationalServerPipeline, raw: Mapping[str, Any]) -> None:
@@ -173,12 +214,7 @@ def _restore_pipeline(pipeline: OperationalServerPipeline, raw: Mapping[str, Any
     coordinator.cursor = restored_cursor
     producer.session = restored_session
     producer.runtime = restored_runtime
-
-    snapshot = raw.get("runtimeSnapshot")
-    if snapshot is not None:
-        if not isinstance(snapshot, Mapping):
-            raise OperationalStateCompatibilityError("runtimeSnapshot must be an object or null")
-        producer.store.publish(deepcopy(dict(snapshot)))
+    _restore_runtime_cache(producer, raw)
 
 
 def restore_operational_state(
