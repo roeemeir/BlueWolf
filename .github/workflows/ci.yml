@@ -107,6 +107,57 @@ jobs:
         working-directory: core/tests
         run: python -m unittest -v ${{ matrix.tests }}
 
+  runtime-packaging:
+    name: Runtime deployment packaging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate OpenShift YAML
+        run: |
+          python -m pip install 'PyYAML>=6,<7'
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+          path = Path('deploy/openshift/runtime.yaml')
+          documents = list(yaml.safe_load_all(path.read_text(encoding='utf-8')))
+          assert len(documents) == 2
+          assert [item['kind'] for item in documents] == ['Deployment', 'Service']
+          deployment = documents[0]
+          assert deployment['spec']['replicas'] == 1
+          assert deployment['spec']['strategy']['type'] == 'Recreate'
+          PY
+      - name: Validate Windows PowerShell syntax
+        shell: pwsh
+        run: |
+          $paths = @('deploy/windows/install-runtime.ps1', 'deploy/windows/run-runtime.ps1')
+          foreach ($path in $paths) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_.Message }
+              exit 1
+            }
+          }
+      - name: Build runtime image
+        run: docker build -f deploy/runtime/Dockerfile -t bluewolf-runtime:ci .
+      - name: Smoke runtime image
+        run: |
+          docker run -d --name bluewolf-runtime-ci -e BLUEWOLF_CORE_API_TOKEN=ci-token -p 18080:8080 bluewolf-runtime:ci
+          cleanup() { docker rm -f bluewolf-runtime-ci >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error http://127.0.0.1:18080/healthz; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs bluewolf-runtime-ci
+          exit 1
+
   web:
     name: Web application
     runs-on: ubuntu-latest
