@@ -90,7 +90,7 @@ jobs:
           - shard: runtime-service
             tests: test_runtime_service
           - shard: runtime-producer
-            tests: test_runtime_producer
+            tests: test_runtime_producer test_position_enrichment
           - shard: influxdb2-adapter
             tests: test_influxdb2_adapter test_influx_window_reader
           - shard: live-polling
