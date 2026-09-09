@@ -1,7 +1,10 @@
 "use client";
 
-import { getLiveRuntimeHistory } from "@/lib/live-runtime-history";
-import type { LiveRuntimeGroup, LiveRuntimeSnapshot } from "@/lib/live-runtime";
+import {
+  getLiveRuntimeHistory,
+  type LiveRuntimeHistoryGroup,
+  type LiveRuntimeHistoryPoint,
+} from "@/lib/live-runtime-history";
 import type { ScoreLayer } from "./visuals";
 
 type GroupMeta = {
@@ -18,8 +21,8 @@ type EventSpan = {
   to: number;
 };
 
-function groupsFor(snapshot: LiveRuntimeSnapshot): LiveRuntimeGroup[] {
-  return snapshot.groupList ?? Object.values(snapshot.groups).filter((group): group is LiveRuntimeGroup => Boolean(group));
+function groupsFor(point: LiveRuntimeHistoryPoint): LiveRuntimeHistoryGroup[] {
+  return point.groups;
 }
 
 function timeLabel(value: string) {
@@ -29,7 +32,7 @@ function timeLabel(value: string) {
 }
 
 function pathFor(
-  history: LiveRuntimeSnapshot[],
+  history: LiveRuntimeHistoryPoint[],
   groupId: string,
   layer: ScoreLayer,
   x: (index: number) => number,
@@ -37,8 +40,8 @@ function pathFor(
 ) {
   let path = "";
   let drawing = false;
-  history.forEach((snapshot, index) => {
-    const group = groupsFor(snapshot).find((item) => item.id === groupId);
+  history.forEach((point, index) => {
+    const group = groupsFor(point).find((item) => item.id === groupId);
     if (!group || !group.scoreValid) {
       drawing = false;
       return;
@@ -54,10 +57,10 @@ function pathFor(
   return path.trim();
 }
 
-function eventSpans(history: LiveRuntimeSnapshot[], metadata: Map<string, GroupMeta>): EventSpan[] {
+function eventSpans(history: LiveRuntimeHistoryPoint[], metadata: Map<string, GroupMeta>): EventSpan[] {
   const spans = new Map<string, EventSpan>();
-  history.forEach((snapshot, index) => {
-    for (const group of groupsFor(snapshot)) {
+  history.forEach((point, index) => {
+    for (const group of groupsFor(point)) {
       if (!group.event?.active) continue;
       const key = `${group.id}:${group.event.id}`;
       const current = spans.get(key);
@@ -93,8 +96,8 @@ export function OperationalTimeline({
 }) {
   const history = getLiveRuntimeHistory(serverId);
   const metadata = new Map<string, GroupMeta>();
-  for (const snapshot of history) {
-    for (const group of groupsFor(snapshot)) {
+  for (const point of history) {
+    for (const group of groupsFor(point)) {
       metadata.set(group.id, { id: group.id, color: group.color, name: group.name });
     }
   }
