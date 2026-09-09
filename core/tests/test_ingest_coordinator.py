@@ -7,6 +7,7 @@ import unittest
 from bluewolf_core.models import CoreBatchResult
 from bluewolf_ingest import ServerPollCursor
 from bluewolf_runtime_adapter.ingest_coordinator import LiveCoreIngestCoordinator
+from bluewolf_runtime_adapter.sample_archive import SampleArchiveWriteResult
 
 START = datetime(2026, 9, 9, 12, 0, 10, tzinfo=UTC)
 
@@ -55,8 +56,21 @@ class FakeSession:
         )
 
 
+class FakeArchive:
+    def __init__(self, *, fail=False, result=None):
+        self.fail = fail
+        self.result = result or SampleArchiveWriteResult(0, 0, 0, None)
+        self.calls = []
+
+    def record_batch(self, samples, *, recorded_at_utc):
+        self.calls.append((tuple(samples), recorded_at_utc))
+        if self.fail:
+            raise RuntimeError("archive failed")
+        return self.result
+
+
 class IngestCoordinatorTests(unittest.TestCase):
-    def build(self, *, reader=None, session=None, resolver=None):
+    def build(self, *, reader=None, session=None, resolver=None, archive=None):
         return LiveCoreIngestCoordinator(
             server_id=1,
             server_tag_value="srv-1",
@@ -64,12 +78,15 @@ class IngestCoordinatorTests(unittest.TestCase):
             session=session or FakeSession(),
             cursor=ServerPollCursor(),
             awake_resolver=resolver or (lambda samples, result, window: True),
+            sample_archive=archive,
         )
 
-    def test_success_advances_core_and_poll_watermark_together(self):
+    def test_success_advances_core_archive_and_poll_watermark_together(self):
         reader = FakeReader()
         session = FakeSession()
-        coordinator = self.build(reader=reader, session=session)
+        archive_result = SampleArchiveWriteResult(3, 0, 0, None)
+        archive = FakeArchive(result=archive_result)
+        coordinator = self.build(reader=reader, session=session, archive=archive)
         result = coordinator.poll_once(START)
         assert result is not None
         self.assertEqual(session.state, 1)
@@ -78,6 +95,8 @@ class IngestCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.cursor.next_due_utc, START + timedelta(seconds=5))
         self.assertEqual(reader.calls[0]["server_tag_value"], "srv-1")
         self.assertEqual(result.core_result.processed_until_utc, result.window.end_time_utc)
+        self.assertIs(result.archive_result, archive_result)
+        self.assertEqual(archive.calls[0][1], START)
 
     def test_reader_failure_does_not_move_watermark_and_schedules_retry(self):
         session = FakeSession(state=4)
@@ -111,15 +130,46 @@ class IngestCoordinatorTests(unittest.TestCase):
         self.assertIsNone(coordinator.cursor.last_processed_utc)
         self.assertEqual(coordinator.cursor.next_due_utc, START + timedelta(seconds=5))
 
+    def test_archive_failure_rolls_core_back_and_keeps_watermark(self):
+        session = FakeSession(state=5)
+        archive = FakeArchive(fail=True)
+        coordinator = self.build(session=session, archive=archive)
+
+        with self.assertRaisesRegex(RuntimeError, "archive failed"):
+            coordinator.poll_once(START)
+
+        self.assertIsNot(coordinator.session, session)
+        self.assertEqual(coordinator.session.state, 5)
+        self.assertIsNone(coordinator.cursor.last_processed_utc)
+        self.assertEqual(coordinator.cursor.next_due_utc, START + timedelta(seconds=5))
+        self.assertEqual(len(archive.calls), 1)
+
+    def test_correction_signal_is_exposed_without_implicit_core_replay(self):
+        correction_at = START - timedelta(seconds=8)
+        archive = FakeArchive(
+            result=SampleArchiveWriteResult(0, 1, 2, correction_at)
+        )
+        session = FakeSession()
+        coordinator = self.build(session=session, archive=archive)
+
+        result = coordinator.poll_once(START)
+        assert result is not None
+        assert result.archive_result is not None
+        self.assertTrue(result.archive_result.has_correction)
+        self.assertEqual(result.archive_result.earliest_revised_sample_utc, correction_at)
+        self.assertEqual(session.state, 1)
+
     def test_not_due_returns_without_query_or_core_mutation(self):
         reader = FakeReader()
         session = FakeSession()
-        coordinator = self.build(reader=reader, session=session)
+        archive = FakeArchive()
+        coordinator = self.build(reader=reader, session=session, archive=archive)
         first = coordinator.poll_once(START)
         assert first is not None
         second = coordinator.poll_once(START + timedelta(seconds=4))
         self.assertIsNone(second)
         self.assertEqual(len(reader.calls), 1)
+        self.assertEqual(len(archive.calls), 1)
         self.assertEqual(session.state, 1)
 
 
