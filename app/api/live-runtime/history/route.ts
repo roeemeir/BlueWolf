@@ -1,7 +1,7 @@
-import { LIVE_RUNTIME_SCHEMA_VERSION } from "@/lib/live-runtime";
+import { LIVE_RUNTIME_HISTORY_SCHEMA_VERSION, LIVE_RUNTIME_HISTORY_LIMIT } from "@/lib/live-runtime-history";
 
 const serverPattern = /^[a-zA-Z0-9_-]{1,80}$/;
-const MAX_HISTORY_LIMIT = 1000;
+const MAX_HISTORY_LIMIT = 5000;
 
 function runtimeConfig() {
   const baseUrl = process.env.BLUEWOLF_CORE_API_URL?.trim().replace(/\/$/, "");
@@ -12,7 +12,7 @@ function runtimeConfig() {
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const serverId = url.searchParams.get("serverId") ?? "";
-  const rawLimit = url.searchParams.get("limit") ?? "360";
+  const rawLimit = url.searchParams.get("limit") ?? String(LIVE_RUNTIME_HISTORY_LIMIT);
   const limit = Number(rawLimit);
   if (!serverPattern.test(serverId)) return Response.json({ error: "valid serverId is required" }, { status: 400 });
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_HISTORY_LIMIT) {
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   if (!baseUrl) {
     return Response.json({
       error: "Python Core runtime is not configured in this deployment",
-      schemaVersion: LIVE_RUNTIME_SCHEMA_VERSION,
+      schemaVersion: LIVE_RUNTIME_HISTORY_SCHEMA_VERSION,
     }, { status: 503 });
   }
 
