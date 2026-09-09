@@ -159,6 +159,26 @@ class LiveRuntimeProducer:
         self.displayed_score_resolver = displayed_score_resolver
         self._structurally_active_groups: set[str] = set()
 
+    def export_state(self) -> dict[str, object]:
+        """Serialize the minimum publication lifecycle state needed across restart."""
+
+        return {
+            "structurally_active_group_ids": sorted(self._structurally_active_groups),
+        }
+
+    def restore_state(self, state: Mapping[str, object]) -> None:
+        raw = state.get("structurally_active_group_ids", [])
+        if not isinstance(raw, list):
+            raise ValueError("producer structurally_active_group_ids must be a list")
+        values: list[str] = []
+        for item in raw:
+            if not isinstance(item, str) or not item:
+                raise ValueError("producer active group ids must be non-empty strings")
+            values.append(item)
+        if len(values) != len(set(values)):
+            raise ValueError("producer active group ids must be unique")
+        self._structurally_active_groups = set(values)
+
     @staticmethod
     def _sample_index(
         samples: tuple[VehicleSample, ...],
