@@ -9,12 +9,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import hashlib
 from importlib import import_module
+import json
 import os
+from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import Any, Callable, Protocol
 
 from .operational_pipeline import OperationalRuntimeLoop, OperationalTick
+from .operational_state import AtomicOperationalStateStore, CheckpointedOperationalRuntimeLoop
 
 
 _BUILTIN_CONFIG_FACTORY = (
@@ -39,6 +43,29 @@ def load_operational_loop_factory(spec: str) -> OperationalLoopFactory:
     if not callable(factory):
         raise ValueError(f"operational factory is not callable: {value}")
     return factory
+
+
+def _configuration_fingerprint(config_path: str) -> str:
+    """Hash canonical public JSON configuration without reading any secret env vars."""
+
+    path = Path(config_path)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ValueError(f"cannot read operational config for checkpoint fingerprint: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"operational config is not valid JSON: {path}") from exc
+    try:
+        canonical = json.dumps(
+            raw,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("operational config is not canonically JSON serializable") from exc
+    return hashlib.sha256(canonical).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,10 +167,16 @@ def host_from_environment(store: Any) -> OperationalLoopHost | None:
     When it is absent but ``BLUEWOLF_OPERATIONAL_CONFIG`` is set, the built-in
     JSON factory is selected. With neither variable, the service remains
     transport-only and no polling thread is created.
+
+    When ``BLUEWOLF_OPERATIONAL_STATE_PATH`` is set, the constructed loop is
+    wrapped in ``CheckpointedOperationalRuntimeLoop``. Checkpoint compatibility
+    is tied to a SHA-256 fingerprint of the canonical public JSON config; secret
+    environment values never enter the persisted state or fingerprint.
     """
 
     spec = os.environ.get("BLUEWOLF_OPERATIONAL_FACTORY", "").strip()
     config_path = os.environ.get("BLUEWOLF_OPERATIONAL_CONFIG", "").strip()
+    state_path = os.environ.get("BLUEWOLF_OPERATIONAL_STATE_PATH", "").strip()
     if not spec and config_path:
         spec = _BUILTIN_CONFIG_FACTORY
     if not spec:
@@ -152,6 +185,20 @@ def host_from_environment(store: Any) -> OperationalLoopHost | None:
     loop = factory(store)
     if not isinstance(loop, OperationalRuntimeLoop):
         raise TypeError("operational factory must return OperationalRuntimeLoop")
+
+    if state_path:
+        if not config_path:
+            raise ValueError(
+                "BLUEWOLF_OPERATIONAL_STATE_PATH requires BLUEWOLF_OPERATIONAL_CONFIG "
+                "so checkpoint compatibility can be verified"
+            )
+        if not isinstance(loop, CheckpointedOperationalRuntimeLoop):
+            loop = CheckpointedOperationalRuntimeLoop(
+                loop.pipelines,
+                state_store=AtomicOperationalStateStore(state_path),
+                config_fingerprint=_configuration_fingerprint(config_path),
+            )
+
     sleep_seconds = float(os.environ.get("BLUEWOLF_OPERATIONAL_LOOP_SECONDS", "1"))
     return OperationalLoopHost(loop, loop_sleep_seconds=sleep_seconds)
 
