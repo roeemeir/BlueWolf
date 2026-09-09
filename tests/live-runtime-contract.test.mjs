@@ -18,6 +18,7 @@ test("simulation runtime preserves the deterministic operator scenario", () => {
   assert.equal(snapshot.source.health, "healthy");
   assert.equal(snapshot.groups.so.total, original.groups.so.total);
   assert.equal(snapshot.groups.si.members.length, original.groups.si.members.length);
+  assert.equal(snapshot.groupList.length, 2);
 });
 
 test("an unavailable Python runtime never leaves demo scores looking operational", () => {
@@ -71,8 +72,80 @@ test("a partial Python snapshot keeps missing groups explicitly invalid", () => 
   assert.equal(scenario.groups.so.total, 82);
   assert.equal(snapshot.groups.so.recommendation.ready, true);
   assert.equal(snapshot.groups.so.event.contextKey, "ctx-1");
+  assert.equal(snapshot.groupList.length, 1);
   assert.equal(scenario.groups.si.total, 0);
   assert.equal(scenario.groups.si.scoreValid, false);
+});
+
+test("groupList preserves multiple SO groups without family-key overwrite", () => {
+  const group = (id, vehicleId, total, color) => ({
+    key: "so",
+    id,
+    family: "SO",
+    name: id,
+    subtitle: "Python Core",
+    total,
+    sync: total,
+    route: total,
+    confidence: 95,
+    color,
+    templateId: "tpl-so-h",
+    reason: "valid",
+    success: "valid",
+    scoreValid: true,
+    observedAt: "2026-09-09T12:00:00.000Z",
+    members: [
+      { id: vehicleId, typeId: "storm", score: total, sync: total, route: total, confidence: 95, phase: 0.1, scoreValid: true },
+    ],
+  });
+  const g1 = group("SO-1", 101, 91, "#4378e8");
+  const g2 = group("SO-2", 202, 77, "#8a63d2");
+  const payload = {
+    schemaVersion: runtime.LIVE_RUNTIME_SCHEMA_VERSION,
+    serverId: "1",
+    arena: "זירה א׳",
+    status: "2 SO groups",
+    observedAt: "2026-09-09T12:00:00.000Z",
+    source: { kind: "python-core", health: "healthy" },
+    groups: { so: g1 },
+    groupList: [g1, g2],
+  };
+
+  const snapshot = runtime.normalizeLiveRuntimeSnapshot(payload, "1");
+  assert.deepEqual(snapshot.groupList.map((item) => item.id), ["SO-1", "SO-2"]);
+  runtime.applyLiveRuntimeSnapshot(snapshot);
+  assert.deepEqual(runtime.getRuntimeGroups("1").map((item) => item.id), ["SO-1", "SO-2"]);
+  assert.equal(bluewolf.getServerScenario("1").groups.so.id, "SO-1");
+});
+
+test("groupList rejects duplicate group ids", () => {
+  const group = {
+    key: "so",
+    id: "dup",
+    family: "SO",
+    name: "dup",
+    subtitle: "Python Core",
+    total: 80,
+    sync: 80,
+    route: 80,
+    confidence: 90,
+    color: "#4378e8",
+    templateId: "tpl-so-h",
+    reason: "valid",
+    success: "valid",
+    scoreValid: true,
+    observedAt: "2026-09-09T12:00:00.000Z",
+    members: [],
+  };
+  const payload = {
+    schemaVersion: runtime.LIVE_RUNTIME_SCHEMA_VERSION,
+    serverId: "1",
+    observedAt: "2026-09-09T12:00:00.000Z",
+    source: { kind: "python-core", health: "healthy" },
+    groups: { so: group },
+    groupList: [group, group],
+  };
+  assert.throws(() => runtime.normalizeLiveRuntimeSnapshot(payload, "1"), /duplicate runtime group id/);
 });
 
 test("runtime contract rejects a snapshot for the wrong server", () => {
@@ -86,11 +159,12 @@ test("runtime contract rejects a snapshot for the wrong server", () => {
   assert.throws(() => runtime.normalizeLiveRuntimeSnapshot(payload, "1"), /serverId does not match/);
 });
 
-test("switching back to simulation restores the immutable demo baseline", () => {
+test("switching back to simulation restores the immutable demo baseline and group list", () => {
   const baseline = structuredClone(bluewolf.getServerScenario("1"));
   runtime.applyLiveRuntimeSnapshot(runtime.unavailableRuntimeSnapshot("1", "offline"));
   assert.equal(bluewolf.getServerScenario("1").groups.so.total, 0);
   runtime.restoreSimulationScenario("1");
   assert.equal(bluewolf.getServerScenario("1").groups.so.total, baseline.groups.so.total);
   assert.equal(bluewolf.getServerScenario("1").groups.si.total, baseline.groups.si.total);
+  assert.deepEqual(runtime.getRuntimeGroups("1").map((group) => group.id).sort(), Object.values(baseline.groups).map((group) => group.id).sort());
 });
