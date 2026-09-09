@@ -15,6 +15,10 @@ from bluewolf_runtime_adapter.environment_factory import (
     build_operational_runtime_from_environment,
     load_operational_config,
 )
+from bluewolf_runtime_adapter.operational_state import (
+    CheckpointedOperationalRuntimeLoop,
+    OperationalStateCompatibilityError,
+)
 from bluewolf_runtime_adapter.runtime_host import host_from_environment
 from bluewolf_runtime_adapter.service import RuntimeSnapshotStore
 
@@ -193,6 +197,80 @@ class EnvironmentFactoryTests(unittest.TestCase):
         with patch.dict(os.environ, {"TEST_BLUEWOLF_INFLUX_TOKEN": "secret"}, clear=False):
             with self.assertRaisesRegex(ValueError, "only 'invalid' is allowed"):
                 build_operational_runtime(config, RuntimeSnapshotStore())
+
+    def test_persistence_roundtrip_restores_watermark_runtime_and_active_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "operational-state.json"
+            config = _config()
+            config["persistence"] = {"path": str(state_path)}
+            environment = {"TEST_BLUEWOLF_INFLUX_TOKEN": "secret"}
+            first_store = RuntimeSnapshotStore()
+            with patch.dict(os.environ, environment, clear=False):
+                first = build_operational_runtime(config, first_store)
+            self.assertIsInstance(first, CheckpointedOperationalRuntimeLoop)
+            assert isinstance(first, CheckpointedOperationalRuntimeLoop)
+            pipeline = first.pipelines[0]
+            pipeline.coordinator.cursor.restore_state(
+                {
+                    "last_processed_utc": NOW.isoformat().replace("+00:00", "Z"),
+                    "next_due_utc": (NOW + timedelta(seconds=5)).isoformat().replace("+00:00", "Z"),
+                    "awake": True,
+                }
+            )
+            pipeline.producer.restore_state(
+                {"structurally_active_group_ids": ["g-persisted"]}
+            )
+            first_store.publish(
+                {
+                    "schemaVersion": "bluewolf.live-runtime.v1",
+                    "serverId": "1",
+                    "observedAt": NOW.isoformat().replace("+00:00", "Z"),
+                    "source": {"kind": "python-core", "health": "healthy"},
+                    "groups": {},
+                }
+            )
+            first.save_checkpoint()
+            self.assertTrue(state_path.exists())
+            self.assertEqual(list(state_path.parent.glob("*.tmp")), [])
+
+            restored_store = RuntimeSnapshotStore()
+            with patch.dict(os.environ, environment, clear=False):
+                restored = build_operational_runtime(config, restored_store)
+            self.assertIsInstance(restored, CheckpointedOperationalRuntimeLoop)
+            restored_pipeline = restored.pipelines[0]
+            self.assertEqual(restored_pipeline.coordinator.cursor.last_processed_utc, NOW)
+            self.assertEqual(
+                restored_pipeline.coordinator.cursor.next_due_utc,
+                NOW + timedelta(seconds=5),
+            )
+            self.assertTrue(restored_pipeline.coordinator.cursor.awake)
+            self.assertEqual(
+                restored_pipeline.producer.export_state()["structurally_active_group_ids"],
+                ["g-persisted"],
+            )
+            self.assertIs(restored_pipeline.producer.session, restored_pipeline.coordinator.session)
+            self.assertIsNotNone(restored_store.get("1"))
+
+    def test_persistence_rejects_state_from_changed_operational_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "operational-state.json"
+            config = _config()
+            config["persistence"] = {"path": str(state_path)}
+            environment = {"TEST_BLUEWOLF_INFLUX_TOKEN": "secret"}
+            with patch.dict(os.environ, environment, clear=False):
+                first = build_operational_runtime(config, RuntimeSnapshotStore())
+            assert isinstance(first, CheckpointedOperationalRuntimeLoop)
+            first.save_checkpoint()
+
+            changed = _config()
+            changed["persistence"] = {"path": str(state_path)}
+            changed["servers"][0]["tag"] = "different-source"
+            with patch.dict(os.environ, environment, clear=False):
+                with self.assertRaisesRegex(
+                    OperationalStateCompatibilityError,
+                    "fingerprint",
+                ):
+                    build_operational_runtime(changed, RuntimeSnapshotStore())
 
     def test_config_file_and_builtin_host_bootstrap(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
