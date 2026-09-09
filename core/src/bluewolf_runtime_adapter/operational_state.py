@@ -8,7 +8,8 @@ mapping, server tag, template bank or operational binding.
 ``runtimeHistory`` is an optional V1 extension. Older V1 checkpoints that only
 contain ``runtimeSnapshot`` remain valid; newer checkpoints restore bounded
 operator history before the latest snapshot so a process restart does not reset
-the live timeline.
+the live timeline. History rows may be compact history points or legacy full
+live-runtime snapshots; stores that expose ``restore_history`` own that migration.
 
 Checkpoint writes are cadence-limited. The first state-changing tick is saved
 immediately; subsequent changes are marked dirty and written no more often than
@@ -157,19 +158,36 @@ def _restore_runtime_cache(producer, raw: Mapping[str, Any]) -> None:
     history_raw = raw.get("runtimeHistory", [])
     if not isinstance(history_raw, list):
         raise OperationalStateCompatibilityError("runtimeHistory must be a list when supplied")
-    for index, snapshot in enumerate(history_raw):
-        if not isinstance(snapshot, Mapping):
+    validated_history: list[Mapping[str, Any]] = []
+    for index, row in enumerate(history_raw):
+        if not isinstance(row, Mapping):
             raise OperationalStateCompatibilityError(
                 f"runtimeHistory[{index}] must be an object"
             )
-        producer.store.publish(deepcopy(dict(snapshot)))
+        validated_history.append(row)
+
+    restore_history = getattr(producer.store, "restore_history", None)
+    if callable(restore_history):
+        try:
+            restore_history(
+                str(producer.server_id),
+                [deepcopy(dict(row)) for row in validated_history],
+            )
+        except (TypeError, ValueError) as exc:
+            raise OperationalStateCompatibilityError(
+                "persisted runtimeHistory is incompatible with the runtime store"
+            ) from exc
+    else:
+        # Compatibility path for simple stores that predate compact history.
+        for snapshot in validated_history:
+            producer.store.publish(deepcopy(dict(snapshot)))
 
     snapshot = raw.get("runtimeSnapshot")
     if snapshot is not None:
         if not isinstance(snapshot, Mapping):
             raise OperationalStateCompatibilityError("runtimeSnapshot must be an object or null")
-        # Same-observedAt publication is idempotent in RuntimeSnapshotStore and
-        # keeps backward compatibility with checkpoints that only had this field.
+        # Same-observedAt publication is idempotent and also seeds the latest
+        # full snapshot after compact history has been restored.
         producer.store.publish(deepcopy(dict(snapshot)))
 
 
