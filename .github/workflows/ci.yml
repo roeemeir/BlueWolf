@@ -85,6 +85,8 @@ jobs:
             tests: test_event_alert
           - shard: live-so-event-runtime
             tests: test_live_so_event_runtime
+          - shard: live-runtime-contract
+            tests: test_live_runtime_contract
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
