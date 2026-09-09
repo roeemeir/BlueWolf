@@ -1,21 +1,13 @@
 """Dependency-light ASGI service for the Blue Wolf live runtime contract.
 
-The service is intentionally application-facing and therefore lives outside
-``bluewolf_core``. Producers publish validated ``bluewolf.live-runtime.v1``
-snapshots into ``RuntimeSnapshotStore``; this module exposes those snapshots
-through ``GET /v1/live-runtime`` for the Web proxy.
+The service is application-facing and remains outside ``bluewolf_core``.
+Validated producers publish snapshots into ``RuntimeSnapshotStore``; the ASGI
+transport exposes the latest snapshot and a bounded live-history cache.
 
-Freshness is enforced at the transport boundary:
-
-* a recent snapshot is returned as healthy;
-* an older-but-usable snapshot is returned with ``source.health = stale``;
-* an expired snapshot returns HTTP 503 and is never presented as current data.
-
-``/healthz`` is process liveness. ``/readyz`` is operational readiness and can
-fail when an explicitly configured polling host is not running or has not yet
-completed its first tick. The latest-snapshot registry remains process-local,
-so ingestion/publication and HTTP remain inside one worker; restart checkpoints
-provide continuity but do not make multiple workers safe.
+The history cache is deliberately a live-operator facility, not the after-action
+archive. It is bounded, process-local, ordered by ``observedAt`` and supports
+same-timestamp replacement so a corrected publication does not create duplicate
+points. Operational restart persistence may serialize this cache separately.
 """
 from __future__ import annotations
 
@@ -32,6 +24,7 @@ from urllib.parse import parse_qs
 from .contract import LIVE_RUNTIME_SCHEMA_VERSION
 
 _SERVER_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+_MAX_HISTORY_REQUEST = 1000
 
 
 def _utc_now() -> datetime:
@@ -57,6 +50,12 @@ def _positive_seconds(name: str, value: float) -> float:
     return numeric
 
 
+def _positive_integer(name: str, value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
 def _validate_snapshot(snapshot: Mapping[str, Any]) -> tuple[str, datetime]:
     if snapshot.get("schemaVersion") != LIVE_RUNTIME_SCHEMA_VERSION:
         raise ValueError("unsupported live runtime schema")
@@ -74,17 +73,35 @@ def _validate_snapshot(snapshot: Mapping[str, Any]) -> tuple[str, datetime]:
 
 
 class RuntimeSnapshotStore:
-    """Thread-safe process-local latest-snapshot registry keyed by server id."""
+    """Thread-safe latest snapshot plus bounded live history per server."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, history_limit: int = 360) -> None:
+        self.history_limit = _positive_integer("history_limit", history_limit)
         self._lock = RLock()
         self._snapshots: dict[str, dict[str, Any]] = {}
+        self._history: dict[str, list[dict[str, Any]]] = {}
 
     def publish(self, snapshot: Mapping[str, Any]) -> None:
-        server_id, _ = _validate_snapshot(snapshot)
+        server_id, observed_at = _validate_snapshot(snapshot)
         frozen = deepcopy(dict(snapshot))
         with self._lock:
-            self._snapshots[server_id] = frozen
+            history = self._history.setdefault(server_id, [])
+            replaced = False
+            for index in range(len(history) - 1, -1, -1):
+                existing_time = _parse_utc(history[index]["observedAt"])
+                if existing_time == observed_at:
+                    history[index] = deepcopy(frozen)
+                    replaced = True
+                    break
+            if not replaced:
+                history.append(deepcopy(frozen))
+                history.sort(key=lambda item: _parse_utc(item["observedAt"]))
+            if len(history) > self.history_limit:
+                del history[: len(history) - self.history_limit]
+
+            current = self._snapshots.get(server_id)
+            if current is None or observed_at >= _parse_utc(current["observedAt"]):
+                self._snapshots[server_id] = frozen
 
     def get(self, server_id: str) -> dict[str, Any] | None:
         if not _SERVER_PATTERN.fullmatch(server_id):
@@ -93,12 +110,24 @@ class RuntimeSnapshotStore:
             snapshot = self._snapshots.get(server_id)
             return None if snapshot is None else deepcopy(snapshot)
 
+    def history(self, server_id: str, *, limit: int | None = None) -> list[dict[str, Any]]:
+        if not _SERVER_PATTERN.fullmatch(server_id):
+            raise ValueError("invalid serverId")
+        requested = self.history_limit if limit is None else _positive_integer("limit", limit)
+        if requested > _MAX_HISTORY_REQUEST:
+            raise ValueError(f"limit must be <= {_MAX_HISTORY_REQUEST}")
+        with self._lock:
+            rows = self._history.get(server_id, [])
+            return deepcopy(rows[-requested:])
+
     def clear(self, server_id: str | None = None) -> None:
         with self._lock:
             if server_id is None:
                 self._snapshots.clear()
+                self._history.clear()
             else:
                 self._snapshots.pop(server_id, None)
+                self._history.pop(server_id, None)
 
 
 def _json_bytes(payload: Mapping[str, Any]) -> bytes:
@@ -164,7 +193,20 @@ class BlueWolfRuntimeASGI:
         await send({"type": "http.response.start", "status": status, "headers": headers})
         await send({"type": "http.response.body", "body": body})
 
+    @staticmethod
+    def _query(scope) -> dict[str, list[str]]:
+        return parse_qs(
+            bytes(scope.get("query_string", b"")).decode("utf-8", errors="strict"),
+            keep_blank_values=True,
+        )
+
+    @staticmethod
+    def _server_id(query: Mapping[str, list[str]]) -> str:
+        values = query.get("serverId", [])
+        return values[0] if len(values) == 1 else ""
+
     async def __call__(self, scope, receive, send) -> None:
+        del receive
         if scope.get("type") != "http":
             return
         method = str(scope.get("method", "GET")).upper()
@@ -204,7 +246,7 @@ class BlueWolfRuntimeASGI:
             await self._send_json(send, 200 if ready else 503, payload)
             return
 
-        if path != "/v1/live-runtime":
+        if path not in {"/v1/live-runtime", "/v1/live-runtime/history"}:
             await self._send_json(send, 404, {"error": "not found"})
             return
         if method != "GET":
@@ -214,14 +256,37 @@ class BlueWolfRuntimeASGI:
             await self._send_json(send, 401, {"error": "unauthorized"})
             return
 
-        query = parse_qs(
-            bytes(scope.get("query_string", b"")).decode("utf-8", errors="strict"),
-            keep_blank_values=True,
-        )
-        values = query.get("serverId", [])
-        server_id = values[0] if len(values) == 1 else ""
+        query = self._query(scope)
+        server_id = self._server_id(query)
         if not _SERVER_PATTERN.fullmatch(server_id):
             await self._send_json(send, 400, {"error": "valid serverId is required"})
+            return
+
+        if path == "/v1/live-runtime/history":
+            raw_limit = query.get("limit", [])
+            try:
+                limit = self.store.history_limit
+                if raw_limit:
+                    if len(raw_limit) != 1:
+                        raise ValueError("limit must be singular")
+                    limit = int(raw_limit[0])
+                snapshots = self.store.history(server_id, limit=limit)
+            except (TypeError, ValueError):
+                await self._send_json(
+                    send,
+                    400,
+                    {"error": f"limit must be an integer in [1,{_MAX_HISTORY_REQUEST}]"},
+                )
+                return
+            await self._send_json(
+                send,
+                200,
+                {
+                    "schemaVersion": LIVE_RUNTIME_SCHEMA_VERSION,
+                    "serverId": server_id,
+                    "snapshots": snapshots,
+                },
+            )
             return
 
         snapshot = self.store.get(server_id)
@@ -309,7 +374,16 @@ def create_app(
     )
 
 
-runtime_store = RuntimeSnapshotStore()
+def _history_limit_from_environment() -> int:
+    raw = os.environ.get("BLUEWOLF_RUNTIME_HISTORY_LIMIT", "360")
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("BLUEWOLF_RUNTIME_HISTORY_LIMIT must be an integer") from exc
+    return _positive_integer("BLUEWOLF_RUNTIME_HISTORY_LIMIT", value)
+
+
+runtime_store = RuntimeSnapshotStore(history_limit=_history_limit_from_environment())
 operational_host: Any | None = None
 
 
@@ -384,7 +458,6 @@ def main() -> None:
             "Install the runtime service extra: pip install -e '.[service]'"
         ) from exc
 
-    # Import lazily so importing the ASGI app never starts polling threads.
     from .runtime_host import host_from_environment
 
     host = os.environ.get("BLUEWOLF_RUNTIME_HOST", "0.0.0.0")
