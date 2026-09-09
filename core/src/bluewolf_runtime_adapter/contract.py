@@ -6,6 +6,7 @@ independent of HTTP, arenas, display labels and colors.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 import math
 from typing import Any, Mapping
@@ -17,6 +18,29 @@ from bluewolf_core.live_so_event_runtime import (
 
 LIVE_RUNTIME_SCHEMA_VERSION = "bluewolf.live-runtime.v1"
 _UNSELECTED_TEMPLATE_ID = "__unselected__"
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeVehiclePosition:
+    """Optional presentation position for one runtime member.
+
+    Heading uses navigation convention: zero is north and positive angles turn
+    clockwise. It is omitted when a velocity vector is not observable.
+    """
+
+    latitude_deg: float
+    longitude_deg: float
+    heading_deg: float | None = None
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.latitude_deg) or not -90.0 <= self.latitude_deg <= 90.0:
+            raise ValueError("latitude_deg must be finite and in [-90,90]")
+        if not math.isfinite(self.longitude_deg) or not -180.0 <= self.longitude_deg <= 180.0:
+            raise ValueError("longitude_deg must be finite and in [-180,180]")
+        if self.heading_deg is not None and not math.isfinite(self.heading_deg):
+            raise ValueError("heading_deg must be finite when supplied")
+        if self.heading_deg is not None:
+            object.__setattr__(self, "heading_deg", float(self.heading_deg) % 360.0)
 
 
 def _iso(value: datetime) -> str:
@@ -67,6 +91,7 @@ def build_so_live_runtime_snapshot(
     comparison_dimension: TemplateComparisonDimension,
     vehicle_ids: Mapping[str, int] | None = None,
     vehicle_type_by_member: Mapping[str, str] | None = None,
+    position_by_member: Mapping[str, RuntimeVehiclePosition] | None = None,
     group_name: str | None = None,
     subtitle: str = "Python Core · SO",
     color: str = "#4378e8",
@@ -76,6 +101,10 @@ def build_so_live_runtime_snapshot(
     ``displayed_group_score`` is explicit on purpose: the core runtime already
     requires the product's smoothed/displayed score for alert semantics, and
     this adapter must not silently substitute the raw total score.
+
+    Map position is also explicit. The serializer never attempts to reconstruct
+    latitude/longitude from route phase or route geometry when the live sample
+    did not carry a position.
 
     The result intentionally contains only an ``so`` group.  Consumers must
     treat a missing family as unavailable rather than backfilling demo scores.
@@ -122,23 +151,28 @@ def build_so_live_runtime_snapshot(
         if metric.reason and metric.reason not in reasons:
             reasons.append(metric.reason)
 
-        member_rows.append(
-            {
-                "id": _vehicle_id(metric.member_id, vehicle_ids),
-                "typeId": type_id,
-                "score": _score(member_scores.total if valid else None),
-                "sync": _score(member_scores.sync if valid else None),
-                "route": _score(member_scores.route if valid else None),
-                "confidence": (
-                    _score(float(member_scores.reliability) * 100.0)
-                    if member_scores is not None
-                    else 0.0
-                ),
-                "phase": float(observation.semantic_phase) if observation is not None else 0.0,
-                "scoreValid": valid,
-                "reasons": reasons,
-            }
-        )
+        row: dict[str, Any] = {
+            "id": _vehicle_id(metric.member_id, vehicle_ids),
+            "typeId": type_id,
+            "score": _score(member_scores.total if valid else None),
+            "sync": _score(member_scores.sync if valid else None),
+            "route": _score(member_scores.route if valid else None),
+            "confidence": (
+                _score(float(member_scores.reliability) * 100.0)
+                if member_scores is not None
+                else 0.0
+            ),
+            "phase": float(observation.semantic_phase) if observation is not None else 0.0,
+            "scoreValid": valid,
+            "reasons": reasons,
+        }
+        position = position_by_member.get(metric.member_id) if position_by_member is not None else None
+        if position is not None:
+            row["latitude"] = float(position.latitude_deg)
+            row["longitude"] = float(position.longitude_deg)
+            if position.heading_deg is not None:
+                row["headingDeg"] = float(position.heading_deg)
+        member_rows.append(row)
 
     group_scores = scoring.group_scores if scoring is not None else None
     group_valid = bool(
