@@ -1,6 +1,7 @@
 param(
     [string]$VenvPath = ".bluewolf-runtime-venv",
     [string]$OperationalConfig = "",
+    [string]$StatePath = "",
     [int]$Port = 8080,
     [int]$StaleSeconds = 15,
     [int]$ExpireSeconds = 60
@@ -24,6 +25,9 @@ if ($Port -lt 1 -or $Port -gt 65535) {
 if ($StaleSeconds -le 0 -or $ExpireSeconds -le $StaleSeconds) {
     throw "ExpireSeconds must be greater than StaleSeconds and both must be positive."
 }
+if (-not [string]::IsNullOrWhiteSpace($StatePath) -and [string]::IsNullOrWhiteSpace($OperationalConfig)) {
+    throw "StatePath requires OperationalConfig so checkpoint compatibility can be verified."
+}
 
 $env:BLUEWOLF_RUNTIME_HOST = "0.0.0.0"
 $env:BLUEWOLF_RUNTIME_PORT = [string]$Port
@@ -37,7 +41,27 @@ if (-not [string]::IsNullOrWhiteSpace($OperationalConfig)) {
 }
 else {
     Remove-Item Env:BLUEWOLF_OPERATIONAL_CONFIG -ErrorAction SilentlyContinue
+    Remove-Item Env:BLUEWOLF_OPERATIONAL_STATE_PATH -ErrorAction SilentlyContinue
     Write-Host "No operational config supplied; runtime will start in transport-only mode."
+}
+
+if (-not [string]::IsNullOrWhiteSpace($StatePath)) {
+    if ([System.IO.Path]::IsPathRooted($StatePath)) {
+        $ResolvedState = [System.IO.Path]::GetFullPath($StatePath)
+    }
+    else {
+        $ResolvedState = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $StatePath))
+    }
+    $StateDirectory = Split-Path -Parent $ResolvedState
+    if (-not [string]::IsNullOrWhiteSpace($StateDirectory)) {
+        New-Item -ItemType Directory -Force -Path $StateDirectory | Out-Null
+    }
+    $env:BLUEWOLF_OPERATIONAL_STATE_PATH = $ResolvedState
+    Write-Host "Operational restart state will be stored at $ResolvedState"
+}
+elseif (-not [string]::IsNullOrWhiteSpace($OperationalConfig)) {
+    Remove-Item Env:BLUEWOLF_OPERATIONAL_STATE_PATH -ErrorAction SilentlyContinue
+    Write-Host "No StatePath supplied; persistence may still be enabled by persistence.path in runtime.json."
 }
 
 Write-Host "Starting Blue Wolf runtime on port $Port (single process)."
