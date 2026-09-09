@@ -10,6 +10,7 @@
 4. `DOUBLE_HIPPODROME_SCORING_SEMANTICS_HE.md` — active-lobe/role switching.
 5. `V1_SPEC_HE.md` — מפרט המוצר הרחב.
 6. `EVENT_ALERT_LIFECYCLE_HE.md` — אירועים, low-score alerts והמלצות תבנית.
+7. `LIVE_SO_EVENT_RUNTIME_HE.md` — composition של scoring פעיל/חלופי ל־Event Engine.
 
 אם קיים חוסר או סתירה סמנטית, יומן המחקר אינו רשאי להמציא דרישה; עוצרים ומעדכנים את מסמך האפיון המתאים לפני שינוי קוד.
 
@@ -271,7 +272,7 @@ Shard ייעודי `double-lobe-phase`, נוסף לכל מטריצת ה־CI.
 `spec-conformant-vector-core @ 7f917412e1e89d8d47eabf980a2c26c22041ef80` — CI מלא ירוק.
 
 ### Open questions
-אין חסם סמנטי ל־active-lobe. השלב הבא הוא Template Selection lifecycle וחיבור scoring end-to-end ל־CoreSession.
+אין חסם סמנטי ל־active-lobe.
 
 ---
 
@@ -284,23 +285,13 @@ Shard ייעודי `double-lobe-phase`, נוסף לכל מטריצת ה־CI.
 יש להפריד לשלושה state machines: event context, low-score alert hysteresis ו־template recommendation. כל state machine צריך להיות checkpointable, ו־score לעולם לא ישנה grouping או active template בעצמו.
 
 ### Spec decision
-`V1_SPEC_HE.md` סעיפים 7, 8 ו־11 ו־`TEMPLATE_SELECTION_LIFECYCLE_HE.md` קובעים:
-
-- low-score alert לאחר 10 שניות מתחת ל־50;
-- recovery לאחר 20 שניות ב־60 ומעלה;
-- recommendation רק לאחר יתרון 30 נקודות ל־120 שניות;
-- סגירת recommendation לאחר יתרון קטן מ־15 ל־30 שניות;
-- rejection נשמר עד סוף האירוע;
-- event finalization לאחר 120 שניות;
-- restart אינו פותח event חדש אם ה־checkpoint והנתונים מוכיחים רציפות.
-
-נוסף `EVENT_ALERT_LIFECYCLE_HE.md` כדי לקבע את גבולות האחריות וה־state המפורש.
+`V1_SPEC_HE.md` סעיפים 7, 8 ו־11 ו־`TEMPLATE_SELECTION_LIFECYCLE_HE.md` קובעים low-score alert לאחר 10 שניות מתחת ל־50, recovery לאחר 20 שניות ב־60 ומעלה, recommendation לאחר יתרון 30 נקודות ל־120 שניות, סגירה לאחר יתרון קטן מ־15 ל־30 שניות, rejection עד סוף האירוע ו־event finalization לאחר 120 שניות.
 
 ### Experiment / Simulation
 נוספו 11 regressions דטרמיניסטיים: פתיחת אירוע, alert opening/recovery, score חסר באמצע streak, recommendation opening/close, החלפת best alternative, rejection event-scoped, context change, delayed finalization, checkpoint באמצע שני streaks וסיום event בזמן alert פעיל.
 
 ### Result
-ה־Event/Alert engine אינו משנה template selection או group membership. `change_time_utc` של alert מייצג זמן פליטה, בעוד onset/recovery evidence נשמר בפרטים. Event שנסתיים נשמר 120 שניות לפני `EVENT_CLOSED` סופי, ו־checkpoint roundtrip משמר את חלונות הראיות הפעילים.
+ה־Event/Alert engine אינו משנה template selection או group membership. `change_time_utc` מייצג זמן פליטה, בעוד onset/recovery evidence נשמר בפרטים. Event שנסתיים נשמר 120 שניות לפני `EVENT_CLOSED` סופי, ו־checkpoint roundtrip משמר את חלונות הראיות הפעילים.
 
 ### Code change
 נוסף `event_alert.py` עם `EventAlertEngine`, `EventObservation`, `EventAlertConfig`, snapshot/export/restore. ה־public API הורחב, ונוסף shard CI ייעודי `event-alert`.
@@ -308,14 +299,57 @@ Shard ייעודי `double-lobe-phase`, נוסף לכל מטריצת ה־CI.
 ### Regression
 `test_event_alert` — 11 תרחישי lifecycle קבועים.
 
+### Validation
+`spec-conformant-vector-core @ f9442f0716c37b5cf6f96bc778bec745eaad7eef` — `Blue Wolf CI` run `652`, success.
+
+---
+
+## מחקר 13 — Runtime composition ללא double-advance של temporal evidence
+
+### Problem / Observation
+לאחר שה־scorer וה־Event Engine עבדו בנפרד, חיבור נאיבי של recommendation יכול היה לקרוא את `LiveSOMetricsEngine` פעם אחת עבור התבנית הפעילה ופעם נוספת עבור כל חלופה. במקרה כזה עצם מספר התבניות בבנק היה משנה `dt`, phase-rate ו־curvature history — כלומר evaluation של recommendation היה משנה את המדידה שהוא אמור רק לצרוך.
+
+בנוסף, `V1_SPEC_HE.md` קובע שהתראת score נמוך פועלת על הציון המוצג והמוחלק, אך אינו מגדיר אלגוריתם smoothing; והוא קובע יתרון של 30 נקודות להמלצת תבנית בלי לומר אם ההשוואה היא לפי `sync` או `total`.
+
+### Hypothesis
+יש להתקדם temporal state פעם אחת בלבד לכל member/timestamp, לשמור את `SOScoringObservation` כתצפית immutable, ולנקד את כל החלופות מאותו snapshot. החלטות smoothing וממד comparison שאינן מוגדרות במפרט חייבות להישאר inputs מפורשים ולא defaults מומצאים.
+
+### Spec decision
+נוסף `LIVE_SO_EVENT_RUNTIME_HE.md`:
+
+- temporal metrics מתקדמים פעם אחת בלבד.
+- active selection מגיע רק מ־`SOTemplateSelectionRegistry`.
+- החלופות מגיעות רק מן bank הרלוונטי ומנוקדות על ידי `score_so_template()` הקיים.
+- displayed/smoothed score מוזן מבחוץ עד שה־smoothing contract יוגדר.
+- `TemplateComparisonDimension` חייב להיות `SYNC` או `TOTAL` באופן מפורש; אין default שקט.
+- event `context_key` כולל constellation, active template ו־confirmed route identity/geometry-period metadata, אך אינו כולל progress רגעי או active Double lobe.
+
+### Experiment / Simulation
+נוספו 5 regressions:
+
+1. שתי תבניות מנוקדות מאותו temporal snapshot וה־frame הבא עדיין רואה `dt=5s` ולא זמן מעוות עקב evaluation כפול.
+2. חלופה יציבה טובה ביותר מ־30 נקודות מייצרת `TEMPLATE_SUGGESTED` לאחר 120 שניות evidence.
+3. context key נשאר זהה בזמן progress רגיל ומשתנה כאשר active template משתנה.
+4. checkpoint באמצע recommendation streak משמר את תחילת ה־evidence ואת זמן ההצעה הסופי.
+5. raw group score אינו משמש במקום displayed score כאשר ה־caller מסמן displayed score כלא תקף.
+
+### Result
+מספר התבניות החלופיות אינו משנה temporal state. recommendation ו־event lifecycle צורכים את אותו snapshot שכבר שימש לתבנית הפעילה. שינוי active template פותח context חדש, בעוד progress רגיל ומעבר Double בין lobes אינם עושים זאת. שתי ההחלטות שעדיין אינן מוגדרות במוצר נשארו מפורשות במקום להיקבע בקוד ללא מקור.
+
+### Code change
+נוסף `live_so_event_runtime.py` עם `LiveSOEventRuntime`, `LiveSOEventRuntimeResult`, `TemplateComparisonDimension` ו־`build_so_event_context_key`. ה־public API הורחב ונוסף shard CI `live-so-event-runtime`.
+
+### Regression
+`test_live_so_event_runtime` — 5 תרחישים קבועים.
+
 ### Performance impact
-ה־state הוא O(number of active groups + pending-finalization events) ואינו מבצע fitting או route geometry. אין benchmark פורמלי נפרד; ה־CI המלא נשאר ירוק.
+ה־temporal metric pass נשאר יחיד. עלות החלופות היא fitting/scoring על snapshot קיים ואינה כוללת projection/temporal history update נוסף. אין benchmark פורמלי נפרד בשלב זה.
 
 ### Validation
-`spec-conformant-vector-core @ f9442f0716c37b5cf6f96bc778bec745eaad7eef` — `Blue Wolf CI` run `652`, conclusion `success`.
+`spec-conformant-vector-core @ 7b938ca87747031ab299500ec55c33ebc11c4f50` — `Blue Wolf CI` run `659`, conclusion `success`, כולל Web מלא.
 
 ### Open questions
-השלב הבא הוא runtime composition: יצירת `context_key` מה־Route/Group/Template versions, scoring של החלופות מאותו snapshot בלי עדכון כפול של temporal metrics, ולאחר מכן חיבור acknowledgement/mute/late-data persistence למעטפת המוצר.
+נדרש להכריע במפרט את אלגוריתם displayed-score smoothing ואת ממד recommendation (`sync` או `total`) לפני חיבור אוטומטי מלא למעטפת. לאחר מכן: Operator/Report integration, late-data correction/persistence, Influx adapter ו־load campaign.
 
 ---
 
