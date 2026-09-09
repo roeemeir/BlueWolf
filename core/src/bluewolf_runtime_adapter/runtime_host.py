@@ -162,6 +162,11 @@ class OperationalLoopHost:
             thread.join(join_timeout_seconds)
             if thread.is_alive():
                 raise TimeoutError("operational runtime thread did not stop")
+        # Flush only after the polling thread is fully stopped. This prevents a
+        # shutdown checkpoint from racing a final in-flight state mutation.
+        flush = getattr(self.loop, "flush_checkpoint", None)
+        if callable(flush):
+            flush()
 
 
 def host_from_environment(store: Any) -> OperationalLoopHost | None:
