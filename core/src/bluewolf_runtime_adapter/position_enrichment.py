@@ -14,6 +14,9 @@ from typing import Any, Mapping, Sequence
 
 from bluewolf_core.models import VehicleSample
 
+from .ingest_coordinator import IngestPollResult
+from .producer import LiveRuntimeProducer, RuntimePublicationResult
+
 
 def _parse_utc(value: object) -> datetime:
     if not isinstance(value, str) or not value:
@@ -113,4 +116,28 @@ def enrich_runtime_snapshot_positions(
     return MappingProxyType(enriched)
 
 
-__all__ = ["enrich_runtime_snapshot_positions"]
+class PositionEnrichedLiveRuntimeProducer(LiveRuntimeProducer):
+    """LiveRuntimeProducer that republishes the committed snapshot with map evidence.
+
+    The parent producer remains the source of grouping/scoring/event semantics.
+    This subclass only adds presentation coordinates from the same poll. The
+    final store value is the enriched snapshot.
+    """
+
+    def publish_poll(self, poll: IngestPollResult) -> RuntimePublicationResult:
+        result = super().publish_poll(poll)
+        if result.snapshot is None:
+            return result
+        enriched = enrich_runtime_snapshot_positions(result.snapshot, poll.samples)
+        self.store.publish(enriched)
+        return RuntimePublicationResult(
+            enriched,
+            result.published_group_ids,
+            result.skipped_groups,
+        )
+
+
+__all__ = [
+    "PositionEnrichedLiveRuntimeProducer",
+    "enrich_runtime_snapshot_positions",
+]
