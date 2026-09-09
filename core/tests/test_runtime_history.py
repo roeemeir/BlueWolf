@@ -38,6 +38,39 @@ class RuntimeHistoryStoreTests(unittest.TestCase):
         self.assertEqual(history[1]["status"], "replacement")
         self.assertEqual(store.get("1")["observedAt"], fourth["observedAt"])
 
+    def test_history_window_is_time_based_and_keeps_exact_boundary(self) -> None:
+        store = RuntimeSnapshotStore(history_limit=100, history_window_seconds=1800)
+        outside = _snapshot(observed_at=NOW - timedelta(seconds=1801))
+        boundary = _snapshot(observed_at=NOW - timedelta(seconds=1800))
+        middle = _snapshot(observed_at=NOW - timedelta(seconds=900))
+        latest = _snapshot(observed_at=NOW)
+
+        for snapshot in (middle, outside, boundary, latest):
+            store.publish(snapshot)
+
+        self.assertEqual(
+            [row["observedAt"] for row in store.history("1")],
+            [boundary["observedAt"], middle["observedAt"], latest["observedAt"]],
+        )
+
+    def test_late_correction_older_than_window_is_not_reintroduced(self) -> None:
+        store = RuntimeSnapshotStore(history_limit=100, history_window_seconds=1800)
+        latest = _snapshot(observed_at=NOW)
+        inside = _snapshot(observed_at=NOW - timedelta(seconds=1200))
+        store.publish(inside)
+        store.publish(latest)
+
+        too_old = _snapshot(observed_at=NOW - timedelta(seconds=1900))
+        too_old["status"] = "late correction outside live window"
+        store.publish(too_old)
+
+        history = store.history("1")
+        self.assertEqual(
+            [row["observedAt"] for row in history],
+            [inside["observedAt"], latest["observedAt"]],
+        )
+        self.assertEqual(store.get("1")["observedAt"], latest["observedAt"])
+
     def test_older_correction_does_not_replace_latest_snapshot(self) -> None:
         store = RuntimeSnapshotStore(history_limit=5)
         latest = _snapshot(observed_at=NOW)
@@ -49,6 +82,12 @@ class RuntimeHistoryStoreTests(unittest.TestCase):
         self.assertEqual(store.get("1")["observedAt"], latest["observedAt"])
         history = store.history("1")
         self.assertEqual([row["status"] for row in history], ["late correction", latest["status"]])
+
+    def test_history_hard_cap_is_validated(self) -> None:
+        with self.assertRaisesRegex(ValueError, "history_limit must be <= 5000"):
+            RuntimeSnapshotStore(history_limit=5001)
+        with self.assertRaisesRegex(ValueError, "history_window_seconds must be positive"):
+            RuntimeSnapshotStore(history_window_seconds=0)
 
 
 class RuntimeHistoryServiceTests(unittest.TestCase):
@@ -87,7 +126,7 @@ class RuntimeHistoryServiceTests(unittest.TestCase):
 
     def test_history_endpoint_rejects_invalid_limit(self) -> None:
         app = create_app(RuntimeSnapshotStore(), clock=lambda: NOW)
-        for value in ("0", "-1", "1001", "abc"):
+        for value in ("0", "-1", "5001", "abc"):
             status, _, payload = asyncio.run(
                 _request(app, "/v1/live-runtime/history", query=f"serverId=1&limit={value}")
             )
