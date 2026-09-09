@@ -9,6 +9,7 @@ from .influxdb2 import (
 )
 from .join import TemporalJoinConfig, TemporalJoinError, join_metric_points
 from .models import MetricName, RawMetricPoint
+from .polling import LivePollConfig, PollWindow, ServerPollCursor
 from .window_reader import InfluxDB2WindowReader
 
 __all__ = [
@@ -18,8 +19,11 @@ __all__ = [
     "InfluxDB2MetricMapping",
     "InfluxDB2StreamSchema",
     "InfluxDB2WindowReader",
+    "LivePollConfig",
     "MetricName",
+    "PollWindow",
     "RawMetricPoint",
+    "ServerPollCursor",
     "TemporalJoinConfig",
     "TemporalJoinError",
     "join_metric_points",
