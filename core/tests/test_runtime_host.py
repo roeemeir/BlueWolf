@@ -12,7 +12,10 @@ from datetime import UTC, datetime
 from unittest.mock import patch
 
 from bluewolf_runtime_adapter.operational_pipeline import OperationalRuntimeLoop, OperationalTick
-from bluewolf_runtime_adapter.operational_state import CheckpointedOperationalRuntimeLoop
+from bluewolf_runtime_adapter.operational_state import (
+    AtomicOperationalStateStore,
+    CheckpointedOperationalRuntimeLoop,
+)
 from bluewolf_runtime_adapter.runtime_host import (
     OperationalLoopHost,
     host_from_environment,
@@ -165,6 +168,35 @@ class RuntimeHostTests(unittest.TestCase):
                 clear=True,
             ):
                 with self.assertRaisesRegex(ValueError, "requires BLUEWOLF_OPERATIONAL_CONFIG"):
+                    host_from_environment(object())
+
+    def test_environment_state_path_cannot_override_different_json_persistence_path(self) -> None:
+        module = types.ModuleType("bluewolf_test_checkpoint_conflict")
+        sys.modules[module.__name__] = module
+        self.addCleanup(sys.modules.pop, module.__name__, None)
+
+        with tempfile.TemporaryDirectory() as directory:
+            configured = Path(directory) / "configured-state.json"
+            requested = Path(directory) / "requested-state.json"
+
+            def make_loop(store):
+                del store
+                return CheckpointedOperationalRuntimeLoop(
+                    (),
+                    state_store=AtomicOperationalStateStore(configured),
+                    config_fingerprint="f" * 64,
+                )
+
+            module.make_loop = make_loop
+            with patch.dict(
+                os.environ,
+                {
+                    "BLUEWOLF_OPERATIONAL_FACTORY": f"{module.__name__}:make_loop",
+                    "BLUEWOLF_OPERATIONAL_STATE_PATH": str(requested),
+                },
+                clear=True,
+            ):
+                with self.assertRaisesRegex(ValueError, "conflicts with persistence.path"):
                     host_from_environment(object())
 
 
