@@ -1,0 +1,63 @@
+"use client";
+
+import { useState } from "react";
+import { Database, Save } from "lucide-react";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import type { WorkspaceState } from "@/lib/bluewolf";
+import { useWorkspace } from "./app-context";
+
+export type InfluxPhysicalIdentity = {
+  serverColumn: string;
+  vehicleNumberColumn: string;
+};
+
+type ExtendedInflux = WorkspaceState["influx"] & Partial<InfluxPhysicalIdentity>;
+
+export const DEFAULT_INFLUX_IDENTITY: InfluxPhysicalIdentity = {
+  serverColumn: "server",
+  vehicleNumberColumn: "vehicle_number",
+};
+
+function currentIdentity(state: WorkspaceState): InfluxPhysicalIdentity {
+  const influx = state.influx as ExtendedInflux;
+  return {
+    serverColumn: influx.serverColumn?.trim() || DEFAULT_INFLUX_IDENTITY.serverColumn,
+    vehicleNumberColumn: influx.vehicleNumberColumn?.trim() || DEFAULT_INFLUX_IDENTITY.vehicleNumberColumn,
+  };
+}
+
+export function InfluxIdentityPanel() {
+  const { state, save } = useWorkspace();
+  const initial = currentIdentity(state);
+  const [serverColumn, setServerColumn] = useState(initial.serverColumn);
+  const [vehicleNumberColumn, setVehicleNumberColumn] = useState(initial.vehicleNumberColumn);
+
+  const persist = async () => {
+    if (!serverColumn.trim() || !vehicleNumberColumn.trim()) {
+      toast.error("שני המפתחות הפיזיים נדרשים");
+      return;
+    }
+    const influx = {
+      ...state.influx,
+      serverColumn: serverColumn.trim(),
+      vehicleNumberColumn: vehicleNumberColumn.trim(),
+    } as ExtendedInflux;
+    await save({ ...state, influx } as WorkspaceState, "influx", "physical-identity", `${serverColumn.trim()} / ${vehicleNumberColumn.trim()}`);
+    toast.success("מפתחות הזהות הפיזיים נשמרו");
+  };
+
+  return <section className="influx-identity-panel glass-panel">
+    <div><Database /><div><p className="eyebrow">Influx physical schema</p><h3>מפתחות Server ו־Vehicle Number</h3><p>שמות ה־tag/column הם חלק מהקונפיגורציה. `_time` נשאר מקור הזמן הקנוני; אין hard-code לשמות פיזיים.</p></div></div>
+    <div className="influx-identity-fields">
+      <label><span>Server tag / column</span><input value={serverColumn} onChange={(event) => setServerColumn(event.target.value)} placeholder="למשל server" /></label>
+      <label><span>Vehicle Number tag / column</span><input value={vehicleNumberColumn} onChange={(event) => setVehicleNumberColumn(event.target.value)} placeholder="למשל vehicle_number" /></label>
+      <Button onClick={persist}><Save />שמור Schema</Button>
+    </div>
+  </section>;
+}
+
+export function getInfluxPhysicalIdentity(state: WorkspaceState) {
+  return currentIdentity(state);
+}
