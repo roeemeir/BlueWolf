@@ -1,0 +1,311 @@
+"""Dependency-light ASGI service for the Blue Wolf live runtime contract.
+
+The service is intentionally application-facing and therefore lives outside
+``bluewolf_core``.  A producer (the future Influx/runtime coordinator) publishes
+validated ``bluewolf.live-runtime.v1`` snapshots into ``RuntimeSnapshotStore``;
+this module exposes those snapshots through ``GET /v1/live-runtime`` for the
+Web proxy.
+
+Freshness is enforced at the transport boundary:
+
+* a recent snapshot is returned as healthy;
+* an older-but-usable snapshot is returned with ``source.health = stale``;
+* an expired snapshot returns HTTP 503 and is never presented as current data.
+
+The store is process-local by design for the first operational envelope.  Run a
+single service worker until the persistence/recomputation layer is introduced.
+"""
+from __future__ import annotations
+
+from copy import deepcopy
+from datetime import UTC, datetime
+import hmac
+import json
+import os
+import re
+from threading import RLock
+from typing import Any, Callable, Mapping
+from urllib.parse import parse_qs
+
+from .contract import LIVE_RUNTIME_SCHEMA_VERSION
+
+_SERVER_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _parse_utc(value: object) -> datetime:
+    if not isinstance(value, str) or not value:
+        raise ValueError("runtime observedAt must be a non-empty string")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("runtime observedAt is not ISO-8601") from exc
+    if parsed.tzinfo is None:
+        raise ValueError("runtime observedAt must be timezone-aware")
+    return parsed.astimezone(UTC)
+
+
+def _positive_seconds(name: str, value: float) -> float:
+    numeric = float(value)
+    if numeric <= 0.0:
+        raise ValueError(f"{name} must be positive")
+    return numeric
+
+
+def _validate_snapshot(snapshot: Mapping[str, Any]) -> tuple[str, datetime]:
+    if snapshot.get("schemaVersion") != LIVE_RUNTIME_SCHEMA_VERSION:
+        raise ValueError("unsupported live runtime schema")
+    server_id = snapshot.get("serverId")
+    if not isinstance(server_id, str) or not _SERVER_PATTERN.fullmatch(server_id):
+        raise ValueError("runtime snapshot has an invalid serverId")
+    observed_at = _parse_utc(snapshot.get("observedAt"))
+    source = snapshot.get("source")
+    if not isinstance(source, Mapping) or source.get("kind") != "python-core":
+        raise ValueError("runtime source must be python-core")
+    groups = snapshot.get("groups")
+    if not isinstance(groups, Mapping):
+        raise ValueError("runtime groups must be an object")
+    return server_id, observed_at
+
+
+class RuntimeSnapshotStore:
+    """Thread-safe process-local latest-snapshot registry keyed by server id."""
+
+    def __init__(self) -> None:
+        self._lock = RLock()
+        self._snapshots: dict[str, dict[str, Any]] = {}
+
+    def publish(self, snapshot: Mapping[str, Any]) -> None:
+        server_id, _ = _validate_snapshot(snapshot)
+        frozen = deepcopy(dict(snapshot))
+        with self._lock:
+            self._snapshots[server_id] = frozen
+
+    def get(self, server_id: str) -> dict[str, Any] | None:
+        if not _SERVER_PATTERN.fullmatch(server_id):
+            raise ValueError("invalid serverId")
+        with self._lock:
+            snapshot = self._snapshots.get(server_id)
+            return None if snapshot is None else deepcopy(snapshot)
+
+    def clear(self, server_id: str | None = None) -> None:
+        with self._lock:
+            if server_id is None:
+                self._snapshots.clear()
+            else:
+                self._snapshots.pop(server_id, None)
+
+
+def _json_bytes(payload: Mapping[str, Any]) -> bytes:
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+class BlueWolfRuntimeASGI:
+    """Minimal ASGI transport around ``RuntimeSnapshotStore``."""
+
+    def __init__(
+        self,
+        store: RuntimeSnapshotStore,
+        *,
+        token: str | None = None,
+        stale_after_seconds: float = 15.0,
+        expire_after_seconds: float = 60.0,
+        clock: Callable[[], datetime] = _utc_now,
+    ) -> None:
+        self.store = store
+        self.token = token.strip() if token else None
+        self.stale_after_seconds = _positive_seconds(
+            "stale_after_seconds", stale_after_seconds
+        )
+        self.expire_after_seconds = _positive_seconds(
+            "expire_after_seconds", expire_after_seconds
+        )
+        if self.expire_after_seconds <= self.stale_after_seconds:
+            raise ValueError("expire_after_seconds must exceed stale_after_seconds")
+        self.clock = clock
+
+    def _authorized(self, headers: Mapping[bytes, bytes]) -> bool:
+        if self.token is None:
+            return True
+        raw = headers.get(b"authorization", b"").decode("utf-8", errors="ignore")
+        expected = f"Bearer {self.token}"
+        return hmac.compare_digest(raw, expected)
+
+    async def _send_json(
+        self,
+        send,
+        status: int,
+        payload: Mapping[str, Any],
+        *,
+        runtime_health: str | None = None,
+    ) -> None:
+        body = _json_bytes(payload)
+        headers = [
+            (b"content-type", b"application/json; charset=utf-8"),
+            (b"cache-control", b"no-store"),
+            (b"content-length", str(len(body)).encode("ascii")),
+        ]
+        if runtime_health is not None:
+            headers.append((b"x-bluewolf-runtime-health", runtime_health.encode("ascii")))
+        await send({"type": "http.response.start", "status": status, "headers": headers})
+        await send({"type": "http.response.body", "body": body})
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope.get("type") != "http":
+            return
+        method = str(scope.get("method", "GET")).upper()
+        path = str(scope.get("path", ""))
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
+
+        if path == "/healthz":
+            if method != "GET":
+                await self._send_json(send, 405, {"error": "method not allowed"})
+                return
+            await self._send_json(
+                send,
+                200,
+                {
+                    "ok": True,
+                    "service": "bluewolf-runtime",
+                    "schemaVersion": LIVE_RUNTIME_SCHEMA_VERSION,
+                },
+            )
+            return
+
+        if path != "/v1/live-runtime":
+            await self._send_json(send, 404, {"error": "not found"})
+            return
+        if method != "GET":
+            await self._send_json(send, 405, {"error": "method not allowed"})
+            return
+        if not self._authorized(headers):
+            await self._send_json(send, 401, {"error": "unauthorized"})
+            return
+
+        query = parse_qs(
+            bytes(scope.get("query_string", b"")).decode("utf-8", errors="strict"),
+            keep_blank_values=True,
+        )
+        values = query.get("serverId", [])
+        server_id = values[0] if len(values) == 1 else ""
+        if not _SERVER_PATTERN.fullmatch(server_id):
+            await self._send_json(send, 400, {"error": "valid serverId is required"})
+            return
+
+        snapshot = self.store.get(server_id)
+        if snapshot is None:
+            await self._send_json(
+                send,
+                404,
+                {
+                    "error": "runtime snapshot is not available for this server",
+                    "schemaVersion": LIVE_RUNTIME_SCHEMA_VERSION,
+                    "serverId": server_id,
+                },
+                runtime_health="unavailable",
+            )
+            return
+
+        observed_at = _parse_utc(snapshot["observedAt"])
+        now = self.clock()
+        if now.tzinfo is None:
+            raise ValueError("runtime service clock must be timezone-aware")
+        age_seconds = max(0.0, (now.astimezone(UTC) - observed_at).total_seconds())
+
+        if age_seconds > self.expire_after_seconds:
+            await self._send_json(
+                send,
+                503,
+                {
+                    "error": "runtime snapshot expired",
+                    "schemaVersion": LIVE_RUNTIME_SCHEMA_VERSION,
+                    "serverId": server_id,
+                    "observedAt": snapshot["observedAt"],
+                    "ageSeconds": age_seconds,
+                },
+                runtime_health="unavailable",
+            )
+            return
+
+        source = snapshot.setdefault("source", {})
+        existing_health = source.get("health")
+        health = "stale" if age_seconds > self.stale_after_seconds else "healthy"
+        if existing_health == "unavailable":
+            health = "unavailable"
+        elif existing_health == "stale":
+            health = "stale"
+        source["health"] = health
+        source["ageSeconds"] = age_seconds
+        if health == "stale":
+            detail = str(source.get("detail") or "Python Core runtime")
+            source["detail"] = f"{detail} · stale snapshot"
+
+        await self._send_json(send, 200, snapshot, runtime_health=health)
+
+
+def create_app(
+    store: RuntimeSnapshotStore | None = None,
+    *,
+    token: str | None = None,
+    stale_after_seconds: float | None = None,
+    expire_after_seconds: float | None = None,
+    clock: Callable[[], datetime] = _utc_now,
+) -> BlueWolfRuntimeASGI:
+    """Create the runtime ASGI app from explicit args or environment defaults."""
+
+    stale = (
+        float(os.environ.get("BLUEWOLF_RUNTIME_STALE_SECONDS", "15"))
+        if stale_after_seconds is None
+        else stale_after_seconds
+    )
+    expire = (
+        float(os.environ.get("BLUEWOLF_RUNTIME_EXPIRE_SECONDS", "60"))
+        if expire_after_seconds is None
+        else expire_after_seconds
+    )
+    resolved_token = (
+        os.environ.get("BLUEWOLF_CORE_API_TOKEN") if token is None else token
+    )
+    return BlueWolfRuntimeASGI(
+        store or RuntimeSnapshotStore(),
+        token=resolved_token,
+        stale_after_seconds=stale,
+        expire_after_seconds=expire,
+        clock=clock,
+    )
+
+
+runtime_store = RuntimeSnapshotStore()
+app = create_app(runtime_store)
+
+
+def main() -> None:
+    """Run the ASGI service with uvicorn when the optional service extra exists."""
+
+    try:
+        import uvicorn
+    except ImportError as exc:  # pragma: no cover - deployment-only guard.
+        raise SystemExit(
+            "Install the runtime service extra: pip install -e '.[service]'"
+        ) from exc
+
+    host = os.environ.get("BLUEWOLF_RUNTIME_HOST", "0.0.0.0")
+    port = int(os.environ.get("BLUEWOLF_RUNTIME_PORT", "8080"))
+    uvicorn.run(app, host=host, port=port, workers=1)
+
+
+__all__ = [
+    "BlueWolfRuntimeASGI",
+    "RuntimeSnapshotStore",
+    "app",
+    "create_app",
+    "main",
+    "runtime_store",
+]
