@@ -346,11 +346,12 @@ export function applyLiveRuntimeSnapshot(snapshot: LiveRuntimeSnapshot) {
   );
 }
 
-export function getRuntimeGroups(serverId: string): DemoGroup[] {
+export function getRuntimeGroups(serverId: string): LiveRuntimeGroup[] {
   const runtime = RUNTIME_GROUP_LISTS[serverId];
   if (runtime && runtime.length > 0) return structuredClone(runtime);
   const scenario = SERVER_SCENARIOS[serverId] ?? baselineScenario(serverId);
-  return Object.values(scenario.groups).map((group) => structuredClone(group));
+  const observedAt = new Date().toISOString();
+  return Object.values(scenario.groups).map((group) => asRuntimeGroup(group, observedAt));
 }
 
 export function restoreSimulationScenario(serverId: string) {
