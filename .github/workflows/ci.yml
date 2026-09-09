@@ -92,7 +92,7 @@ jobs:
           - shard: runtime-producer
             tests: test_runtime_producer test_position_enrichment
           - shard: operational-pipeline
-            tests: test_operational_pipeline test_runtime_host test_environment_factory test_operational_history_state
+            tests: test_operational_pipeline test_runtime_host test_environment_factory test_operational_history_state test_checkpoint_cadence
           - shard: influxdb2-adapter
             tests: test_influxdb2_adapter test_influx_window_reader
           - shard: live-polling
