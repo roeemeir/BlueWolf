@@ -9,6 +9,7 @@
 3. `AUTOMATIC_ROUTE_DETECTION_V2_HE.md` — תכן ומימוש גילוי אוטומטי.
 4. `DOUBLE_HIPPODROME_SCORING_SEMANTICS_HE.md` — active-lobe/role switching.
 5. `V1_SPEC_HE.md` — מפרט המוצר הרחב.
+6. `EVENT_ALERT_LIFECYCLE_HE.md` — אירועים, low-score alerts והמלצות תבנית.
 
 אם קיים חוסר או סתירה סמנטית, יומן המחקר אינו רשאי להמציא דרישה; עוצרים ומעדכנים את מסמך האפיון המתאים לפני שינוי קוד.
 
@@ -271,6 +272,50 @@ Shard ייעודי `double-lobe-phase`, נוסף לכל מטריצת ה־CI.
 
 ### Open questions
 אין חסם סמנטי ל־active-lobe. השלב הבא הוא Template Selection lifecycle וחיבור scoring end-to-end ל־CoreSession.
+
+---
+
+## מחקר 12 — Event/Alert + Template Recommendation lifecycle
+
+### Problem / Observation
+לאחר השלמת template selection ו־live SO scoring עדיין חסרה שכבה stateful שמתרגמת score רציף להתראות, שומרת event boundaries ומנהלת recommendation בלי להשפיע על route/group membership. ללא state מפורש קיימת גם סכנה ש־restart יאפס streak של alert/recommendation וייצר התנהגות שונה מריצה רציפה.
+
+### Hypothesis
+יש להפריד לשלושה state machines: event context, low-score alert hysteresis ו־template recommendation. כל state machine צריך להיות checkpointable, ו־score לעולם לא ישנה grouping או active template בעצמו.
+
+### Spec decision
+`V1_SPEC_HE.md` סעיפים 7, 8 ו־11 ו־`TEMPLATE_SELECTION_LIFECYCLE_HE.md` קובעים:
+
+- low-score alert לאחר 10 שניות מתחת ל־50;
+- recovery לאחר 20 שניות ב־60 ומעלה;
+- recommendation רק לאחר יתרון 30 נקודות ל־120 שניות;
+- סגירת recommendation לאחר יתרון קטן מ־15 ל־30 שניות;
+- rejection נשמר עד סוף האירוע;
+- event finalization לאחר 120 שניות;
+- restart אינו פותח event חדש אם ה־checkpoint והנתונים מוכיחים רציפות.
+
+נוסף `EVENT_ALERT_LIFECYCLE_HE.md` כדי לקבע את גבולות האחריות וה־state המפורש.
+
+### Experiment / Simulation
+נוספו 11 regressions דטרמיניסטיים: פתיחת אירוע, alert opening/recovery, score חסר באמצע streak, recommendation opening/close, החלפת best alternative, rejection event-scoped, context change, delayed finalization, checkpoint באמצע שני streaks וסיום event בזמן alert פעיל.
+
+### Result
+ה־Event/Alert engine אינו משנה template selection או group membership. `change_time_utc` של alert מייצג זמן פליטה, בעוד onset/recovery evidence נשמר בפרטים. Event שנסתיים נשמר 120 שניות לפני `EVENT_CLOSED` סופי, ו־checkpoint roundtrip משמר את חלונות הראיות הפעילים.
+
+### Code change
+נוסף `event_alert.py` עם `EventAlertEngine`, `EventObservation`, `EventAlertConfig`, snapshot/export/restore. ה־public API הורחב, ונוסף shard CI ייעודי `event-alert`.
+
+### Regression
+`test_event_alert` — 11 תרחישי lifecycle קבועים.
+
+### Performance impact
+ה־state הוא O(number of active groups + pending-finalization events) ואינו מבצע fitting או route geometry. אין benchmark פורמלי נפרד; ה־CI המלא נשאר ירוק.
+
+### Validation
+`spec-conformant-vector-core @ f9442f0716c37b5cf6f96bc778bec745eaad7eef` — `Blue Wolf CI` run `652`, conclusion `success`.
+
+### Open questions
+השלב הבא הוא runtime composition: יצירת `context_key` מה־Route/Group/Template versions, scoring של החלופות מאותו snapshot בלי עדכון כפול של temporal metrics, ולאחר מכן חיבור acknowledgement/mute/late-data persistence למעטפת המוצר.
 
 ---
 
