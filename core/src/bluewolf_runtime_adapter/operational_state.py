@@ -265,6 +265,26 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def _configured_checkpoint_interval(
+    pipelines: tuple[OperationalServerPipeline, ...],
+) -> float:
+    values: list[float] = []
+    for pipeline in pipelines:
+        coordinator = getattr(pipeline, "coordinator", None)
+        session = getattr(coordinator, "session", None)
+        config = getattr(session, "config", None)
+        timing = getattr(config, "timing", None)
+        raw = getattr(timing, "checkpoint_seconds", None)
+        if raw is None:
+            continue
+        value = float(raw)
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError("Core timing checkpoint_seconds must be finite and positive")
+        values.append(value)
+    # A shared state file must satisfy the most frequent configured requirement.
+    return min(values) if values else DEFAULT_CHECKPOINT_INTERVAL_SECONDS
+
+
 class CheckpointedOperationalRuntimeLoop(OperationalRuntimeLoop):
     """Operational loop with bounded checkpoint I/O and explicit shutdown flush."""
 
@@ -274,12 +294,16 @@ class CheckpointedOperationalRuntimeLoop(OperationalRuntimeLoop):
         *,
         state_store: AtomicOperationalStateStore,
         config_fingerprint: str,
-        checkpoint_interval_seconds: float = DEFAULT_CHECKPOINT_INTERVAL_SECONDS,
+        checkpoint_interval_seconds: float | None = None,
     ) -> None:
         super().__init__(pipelines)
         if not config_fingerprint:
             raise ValueError("config_fingerprint is required")
-        interval = float(checkpoint_interval_seconds)
+        interval = (
+            _configured_checkpoint_interval(self.pipelines)
+            if checkpoint_interval_seconds is None
+            else float(checkpoint_interval_seconds)
+        )
         if not math.isfinite(interval) or interval <= 0.0:
             raise ValueError("checkpoint_interval_seconds must be finite and positive")
         self.state_store = state_store
