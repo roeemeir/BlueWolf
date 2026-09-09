@@ -25,7 +25,7 @@ export type LiveRuntimeRecommendation = {
   activeTemplateId: string;
   dimension: "sync" | "total";
   improvementPoints: number;
-  sustainedSeconds: number;
+  sustainedSeconds?: number;
   ready: boolean;
 };
 
@@ -75,8 +75,10 @@ function asRuntimeVehicle(vehicle: DemoVehicle, scoreValid = true): LiveRuntimeV
 }
 
 function asRuntimeGroup(group: DemoGroup, observedAt: string, scoreValid = true): LiveRuntimeGroup {
+  const alert = group.alert ? { id: `${group.id}:simulation-alert`, ...group.alert } satisfies LiveRuntimeAlert : undefined;
   return {
     ...group,
+    alert,
     members: group.members.map((member) => asRuntimeVehicle(member, scoreValid)),
     scoreValid,
     observedAt,
@@ -189,13 +191,12 @@ function normalizeGroup(value: unknown, key: DemoGroupKey, observedAt: string): 
     && typeof recommendationValue.activeTemplateId === "string"
     && (recommendationValue.dimension === "sync" || recommendationValue.dimension === "total")
     && typeof recommendationValue.improvementPoints === "number"
-    && typeof recommendationValue.sustainedSeconds === "number"
     ? {
         templateId: recommendationValue.templateId,
         activeTemplateId: recommendationValue.activeTemplateId,
         dimension: recommendationValue.dimension,
         improvementPoints: recommendationValue.improvementPoints,
-        sustainedSeconds: recommendationValue.sustainedSeconds,
+        sustainedSeconds: typeof recommendationValue.sustainedSeconds === "number" ? recommendationValue.sustainedSeconds : undefined,
         ready: recommendationValue.ready === true,
       } satisfies LiveRuntimeRecommendation
     : undefined;
