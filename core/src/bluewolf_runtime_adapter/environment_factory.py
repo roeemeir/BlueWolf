@@ -11,6 +11,7 @@ operator total score fail-closed until a product smoothing policy is approved.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import hashlib
 import json
 import math
 import os
@@ -42,6 +43,7 @@ from bluewolf_ingest import (
 
 from .ingest_coordinator import LiveCoreIngestCoordinator
 from .operational_pipeline import OperationalRuntimeLoop, OperationalServerPipeline
+from .operational_state import AtomicOperationalStateStore, CheckpointedOperationalRuntimeLoop
 from .position_enrichment import PositionEnrichedLiveRuntimeProducer
 from .producer import (
     DisplayedScoreValue,
@@ -99,6 +101,20 @@ def _optional_text(value: object, name: str) -> str | None:
     if value is None:
         return None
     return _text(value, name)
+
+
+def _config_fingerprint(config: Mapping[str, Any]) -> str:
+    try:
+        canonical = json.dumps(
+            config,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("operational config must be finite JSON data") from exc
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _parse_template(raw: object, index: int) -> SOTemplateBankEntry:
@@ -475,7 +491,17 @@ def build_operational_runtime(config: Mapping[str, Any], store: Any) -> Operatio
         )
         pipelines.append(OperationalServerPipeline(coordinator, producer))
 
-    return OperationalRuntimeLoop(tuple(pipelines))
+    frozen_pipelines = tuple(pipelines)
+    persistence_raw = config.get("persistence")
+    if persistence_raw is None:
+        return OperationalRuntimeLoop(frozen_pipelines)
+    persistence = _object(persistence_raw, "persistence")
+    state_path = _text(persistence.get("path"), "persistence.path")
+    return CheckpointedOperationalRuntimeLoop(
+        frozen_pipelines,
+        state_store=AtomicOperationalStateStore(state_path),
+        config_fingerprint=_config_fingerprint(config),
+    )
 
 
 def load_operational_config(path: str | os.PathLike[str]) -> Mapping[str, Any]:
