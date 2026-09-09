@@ -1,7 +1,7 @@
 """Lifecycle host for the operational polling loop beside the ASGI service.
 
 The current runtime store is process-local, so ingestion/publication and the
-HTTP transport must share one process.  This module starts one background loop
+HTTP transport must share one process. This module starts one background loop
 thread and provides an explicit deployment bootstrap hook without putting
 Influx or product configuration into ``bluewolf_core``.
 """
@@ -15,6 +15,12 @@ from threading import Event, Lock, Thread
 from typing import Any, Callable, Protocol
 
 from .operational_pipeline import OperationalRuntimeLoop, OperationalTick
+
+
+_BUILTIN_CONFIG_FACTORY = (
+    "bluewolf_runtime_adapter.environment_factory:"
+    "build_operational_runtime_from_environment"
+)
 
 
 class OperationalLoopFactory(Protocol):
@@ -128,9 +134,18 @@ class OperationalLoopHost:
 
 
 def host_from_environment(store: Any) -> OperationalLoopHost | None:
-    """Create the optional process-local operational loop from environment."""
+    """Create the optional process-local operational loop from environment.
+
+    ``BLUEWOLF_OPERATIONAL_FACTORY`` may point to a custom ``module:function``.
+    When it is absent but ``BLUEWOLF_OPERATIONAL_CONFIG`` is set, the built-in
+    JSON factory is selected. With neither variable, the service remains
+    transport-only and no polling thread is created.
+    """
 
     spec = os.environ.get("BLUEWOLF_OPERATIONAL_FACTORY", "").strip()
+    config_path = os.environ.get("BLUEWOLF_OPERATIONAL_CONFIG", "").strip()
+    if not spec and config_path:
+        spec = _BUILTIN_CONFIG_FACTORY
     if not spec:
         return None
     factory = load_operational_loop_factory(spec)
