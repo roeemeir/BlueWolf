@@ -4,13 +4,14 @@ import asyncio
 from datetime import timedelta
 import unittest
 
+from bluewolf_runtime_adapter.history_contract import LIVE_RUNTIME_HISTORY_SCHEMA_VERSION
 from bluewolf_runtime_adapter.service import RuntimeSnapshotStore, create_app
 
 from test_runtime_service import NOW, _request, _snapshot
 
 
 class RuntimeHistoryStoreTests(unittest.TestCase):
-    def test_history_is_bounded_sorted_and_same_timestamp_replaces(self) -> None:
+    def test_history_is_compact_bounded_sorted_and_same_timestamp_replaces(self) -> None:
         store = RuntimeSnapshotStore(history_limit=3)
         first = _snapshot(observed_at=NOW - timedelta(seconds=15))
         second = _snapshot(observed_at=NOW - timedelta(seconds=10))
@@ -21,7 +22,7 @@ class RuntimeHistoryStoreTests(unittest.TestCase):
         store.publish(first)
         store.publish(third)
         replacement = _snapshot(observed_at=NOW - timedelta(seconds=5))
-        replacement["status"] = "replacement"
+        replacement["groups"]["so"]["total"] = 75.0
         store.publish(replacement)
         store.publish(fourth)
 
@@ -35,7 +36,11 @@ class RuntimeHistoryStoreTests(unittest.TestCase):
                 fourth["observedAt"],
             ],
         )
-        self.assertEqual(history[1]["status"], "replacement")
+        self.assertEqual(history[1]["groups"][0]["total"], 75.0)
+        self.assertEqual(history[0]["schemaVersion"], LIVE_RUNTIME_HISTORY_SCHEMA_VERSION)
+        self.assertNotIn("members", history[0]["groups"][0])
+        self.assertNotIn("arena", history[0])
+        self.assertNotIn("status", history[0])
         self.assertEqual(store.get("1")["observedAt"], fourth["observedAt"])
 
     def test_history_window_is_time_based_and_keeps_exact_boundary(self) -> None:
@@ -61,7 +66,7 @@ class RuntimeHistoryStoreTests(unittest.TestCase):
         store.publish(latest)
 
         too_old = _snapshot(observed_at=NOW - timedelta(seconds=1900))
-        too_old["status"] = "late correction outside live window"
+        too_old["groups"]["so"]["total"] = 61.0
         store.publish(too_old)
 
         history = store.history("1")
@@ -76,12 +81,30 @@ class RuntimeHistoryStoreTests(unittest.TestCase):
         latest = _snapshot(observed_at=NOW)
         store.publish(latest)
         older = _snapshot(observed_at=NOW - timedelta(seconds=30))
-        older["status"] = "late correction"
+        older["groups"]["so"]["total"] = 63.0
         store.publish(older)
 
         self.assertEqual(store.get("1")["observedAt"], latest["observedAt"])
         history = store.history("1")
-        self.assertEqual([row["status"] for row in history], ["late correction", latest["status"]])
+        self.assertEqual(
+            [row["groups"][0]["total"] for row in history],
+            [63.0, 80.0],
+        )
+
+    def test_restore_history_migrates_legacy_full_snapshots(self) -> None:
+        store = RuntimeSnapshotStore(history_limit=5)
+        legacy = [
+            _snapshot(observed_at=NOW - timedelta(seconds=5)),
+            _snapshot(observed_at=NOW),
+        ]
+        legacy[0]["groups"]["so"]["total"] = 71.0
+        store.restore_history("1", legacy)
+
+        history = store.history("1")
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[0]["schemaVersion"], LIVE_RUNTIME_HISTORY_SCHEMA_VERSION)
+        self.assertEqual(history[0]["groups"][0]["total"], 71.0)
+        self.assertIsNone(store.get("1"))
 
     def test_history_hard_cap_is_validated(self) -> None:
         with self.assertRaisesRegex(ValueError, "history_limit must be <= 5000"):
@@ -112,9 +135,11 @@ class RuntimeHistoryServiceTests(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertEqual(headers["cache-control"], "no-store")
+        self.assertEqual(payload["schemaVersion"], LIVE_RUNTIME_HISTORY_SCHEMA_VERSION)
         self.assertEqual(payload["serverId"], "1")
-        self.assertEqual(len(payload["snapshots"]), 2)
-        self.assertEqual(payload["snapshots"][-1]["observedAt"], _snapshot()["observedAt"])
+        self.assertEqual(len(payload["points"]), 2)
+        self.assertEqual(payload["points"][-1]["observedAt"], _snapshot()["observedAt"])
+        self.assertNotIn("members", payload["points"][-1]["groups"][0])
 
     def test_history_endpoint_returns_empty_list_before_first_publication(self) -> None:
         app = create_app(RuntimeSnapshotStore(), clock=lambda: NOW)
@@ -122,7 +147,8 @@ class RuntimeHistoryServiceTests(unittest.TestCase):
             _request(app, "/v1/live-runtime/history", query="serverId=1")
         )
         self.assertEqual(status, 200)
-        self.assertEqual(payload["snapshots"], [])
+        self.assertEqual(payload["schemaVersion"], LIVE_RUNTIME_HISTORY_SCHEMA_VERSION)
+        self.assertEqual(payload["points"], [])
 
     def test_history_endpoint_rejects_invalid_limit(self) -> None:
         app = create_app(RuntimeSnapshotStore(), clock=lambda: NOW)
