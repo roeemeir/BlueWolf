@@ -62,9 +62,11 @@ export type LiveRuntimeSnapshot = {
     detail?: string;
   };
   groups: Partial<Record<DemoGroupKey, LiveRuntimeGroup>>;
+  groupList?: LiveRuntimeGroup[];
 };
 
 const SIMULATION_BASELINES: Record<string, ServerScenario> = structuredClone(SERVER_SCENARIOS);
+const RUNTIME_GROUP_LISTS: Record<string, LiveRuntimeGroup[] | undefined> = {};
 
 function baselineScenario(serverId: string): ServerScenario {
   return structuredClone(SIMULATION_BASELINES[serverId] ?? SIMULATION_BASELINES["1"]);
@@ -109,6 +111,8 @@ function unavailableGroup(group: DemoGroup, observedAt: string, reason: string):
 
 export function simulationRuntimeSnapshot(serverId: string, observedAt = new Date().toISOString()): LiveRuntimeSnapshot {
   const scenario = baselineScenario(serverId);
+  const si = asRuntimeGroup(scenario.groups.si, observedAt);
+  const so = asRuntimeGroup(scenario.groups.so, observedAt);
   return {
     schemaVersion: LIVE_RUNTIME_SCHEMA_VERSION,
     serverId,
@@ -116,15 +120,15 @@ export function simulationRuntimeSnapshot(serverId: string, observedAt = new Dat
     status: scenario.status,
     observedAt,
     source: { kind: "simulation", health: "healthy", detail: "deterministic UI simulation" },
-    groups: {
-      si: asRuntimeGroup(scenario.groups.si, observedAt),
-      so: asRuntimeGroup(scenario.groups.so, observedAt),
-    },
+    groups: { si, so },
+    groupList: [si, so],
   };
 }
 
 export function unavailableRuntimeSnapshot(serverId: string, detail: string, observedAt = new Date().toISOString()): LiveRuntimeSnapshot {
   const scenario = baselineScenario(serverId);
+  const si = unavailableGroup(scenario.groups.si, observedAt, "Python Core לא סיפק snapshot תקף לקבוצת SI.");
+  const so = unavailableGroup(scenario.groups.so, observedAt, "Python Core לא סיפק snapshot תקף לקבוצת SO.");
   return {
     schemaVersion: LIVE_RUNTIME_SCHEMA_VERSION,
     serverId,
@@ -132,10 +136,8 @@ export function unavailableRuntimeSnapshot(serverId: string, detail: string, obs
     status: "CORE RUNTIME UNAVAILABLE",
     observedAt,
     source: { kind: "python-core", health: "unavailable", detail },
-    groups: {
-      si: unavailableGroup(scenario.groups.si, observedAt, "Python Core לא סיפק snapshot תקף לקבוצת SI."),
-      so: unavailableGroup(scenario.groups.so, observedAt, "Python Core לא סיפק snapshot תקף לקבוצת SO."),
-    },
+    groups: { si, so },
+    groupList: [si, so],
   };
 }
 
@@ -145,6 +147,15 @@ function isFiniteScore(value: unknown) {
 
 function isGroupKey(value: unknown): value is DemoGroupKey {
   return value === "si" || value === "so";
+}
+
+function groupKeyFromValue(value: unknown): DemoGroupKey | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  if (isGroupKey(row.key)) return row.key;
+  if (row.family === "SI") return "si";
+  if (row.family === "SO") return "so";
+  return null;
 }
 
 function normalizeVehicle(value: unknown): LiveRuntimeVehicle | null {
@@ -235,6 +246,23 @@ function normalizeGroup(value: unknown, key: DemoGroupKey, observedAt: string): 
   };
 }
 
+function normalizeGroupList(value: unknown, observedAt: string): LiveRuntimeGroup[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error("runtime groupList must be an array");
+  const output: LiveRuntimeGroup[] = [];
+  const ids = new Set<string>();
+  for (const item of value) {
+    const key = groupKeyFromValue(item);
+    if (key === null) throw new Error("runtime groupList item has no valid family/key");
+    const normalized = normalizeGroup(item, key, observedAt);
+    if (!normalized) throw new Error("invalid runtime groupList item");
+    if (ids.has(normalized.id)) throw new Error(`duplicate runtime group id: ${normalized.id}`);
+    ids.add(normalized.id);
+    output.push(normalized);
+  }
+  return output;
+}
+
 export function normalizeLiveRuntimeSnapshot(value: unknown, requestedServerId?: string): LiveRuntimeSnapshot {
   if (!value || typeof value !== "object") throw new Error("runtime payload must be an object");
   const row = value as Record<string, unknown>;
@@ -253,11 +281,13 @@ export function normalizeLiveRuntimeSnapshot(value: unknown, requestedServerId?:
     if (!normalized) throw new Error(`invalid runtime group: ${key}`);
     groups[key] = normalized;
   }
+  const groupList = normalizeGroupList(row.groupList, row.observedAt)
+    ?? Object.values(groups).filter((group): group is LiveRuntimeGroup => Boolean(group));
   return {
     schemaVersion: LIVE_RUNTIME_SCHEMA_VERSION,
     serverId: row.serverId,
     arena: typeof row.arena === "string" ? row.arena : baselineScenario(row.serverId).arena,
-    status: typeof row.status === "string" ? row.status : `${Object.keys(groups).length} קבוצות runtime`,
+    status: typeof row.status === "string" ? row.status : `${groupList.length} קבוצות runtime`,
     observedAt: row.observedAt,
     source: {
       kind: "python-core",
@@ -265,6 +295,7 @@ export function normalizeLiveRuntimeSnapshot(value: unknown, requestedServerId?:
       detail: typeof sourceValue.detail === "string" ? sourceValue.detail : undefined,
     },
     groups,
+    groupList,
   };
 }
 
@@ -273,8 +304,9 @@ export function scenarioFromRuntimeSnapshot(snapshot: LiveRuntimeSnapshot): Serv
   const missingReason = snapshot.source.health === "healthy"
     ? "Python Core לא סיפק snapshot לקבוצה זו."
     : snapshot.source.detail ?? "Python Core runtime אינו זמין.";
-  const si = snapshot.groups.si ?? unavailableGroup(baseline.groups.si, snapshot.observedAt, missingReason);
-  const so = snapshot.groups.so ?? unavailableGroup(baseline.groups.so, snapshot.observedAt, missingReason);
+  const listed = snapshot.groupList ?? [];
+  const si = listed.find((group) => group.key === "si") ?? snapshot.groups.si ?? unavailableGroup(baseline.groups.si, snapshot.observedAt, missingReason);
+  const so = listed.find((group) => group.key === "so") ?? snapshot.groups.so ?? unavailableGroup(baseline.groups.so, snapshot.observedAt, missingReason);
   return {
     id: snapshot.serverId,
     arena: snapshot.arena,
@@ -285,10 +317,21 @@ export function scenarioFromRuntimeSnapshot(snapshot: LiveRuntimeSnapshot): Serv
 
 export function applyLiveRuntimeSnapshot(snapshot: LiveRuntimeSnapshot) {
   SERVER_SCENARIOS[snapshot.serverId] = scenarioFromRuntimeSnapshot(snapshot);
+  RUNTIME_GROUP_LISTS[snapshot.serverId] = structuredClone(
+    snapshot.groupList ?? Object.values(snapshot.groups).filter((group): group is LiveRuntimeGroup => Boolean(group)),
+  );
+}
+
+export function getRuntimeGroups(serverId: string): DemoGroup[] {
+  const runtime = RUNTIME_GROUP_LISTS[serverId];
+  if (runtime && runtime.length > 0) return structuredClone(runtime);
+  const scenario = SERVER_SCENARIOS[serverId] ?? baselineScenario(serverId);
+  return Object.values(scenario.groups).map((group) => structuredClone(group));
 }
 
 export function restoreSimulationScenario(serverId: string) {
   SERVER_SCENARIOS[serverId] = baselineScenario(serverId);
+  delete RUNTIME_GROUP_LISTS[serverId];
 }
 
 export async function fetchLiveRuntimeSnapshot(serverId: string, fetcher: typeof fetch = fetch): Promise<LiveRuntimeSnapshot> {
