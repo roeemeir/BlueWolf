@@ -96,10 +96,9 @@ function expandLegacyCounts(counts: Record<string, number> | undefined) {
   return Object.entries(counts).flatMap(([vehicleTypeId, count]) => Array.from({ length: Math.max(0, Math.floor(count)) }, () => vehicleTypeId));
 }
 
-function legacyRelationToQuarter(relation: string | undefined): SoQuarter {
-  if (relation === "same") return "Q0";
-  if (relation === "opposite") return "Q2";
-  return "Q1";
+function advanceQuarter(previous: SoQuarter, relation: string | undefined): SoQuarter {
+  const offset = relation === "same" ? 0 : relation === "opposite" ? 2 : 1;
+  return QUARTERS[(quarterIndex(previous) + offset) % 4];
 }
 
 export function normalizedSoSpec(template: SyncTemplate): SoNormalizedTemplateSpec | null {
@@ -110,11 +109,13 @@ export function normalizedSoSpec(template: SyncTemplate): SoNormalizedTemplateSp
 
   const singleVehicleTypes = expandLegacyCounts(legacy.singleCounts);
   const doubleVehicleTypes = expandLegacyCounts(legacy.doubleCounts);
+  let previousAnchor: SoQuarter = "Q0";
   const routeInstances = legacy.chain.map((kind, index) => {
     const normalizedKind: SoNormalizedRouteKind = kind === "double" ? "double" : "single";
     const route = emptyRouteInstance(normalizedKind, `legacy-${template.id}-${index + 1}`);
     const source = normalizedKind === "double" ? doubleVehicleTypes : singleVehicleTypes;
-    const anchorQuarter = index === 0 ? "Q0" : legacyRelationToQuarter(legacy.relations[index - 1]);
+    const anchorQuarter: SoQuarter = index === 0 ? "Q0" : advanceQuarter(previousAnchor, legacy.relations[index - 1]);
+    previousAnchor = anchorQuarter;
     return {
       ...route,
       slots: route.slots.map((slot, slotIndex) => ({
