@@ -21,6 +21,12 @@ dev = [
   "ruff>=0.12,<1",
   "mypy>=1.16,<2",
 ]
+service = [
+  "uvicorn>=0.35,<1",
+]
+
+[project.scripts]
+bluewolf-runtime = "bluewolf_runtime_adapter.service:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
