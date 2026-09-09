@@ -81,6 +81,8 @@ jobs:
             tests: test_so_template_selection
           - shard: live-so-scoring
             tests: test_live_so_scoring
+          - shard: event-alert
+            tests: test_event_alert
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
