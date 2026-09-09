@@ -21,7 +21,14 @@ dev = [
   "ruff>=0.12,<1",
   "mypy>=1.16,<2",
 ]
+influx = [
+  "influxdb-client>=1.50,<2",
+]
 service = [
+  "uvicorn>=0.35,<1",
+]
+operational = [
+  "influxdb-client>=1.50,<2",
   "uvicorn>=0.35,<1",
 ]
 
