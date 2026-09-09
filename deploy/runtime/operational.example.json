@@ -103,7 +103,7 @@
     {
       "id": 1,
       "tag": "server-1",
-      "awakePolicy": "any-active-sample",
+      "awakePolicy": "any-active-latest-snapshot",
       "groups": [
         {
           "name": "SO Group A",
