@@ -12,9 +12,10 @@ Freshness is enforced at the transport boundary:
 * an expired snapshot returns HTTP 503 and is never presented as current data.
 
 ``/healthz`` is process liveness. ``/readyz`` is operational readiness and can
-fail when an explicitly configured polling host is not running. The store is
-process-local in the current envelope, so ingestion/publication and HTTP remain
-inside one worker until persistence/recomputation is introduced.
+fail when an explicitly configured polling host is not running or has not yet
+completed its first tick. The latest-snapshot registry remains process-local,
+so ingestion/publication and HTTP remain inside one worker; restart checkpoints
+provide continuity but do not make multiple workers safe.
 """
 from __future__ import annotations
 
@@ -342,6 +343,14 @@ def _operational_readiness() -> Mapping[str, Any]:
             "running": False,
             "tickCount": snapshot.tick_count,
             "error": "operational runtime host is not running",
+        }
+    if snapshot.tick_count < 1:
+        return {
+            "ok": False,
+            "mode": "operational",
+            "running": True,
+            "tickCount": 0,
+            "error": "operational runtime has not completed its first tick",
         }
     return {
         "ok": True,
