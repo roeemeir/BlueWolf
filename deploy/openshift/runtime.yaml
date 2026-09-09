@@ -36,11 +36,25 @@ spec:
               value: "15"
             - name: BLUEWOLF_RUNTIME_EXPIRE_SECONDS
               value: "60"
+            # The mounted JSON is deployment-owned. Start from
+            # deploy/runtime/operational-config.example.json and replace all
+            # example server, vehicle, template and Influx metadata explicitly.
+            - name: BLUEWOLF_OPERATIONAL_CONFIG
+              value: "/etc/bluewolf/runtime.json"
             - name: BLUEWOLF_CORE_API_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: bluewolf-runtime-secrets
                   key: core-api-token
+            - name: BLUEWOLF_INFLUX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bluewolf-runtime-secrets
+                  key: influx-token
+          volumeMounts:
+            - name: operational-config
+              mountPath: /etc/bluewolf
+              readOnly: true
           readinessProbe:
             httpGet:
               path: /readyz
@@ -71,6 +85,13 @@ spec:
             runAsNonRoot: true
             seccompProfile:
               type: RuntimeDefault
+      volumes:
+        - name: operational-config
+          configMap:
+            name: bluewolf-runtime-config
+            items:
+              - key: runtime.json
+                path: runtime.json
 ---
 apiVersion: v1
 kind: Service
