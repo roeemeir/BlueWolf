@@ -118,6 +118,62 @@ test("groupList preserves multiple SO groups without family-key overwrite", () =
   assert.equal(bluewolf.getServerScenario("1").groups.so.id, "SO-1");
 });
 
+test("runtime group API preserves operational WGS84 position and normalized heading", () => {
+  const group = {
+    key: "so",
+    id: "SO-map",
+    family: "SO",
+    name: "SO map",
+    subtitle: "Python Core",
+    total: 88,
+    sync: 86,
+    route: 94,
+    confidence: 97,
+    color: "#4378e8",
+    templateId: "tpl-so-h",
+    reason: "valid",
+    success: "valid",
+    scoreValid: true,
+    observedAt: "2026-09-09T12:00:00.000Z",
+    members: [
+      {
+        id: 303,
+        typeId: "storm",
+        score: 88,
+        sync: 86,
+        route: 94,
+        confidence: 97,
+        phase: 0.25,
+        scoreValid: true,
+        latitude: 32.081,
+        longitude: 34.781,
+        headingDeg: 370,
+      },
+    ],
+  };
+  const payload = {
+    schemaVersion: runtime.LIVE_RUNTIME_SCHEMA_VERSION,
+    serverId: "1",
+    arena: "זירה א׳",
+    status: "WGS84 active",
+    observedAt: "2026-09-09T12:00:00.000Z",
+    source: { kind: "python-core", health: "healthy" },
+    groups: { so: group },
+    groupList: [group],
+  };
+
+  const snapshot = runtime.normalizeLiveRuntimeSnapshot(payload, "1");
+  runtime.applyLiveRuntimeSnapshot(snapshot);
+  const [liveGroup] = runtime.getRuntimeGroups("1");
+  const [vehicle] = liveGroup.members;
+  assert.equal(vehicle.latitude, 32.081);
+  assert.equal(vehicle.longitude, 34.781);
+  assert.equal(vehicle.headingDeg, 10);
+  assert.equal(vehicle.scoreValid, true);
+  runtime.restoreSimulationScenario("1");
+  assert.ok(runtime.getRuntimeGroups("1").every((item) => item.members.every((member) => member.scoreValid === true)));
+});
+
 test("groupList rejects duplicate group ids", () => {
   const group = {
     key: "so",
