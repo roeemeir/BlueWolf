@@ -5,6 +5,7 @@ import { Layers3, Settings2 } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DeveloperView as LegacyDeveloperView } from "./developer-view-legacy";
+import { InfluxIdentityPanel } from "./influx-identity-panel";
 import { TemplateBuilderV11 } from "./template-builder-v11";
 
 type DeveloperRootTab = "tools" | "templates";
@@ -20,7 +21,7 @@ export function DeveloperView() {
           <TabsTrigger value="templates"><Layers3 />תבניות SI / SO</TabsTrigger>
         </TabsList>
       </div>
-      <TabsContent value="tools"><div className="developer-legacy-wrapper"><LegacyDeveloperView /></div></TabsContent>
+      <TabsContent value="tools"><div className="developer-contract-panels"><InfluxIdentityPanel /></div><div className="developer-legacy-wrapper"><LegacyDeveloperView /></div></TabsContent>
       <TabsContent value="templates"><TemplateBuilderV11 /></TabsContent>
     </Tabs>
   </div>;
