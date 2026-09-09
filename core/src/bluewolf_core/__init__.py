@@ -15,6 +15,13 @@ from .double_lobe_phase import (
     DoubleLobeSemanticProjection,
     project_double_active_lobe_wgs84,
 )
+from .event_alert import (
+    EventAlertConfig,
+    EventAlertEngine,
+    EventAlertResult,
+    EventAlertSnapshot,
+    EventObservation,
+)
 from .geometry import (
     PolylineProjection,
     circular_phase_distance,
@@ -141,6 +148,11 @@ __all__ = [
     "CoreSession",
     "Direction",
     "DoubleLobeSemanticProjection",
+    "EventAlertConfig",
+    "EventAlertEngine",
+    "EventAlertResult",
+    "EventAlertSnapshot",
+    "EventObservation",
     "FieldQuality",
     "GroupCompatibility",
     "GroupLifecycleResult",
