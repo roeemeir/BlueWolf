@@ -1,10 +1,9 @@
 """Dependency-light ASGI service for the Blue Wolf live runtime contract.
 
 The service is intentionally application-facing and therefore lives outside
-``bluewolf_core``.  A producer (the future Influx/runtime coordinator) publishes
-validated ``bluewolf.live-runtime.v1`` snapshots into ``RuntimeSnapshotStore``;
-this module exposes those snapshots through ``GET /v1/live-runtime`` for the
-Web proxy.
+``bluewolf_core``. Producers publish validated ``bluewolf.live-runtime.v1``
+snapshots into ``RuntimeSnapshotStore``; this module exposes those snapshots
+through ``GET /v1/live-runtime`` for the Web proxy.
 
 Freshness is enforced at the transport boundary:
 
@@ -12,8 +11,10 @@ Freshness is enforced at the transport boundary:
 * an older-but-usable snapshot is returned with ``source.health = stale``;
 * an expired snapshot returns HTTP 503 and is never presented as current data.
 
-The store is process-local by design for the first operational envelope.  Run a
-single service worker until the persistence/recomputation layer is introduced.
+The store is process-local by design for the first operational envelope. The
+optional operational polling loop therefore runs in the same process/thread
+space as the ASGI service and writes into this exact store. Run a single service
+worker until the persistence/recomputation layer is introduced.
 """
 from __future__ import annotations
 
@@ -287,7 +288,7 @@ app = create_app(runtime_store)
 
 
 def main() -> None:
-    """Run the ASGI service with uvicorn when the optional service extra exists."""
+    """Run the process-local operational loop and ASGI transport."""
 
     try:
         import uvicorn
@@ -296,9 +297,19 @@ def main() -> None:
             "Install the runtime service extra: pip install -e '.[service]'"
         ) from exc
 
+    # Import lazily so importing the ASGI app never starts polling threads.
+    from .runtime_host import host_from_environment
+
     host = os.environ.get("BLUEWOLF_RUNTIME_HOST", "0.0.0.0")
     port = int(os.environ.get("BLUEWOLF_RUNTIME_PORT", "8080"))
-    uvicorn.run(app, host=host, port=port, workers=1)
+    operational_host = host_from_environment(runtime_store)
+    if operational_host is not None:
+        operational_host.start()
+    try:
+        uvicorn.run(app, host=host, port=port, workers=1)
+    finally:
+        if operational_host is not None:
+            operational_host.stop()
 
 
 __all__ = [
