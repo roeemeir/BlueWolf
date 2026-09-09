@@ -160,11 +160,11 @@ test("runtime contract rejects a snapshot for the wrong server", () => {
 });
 
 test("switching back to simulation restores the immutable demo baseline and group list", () => {
-  const baseline = structuredClone(bluewolf.getServerScenario("1"));
+  const immutable = runtime.simulationRuntimeSnapshot("1", "2026-09-09T12:00:00.000Z");
   runtime.applyLiveRuntimeSnapshot(runtime.unavailableRuntimeSnapshot("1", "offline"));
   assert.equal(bluewolf.getServerScenario("1").groups.so.total, 0);
   runtime.restoreSimulationScenario("1");
-  assert.equal(bluewolf.getServerScenario("1").groups.so.total, baseline.groups.so.total);
-  assert.equal(bluewolf.getServerScenario("1").groups.si.total, baseline.groups.si.total);
-  assert.deepEqual(runtime.getRuntimeGroups("1").map((group) => group.id).sort(), Object.values(baseline.groups).map((group) => group.id).sort());
+  assert.equal(bluewolf.getServerScenario("1").groups.so.total, immutable.groups.so.total);
+  assert.equal(bluewolf.getServerScenario("1").groups.si.total, immutable.groups.si.total);
+  assert.deepEqual(runtime.getRuntimeGroups("1").map((group) => group.id).sort(), immutable.groupList.map((group) => group.id).sort());
 });
