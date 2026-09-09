@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import json
 import os
 import tempfile
@@ -8,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from bluewolf_core.grouping import RouteGroup
-from bluewolf_core.models import RouteFamily
+from bluewolf_core.models import RouteFamily, VehicleSample
 from bluewolf_runtime_adapter.environment_factory import (
     build_operational_runtime,
     build_operational_runtime_from_environment,
@@ -16,6 +17,9 @@ from bluewolf_runtime_adapter.environment_factory import (
 )
 from bluewolf_runtime_adapter.runtime_host import host_from_environment
 from bluewolf_runtime_adapter.service import RuntimeSnapshotStore
+
+
+NOW = datetime(2026, 9, 9, 19, 0, tzinfo=UTC)
 
 
 def _metrics():
@@ -69,7 +73,7 @@ def _config():
             {
                 "id": 1,
                 "tag": "server-1",
-                "awakePolicy": "any-active-sample",
+                "awakePolicy": "any-active-latest-snapshot",
                 "groups": [
                     {
                         "name": "SO Alpha",
@@ -85,6 +89,20 @@ def _config():
             }
         ],
     }
+
+
+def _sample(at: datetime, vehicle_id: int, active: bool) -> VehicleSample:
+    return VehicleSample(
+        sample_time_utc=at,
+        server_id=1,
+        vehicle_number=vehicle_id,
+        vehicle_identifier=vehicle_id,
+        active=active,
+        latitude_deg=32.0,
+        longitude_deg=34.8,
+        velocity_north_mps=1.0,
+        velocity_east_mps=0.0,
+    )
 
 
 class EnvironmentFactoryTests(unittest.TestCase):
@@ -105,6 +123,19 @@ class EnvironmentFactoryTests(unittest.TestCase):
             pipeline.coordinator.reader.adapter.connection.token,
             "secret",
         )
+
+    def test_awake_policy_uses_only_latest_joined_snapshot(self) -> None:
+        with patch.dict(os.environ, {"TEST_BLUEWOLF_INFLUX_TOKEN": "secret"}, clear=False):
+            loop = build_operational_runtime(_config(), RuntimeSnapshotStore())
+        resolver = loop.pipelines[0].coordinator.awake_resolver
+        samples = (
+            _sample(NOW - timedelta(minutes=30), 11, True),
+            _sample(NOW, 11, False),
+            _sample(NOW, 12, False),
+        )
+        self.assertFalse(resolver(samples, None, None))
+        samples_with_latest_active = samples + (_sample(NOW, 13, True),)
+        self.assertTrue(resolver(samples_with_latest_active, None, None))
 
     def test_binding_matches_structural_group_by_vehicle_set_not_dynamic_group_id(self) -> None:
         with patch.dict(os.environ, {"TEST_BLUEWOLF_INFLUX_TOKEN": "secret"}, clear=False):
@@ -131,7 +162,7 @@ class EnvironmentFactoryTests(unittest.TestCase):
             {11, 12},
         )
         self.assertEqual(binding.constellation.routes[0].vehicle_types, ("A", "A"))
-        displayed = producer.displayed_score_resolver(binding.group_id, structural.base_period_s)
+        displayed = producer.displayed_score_resolver(binding.group_id, NOW)
         self.assertFalse(displayed.valid)
         self.assertIsNone(displayed.score)
 
@@ -147,6 +178,13 @@ class EnvironmentFactoryTests(unittest.TestCase):
         ]
         with patch.dict(os.environ, {"TEST_BLUEWOLF_INFLUX_TOKEN": "secret"}, clear=False):
             with self.assertRaisesRegex(ValueError, "missing required metrics"):
+                build_operational_runtime(config, RuntimeSnapshotStore())
+
+    def test_non_finite_numeric_configuration_is_rejected(self) -> None:
+        config = _config()
+        config["servers"][0]["groups"][0]["members"][0]["workSpeedMps"] = float("nan")
+        with patch.dict(os.environ, {"TEST_BLUEWOLF_INFLUX_TOKEN": "secret"}, clear=False):
+            with self.assertRaisesRegex(ValueError, "must be finite"):
                 build_operational_runtime(config, RuntimeSnapshotStore())
 
     def test_unapproved_displayed_score_policy_is_rejected(self) -> None:
