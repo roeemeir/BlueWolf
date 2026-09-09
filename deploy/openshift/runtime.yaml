@@ -41,6 +41,12 @@ spec:
             # example server, vehicle, template and Influx metadata explicitly.
             - name: BLUEWOLF_OPERATIONAL_CONFIG
               value: "/etc/bluewolf/runtime.json"
+            # Persistence is deployment-specific, so the path is supplied here
+            # instead of baking a Linux-only path into the portable JSON example.
+            # If persistence.path is also present in runtime.json it must resolve
+            # to this same file or startup fails closed.
+            - name: BLUEWOLF_OPERATIONAL_STATE_PATH
+              value: "/var/lib/bluewolf/runtime-state.json"
             - name: BLUEWOLF_CORE_API_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -55,6 +61,8 @@ spec:
             - name: operational-config
               mountPath: /etc/bluewolf
               readOnly: true
+            - name: operational-state
+              mountPath: /var/lib/bluewolf
           readinessProbe:
             httpGet:
               path: /readyz
@@ -92,6 +100,11 @@ spec:
             items:
               - key: runtime.json
                 path: runtime.json
+        # Provision this PVC according to the target cluster's storage policy.
+        # The repository intentionally does not guess a StorageClass or capacity.
+        - name: operational-state
+          persistentVolumeClaim:
+            claimName: bluewolf-runtime-state
 ---
 apiVersion: v1
 kind: Service
