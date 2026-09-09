@@ -39,6 +39,9 @@ export type LiveRuntimeEvent = {
 export type LiveRuntimeVehicle = DemoVehicle & {
   scoreValid: boolean;
   reasons?: string[];
+  latitude?: number;
+  longitude?: number;
+  headingDeg?: number;
 };
 
 export type LiveRuntimeGroup = Omit<DemoGroup, "members" | "alert"> & {
@@ -164,6 +167,24 @@ function normalizeVehicle(value: unknown): LiveRuntimeVehicle | null {
   if (typeof row.id !== "number" || typeof row.typeId !== "string") return null;
   if (![row.score, row.sync, row.route, row.confidence].every(isFiniteScore)) return null;
   if (typeof row.phase !== "number" || !Number.isFinite(row.phase)) return null;
+
+  const hasLatitude = row.latitude !== undefined;
+  const hasLongitude = row.longitude !== undefined;
+  if (hasLatitude !== hasLongitude) return null;
+  let latitude: number | undefined;
+  let longitude: number | undefined;
+  if (hasLatitude && hasLongitude) {
+    if (typeof row.latitude !== "number" || !Number.isFinite(row.latitude) || row.latitude < -90 || row.latitude > 90) return null;
+    if (typeof row.longitude !== "number" || !Number.isFinite(row.longitude) || row.longitude < -180 || row.longitude > 180) return null;
+    latitude = row.latitude;
+    longitude = row.longitude;
+  }
+  let headingDeg: number | undefined;
+  if (row.headingDeg !== undefined) {
+    if (typeof row.headingDeg !== "number" || !Number.isFinite(row.headingDeg)) return null;
+    headingDeg = ((row.headingDeg % 360) + 360) % 360;
+  }
+
   return {
     id: row.id,
     typeId: row.typeId,
@@ -175,6 +196,9 @@ function normalizeVehicle(value: unknown): LiveRuntimeVehicle | null {
     ring: row.ring === "inner" || row.ring === "middle" || row.ring === "outer" ? row.ring : undefined,
     scoreValid: row.scoreValid !== false,
     reasons: Array.isArray(row.reasons) ? row.reasons.filter((item): item is string => typeof item === "string") : undefined,
+    latitude,
+    longitude,
+    headingDeg,
   };
 }
 
