@@ -11,10 +11,10 @@ Freshness is enforced at the transport boundary:
 * an older-but-usable snapshot is returned with ``source.health = stale``;
 * an expired snapshot returns HTTP 503 and is never presented as current data.
 
-The store is process-local by design for the first operational envelope. The
-optional operational polling loop therefore runs in the same process/thread
-space as the ASGI service and writes into this exact store. Run a single service
-worker until the persistence/recomputation layer is introduced.
+``/healthz`` is process liveness. ``/readyz`` is operational readiness and can
+fail when an explicitly configured polling host is not running. The store is
+process-local in the current envelope, so ingestion/publication and HTTP remain
+inside one worker until persistence/recomputation is introduced.
 """
 from __future__ import annotations
 
@@ -108,6 +108,9 @@ def _json_bytes(payload: Mapping[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
+ReadinessProbe = Callable[[], Mapping[str, Any]]
+
+
 class BlueWolfRuntimeASGI:
     """Minimal ASGI transport around ``RuntimeSnapshotStore``."""
 
@@ -119,6 +122,7 @@ class BlueWolfRuntimeASGI:
         stale_after_seconds: float = 15.0,
         expire_after_seconds: float = 60.0,
         clock: Callable[[], datetime] = _utc_now,
+        readiness_probe: ReadinessProbe | None = None,
     ) -> None:
         self.store = store
         self.token = token.strip() if token else None
@@ -131,6 +135,7 @@ class BlueWolfRuntimeASGI:
         if self.expire_after_seconds <= self.stale_after_seconds:
             raise ValueError("expire_after_seconds must exceed stale_after_seconds")
         self.clock = clock
+        self.readiness_probe = readiness_probe
 
     def _authorized(self, headers: Mapping[bytes, bytes]) -> bool:
         if self.token is None:
@@ -178,6 +183,24 @@ class BlueWolfRuntimeASGI:
                     "schemaVersion": LIVE_RUNTIME_SCHEMA_VERSION,
                 },
             )
+            return
+
+        if path == "/readyz":
+            if method != "GET":
+                await self._send_json(send, 405, {"error": "method not allowed"})
+                return
+            readiness = (
+                {"ok": True, "mode": "transport-only"}
+                if self.readiness_probe is None
+                else dict(self.readiness_probe())
+            )
+            ready = readiness.get("ok") is True
+            payload = {
+                "service": "bluewolf-runtime",
+                "schemaVersion": LIVE_RUNTIME_SCHEMA_VERSION,
+                **readiness,
+            }
+            await self._send_json(send, 200 if ready else 503, payload)
             return
 
         if path != "/v1/live-runtime":
@@ -258,6 +281,7 @@ def create_app(
     stale_after_seconds: float | None = None,
     expire_after_seconds: float | None = None,
     clock: Callable[[], datetime] = _utc_now,
+    readiness_probe: ReadinessProbe | None = None,
 ) -> BlueWolfRuntimeASGI:
     """Create the runtime ASGI app from explicit args or environment defaults."""
 
@@ -280,15 +304,69 @@ def create_app(
         stale_after_seconds=stale,
         expire_after_seconds=expire,
         clock=clock,
+        readiness_probe=readiness_probe,
     )
 
 
 runtime_store = RuntimeSnapshotStore()
-app = create_app(runtime_store)
+operational_host: Any | None = None
+
+
+def _operational_readiness() -> Mapping[str, Any]:
+    requested = bool(
+        os.environ.get("BLUEWOLF_OPERATIONAL_FACTORY", "").strip()
+        or os.environ.get("BLUEWOLF_OPERATIONAL_CONFIG", "").strip()
+    )
+    if not requested:
+        return {"ok": True, "mode": "transport-only"}
+    host = operational_host
+    if host is None:
+        return {
+            "ok": False,
+            "mode": "operational",
+            "error": "operational runtime host is not started",
+        }
+    snapshot = host.snapshot()
+    if snapshot.thread_error is not None:
+        return {
+            "ok": False,
+            "mode": "operational",
+            "running": snapshot.running,
+            "tickCount": snapshot.tick_count,
+            "error": snapshot.thread_error,
+        }
+    if not snapshot.running:
+        return {
+            "ok": False,
+            "mode": "operational",
+            "running": False,
+            "tickCount": snapshot.tick_count,
+            "error": "operational runtime host is not running",
+        }
+    return {
+        "ok": True,
+        "mode": "operational",
+        "running": True,
+        "tickCount": snapshot.tick_count,
+        "lastTickUtc": (
+            None
+            if snapshot.last_tick_utc is None
+            else snapshot.last_tick_utc.isoformat().replace("+00:00", "Z")
+        ),
+        "serverErrors": [
+            {"serverId": server_id, "error": error}
+            for server_id, error in snapshot.last_errors
+        ],
+    }
+
+
+app = create_app(runtime_store, readiness_probe=_operational_readiness)
 
 
 def main() -> None:
     """Run the process-local operational loop and ASGI transport."""
+
+    global operational_host
 
     try:
         import uvicorn
@@ -310,13 +388,16 @@ def main() -> None:
     finally:
         if operational_host is not None:
             operational_host.stop()
+        operational_host = None
 
 
 __all__ = [
     "BlueWolfRuntimeASGI",
+    "ReadinessProbe",
     "RuntimeSnapshotStore",
     "app",
     "create_app",
     "main",
+    "operational_host",
     "runtime_store",
 ]
