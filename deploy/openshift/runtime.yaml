@@ -43,7 +43,7 @@ spec:
                   key: core-api-token
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: http
             initialDelaySeconds: 3
             periodSeconds: 5
