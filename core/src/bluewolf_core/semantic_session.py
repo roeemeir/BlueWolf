@@ -36,6 +36,7 @@ from .integrated_session import (
     CoreSession as IntegratedCoreSession,
 )
 from .models import (
+    ClosedRoute,
     CoreBatchResult,
     RouteFamily,
     RouteSubtype,
@@ -98,6 +99,29 @@ class CoreSession(IntegratedCoreSession):
         algorithm_version: str = DEFAULT_ALGORITHM_VERSION,
     ) -> None:
         super().__init__(config=config, algorithm_version=algorithm_version)
+
+    def confirmed_route(
+        self,
+        server_id: int,
+        vehicle_identifier: int,
+    ) -> ClosedRoute | None:
+        """Return the current confirmed route for one stream without exposing state.
+
+        ``ClosedRoute`` is immutable, so callers may safely consume this object
+        for application/runtime composition. Missing, expired or never-confirmed
+        streams return ``None`` rather than exposing the internal route lifecycle.
+        """
+
+        if isinstance(server_id, bool) or not isinstance(server_id, int) or server_id < 0:
+            raise ValueError("server_id must be a non-negative integer")
+        if (
+            isinstance(vehicle_identifier, bool)
+            or not isinstance(vehicle_identifier, int)
+            or vehicle_identifier < 0
+        ):
+            raise ValueError("vehicle_identifier must be a non-negative integer")
+        state = self._routes.get((server_id, vehicle_identifier))
+        return state.confirmed if state is not None else None
 
     def process_batch(
         self,
