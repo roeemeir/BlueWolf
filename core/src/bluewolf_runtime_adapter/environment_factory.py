@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import json
+import math
 import os
 from pathlib import Path
 from typing import Any, Callable
@@ -87,6 +88,8 @@ def _number(value: object, name: str, *, positive: bool = False) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be numeric")
     result = float(value)
+    if not math.isfinite(result):
+        raise ValueError(f"{name} must be finite")
     if positive and result <= 0.0:
         raise ValueError(f"{name} must be positive")
     return result
@@ -401,6 +404,19 @@ def _displayed_score_resolver(config: Mapping[str, Any]):
     return resolve
 
 
+def _server_awake_at_latest_snapshot(samples, core_result, window) -> bool:
+    """Use only the newest joined logical snapshot, never the whole bootstrap history."""
+
+    del core_result, window
+    if not samples:
+        return False
+    latest = max(sample.sample_time_utc for sample in samples)
+    return any(
+        sample.sample_time_utc == latest and sample.active is True
+        for sample in samples
+    )
+
+
 def build_operational_runtime(config: Mapping[str, Any], store: Any) -> OperationalRuntimeLoop:
     """Compose all configured servers without opening an Influx connection yet."""
 
@@ -430,8 +446,10 @@ def build_operational_runtime(config: Mapping[str, Any], store: Any) -> Operatio
             server.get("awakePolicy"),
             f"servers[{index}].awakePolicy",
         )
-        if awake_policy != "any-active-sample":
-            raise ValueError("only awakePolicy='any-active-sample' is currently supported")
+        if awake_policy != "any-active-latest-snapshot":
+            raise ValueError(
+                "only awakePolicy='any-active-latest-snapshot' is currently supported"
+            )
 
         session = CoreSession()
         registry = SOTemplateSelectionRegistry(bank)
@@ -439,17 +457,13 @@ def build_operational_runtime(config: Mapping[str, Any], store: Any) -> Operatio
         runtime = LiveSOEventRuntime(scorer, comparison_dimension=comparison)
         cursor = ServerPollCursor(poll_config)
 
-        def awake_resolver(samples, core_result, window):
-            del core_result, window
-            return any(sample.active is True for sample in samples)
-
         coordinator = LiveCoreIngestCoordinator(
             server_id=server_id,
             server_tag_value=server_tag,
             reader=reader,
             session=session,
             cursor=cursor,
-            awake_resolver=awake_resolver,
+            awake_resolver=_server_awake_at_latest_snapshot,
         )
         producer = PositionEnrichedLiveRuntimeProducer(
             server_id=server_id,
