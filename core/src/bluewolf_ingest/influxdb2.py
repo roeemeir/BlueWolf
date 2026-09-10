@@ -4,10 +4,13 @@ This module deliberately stops at ``RawMetricPoint``. It does not interpolate,
 forward-fill, detect routes, group vehicles or calculate scores. Those concerns
 already have validated implementations elsewhere.
 
-The physical Influx schema is configurable. In particular, Blue Wolf V1
-requires joining by ``(server_id, vehicle_number)`` but does not prescribe the
-Influx tag/column names that carry those identities. The adapter therefore
-never hard-codes a TTAG, ``server_id`` tag or ``vehicle_number`` tag.
+The physical Influx schema is configurable. Blue Wolf joins raw metrics by the
+canonical tuple ``(server_id, source_time_utc, vehicle_number)`` but does not
+prescribe which physical Influx columns carry server, time and vehicle number.
+The adapter therefore never hard-codes TTAG or physical identity column names.
+``_time`` remains the default time column because Flux ``range`` is defined on
+Influx time, while an explicitly configured alternative may supply the join
+clock when it is present on every returned record.
 """
 from __future__ import annotations
 
@@ -45,16 +48,19 @@ class InfluxDB2Connection:
 
 @dataclass(frozen=True, slots=True)
 class InfluxDB2StreamSchema:
-    """Columns/tags that identify one Blue Wolf source stream in query results."""
+    """Physical columns/tags used to identify and time one Blue Wolf stream."""
 
     vehicle_number_column: str
     server_column: str | None = None
+    time_column: str = "_time"
 
     def __post_init__(self) -> None:
         if not self.vehicle_number_column.strip():
             raise ValueError("vehicle_number_column is required")
         if self.server_column is not None and not self.server_column.strip():
             raise ValueError("server_column must be non-empty when supplied")
+        if not self.time_column.strip():
+            raise ValueError("time_column is required")
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,8 +163,41 @@ def _record_column(record: _FluxRecord, column: str) -> Any:
         return record.values[column]
     except KeyError as exc:
         raise InfluxDB2AdapterError(
-            f"Influx record is missing stream identity column {column!r}"
+            f"Influx record is missing configured stream column {column!r}"
         ) from exc
+
+
+def _parse_record_time(value: Any, *, column: str) -> datetime:
+    if isinstance(value, datetime):
+        result = value
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise InfluxDB2AdapterError(f"Influx time column {column!r} is empty")
+        try:
+            result = datetime.fromisoformat(text[:-1] + "+00:00" if text.endswith("Z") else text)
+        except ValueError as exc:
+            raise InfluxDB2AdapterError(
+                f"Influx time column {column!r} is not ISO/RFC3339: {value!r}"
+            ) from exc
+    else:
+        raise InfluxDB2AdapterError(
+            f"Influx time column {column!r} must be datetime or ISO/RFC3339 text"
+        )
+    if result.tzinfo is None:
+        raise InfluxDB2AdapterError(
+            f"Influx time column {column!r} must be timezone-aware"
+        )
+    return result.astimezone(UTC)
+
+
+def _record_time(record: _FluxRecord, schema: InfluxDB2StreamSchema) -> datetime:
+    if schema.time_column == "_time":
+        return _parse_record_time(record.get_time(), column="_time")
+    return _parse_record_time(
+        _record_column(record, schema.time_column),
+        column=schema.time_column,
+    )
 
 
 def _vehicle_number(value: Any) -> int:
@@ -246,7 +285,11 @@ def _build_bucket_query(
             "  |> filter(fn: (r) => "
             f'r[{_flux_string(schema.server_column)}] == {_flux_string(server_tag_value)})'
         )
-    lines.append('  |> sort(columns: ["_time"])')
+    lines.append(
+        "  |> sort(columns: ["
+        + _flux_string(schema.time_column)
+        + "])"
+    )
     return "\n".join(lines)
 
 
@@ -331,9 +374,7 @@ class InfluxDB2Adapter:
                                 f"bucket={bucket!r}, measurement={measurement!r}, field={field!r}"
                             )
                         mapping = matching[0]
-                        record_time = record.get_time()
-                        if record_time.tzinfo is None:
-                            raise InfluxDB2AdapterError("Influx _time must be timezone-aware")
+                        record_time = _record_time(record, self.schema)
                         points.append(
                             RawMetricPoint(
                                 source_time_utc=record_time,
