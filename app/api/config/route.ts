@@ -13,7 +13,7 @@ function workspaceId(request: Request) {
 
 function dbError(error: unknown) {
   const message = error instanceof Error ? error.message : "Unexpected error";
-  return message.includes("no such table") || message.includes("D1 binding")
+  return message.includes("no such table")
     ? "מסד הנתונים של התצורה עדיין אינו זמין בפריסה זו."
     : message;
 }
@@ -68,14 +68,12 @@ export async function POST(request: Request) {
     const [target] = await db.select().from(configVersions).where(and(eq(configVersions.workspaceId, id), eq(configVersions.version, targetVersion))).limit(1);
     if (!target) return Response.json({ error: "configuration version was not found" }, { status: 404 });
 
-    const published = await db.select({ id: configVersions.id }).from(configVersions).where(and(eq(configVersions.workspaceId, id), eq(configVersions.status, "published")));
-    const statements = published.map((row) => db.update(configVersions).set({ status: "superseded" }).where(eq(configVersions.id, row.id)));
-    statements.push(
+    await db.batch([
+      db.update(configVersions).set({ status: "superseded" }).where(and(eq(configVersions.workspaceId, id), eq(configVersions.status, "published"))),
       db.update(configVersions).set({ status: "published", publishedAt: sql`CURRENT_TIMESTAMP` }).where(eq(configVersions.id, target.id)),
       db.insert(appSettings).values({ workspaceId: id, activeConfigVersion: targetVersion, draftConfigVersion: targetVersion }).onConflictDoUpdate({ target: appSettings.workspaceId, set: { activeConfigVersion: targetVersion, draftConfigVersion: targetVersion, updatedAt: sql`CURRENT_TIMESTAMP` } }),
       db.insert(auditEntries).values({ workspaceId: id, category: "configuration", action: "publish", detail: `config v${targetVersion}`, entityType: "config_version", entityId: String(targetVersion), configVersion: targetVersion, algorithmVersion: target.algorithmVersion }),
-    );
-    await db.batch(statements as [typeof statements[number], ...typeof statements[number][]]);
+    ]);
     return Response.json({ ok: true, version: targetVersion, status: "published" });
   } catch (error) {
     return Response.json({ error: dbError(error) }, { status: 500 });
