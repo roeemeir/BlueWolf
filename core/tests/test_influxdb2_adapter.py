@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 import unittest
 
 from bluewolf_ingest.influxdb2 import (
@@ -119,6 +119,7 @@ class InfluxDB2AdapterTests(unittest.TestCase):
         self.assertIn('r._measurement == "latitude"', query)
         self.assertIn('r._measurement == "longitude"', query)
         self.assertIn('r._measurement == "active"', query)
+        self.assertIn('|> sort(columns: ["_time"])', query)
         self.assertNotIn("TTAG", query)
         self.assertNotIn("secret-token", query)
 
@@ -174,6 +175,79 @@ class InfluxDB2AdapterTests(unittest.TestCase):
             sorted((point.source_time_utc, point.metric.value) for point in points),
         )
 
+    def test_configured_time_column_is_the_join_clock(self) -> None:
+        physical_time = START + timedelta(seconds=3)
+        influx_time = START + timedelta(minutes=10)
+        record = FakeRecord(
+            "latitude",
+            "value",
+            31.8,
+            influx_time,
+            {
+                "vehicle-slot": 7,
+                "event-time": physical_time.astimezone(timezone(timedelta(hours=2))).isoformat(),
+            },
+        )
+        adapter, client = adapter_with(
+            [[FakeTable([record])]],
+            [mapping(MetricName.LATITUDE, "latitude")],
+            schema=InfluxDB2StreamSchema(
+                vehicle_number_column="vehicle-slot",
+                server_column="server-tag",
+                time_column="event-time",
+            ),
+        )
+        points = adapter.query_points(
+            server_id=3,
+            server_tag_value="3",
+            start_time_utc=START,
+            stop_time_utc=START + timedelta(minutes=20),
+        )
+        self.assertEqual(points[0].source_time_utc, physical_time)
+        self.assertNotEqual(points[0].source_time_utc, influx_time)
+        self.assertIn('|> sort(columns: ["event-time"])', client.api.calls[0][1])
+
+    def test_missing_configured_time_column_is_rejected_and_client_is_closed(self) -> None:
+        adapter, client = adapter_with(
+            [[FakeTable([FakeRecord("latitude", "value", 31.8, START, {"vehicle-slot": 7})])]],
+            [mapping(MetricName.LATITUDE, "latitude")],
+            schema=InfluxDB2StreamSchema(
+                vehicle_number_column="vehicle-slot",
+                time_column="event-time",
+            ),
+        )
+        with self.assertRaisesRegex(InfluxDB2AdapterError, "event-time"):
+            adapter.query_points(
+                server_id=1,
+                server_tag_value=None,
+                start_time_utc=START,
+                stop_time_utc=START + timedelta(seconds=5),
+            )
+        self.assertTrue(client.closed)
+
+    def test_naive_configured_time_is_rejected(self) -> None:
+        adapter, _ = adapter_with(
+            [[FakeTable([FakeRecord(
+                "latitude",
+                "value",
+                31.8,
+                START,
+                {"vehicle-slot": 7, "event-time": "2026-09-09T12:00:00"},
+            )])]],
+            [mapping(MetricName.LATITUDE, "latitude")],
+            schema=InfluxDB2StreamSchema(
+                vehicle_number_column="vehicle-slot",
+                time_column="event-time",
+            ),
+        )
+        with self.assertRaisesRegex(InfluxDB2AdapterError, "timezone-aware"):
+            adapter.query_points(
+                server_id=1,
+                server_tag_value=None,
+                start_time_utc=START,
+                stop_time_utc=START + timedelta(seconds=5),
+            )
+
     def test_missing_vehicle_identity_is_rejected_and_client_is_closed(self) -> None:
         adapter, client = adapter_with(
             [[FakeTable([FakeRecord("latitude", "value", 31.8, START, {})])]],
@@ -215,6 +289,10 @@ class InfluxDB2AdapterTests(unittest.TestCase):
             stop_time_utc=START + timedelta(seconds=1),
         )[0]
         self.assertNotIn("server-tag", query)
+
+    def test_empty_time_column_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "time_column"):
+            InfluxDB2StreamSchema(vehicle_number_column="slot", time_column="  ")
 
     def test_duplicate_metric_mapping_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "mapped more than once"):
