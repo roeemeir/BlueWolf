@@ -153,11 +153,11 @@ const globalState = globalThis as typeof globalThis & {
 export function getDb() {
   const path = configuredDatabasePath();
   const current = globalState.__bluewolfLocalDatabase;
-  if (!current || current.path !== path) {
-    if (current) current.sqlite.close();
-    globalState.__bluewolfLocalDatabase = openLocalDatabase(path);
-  }
-  return globalState.__bluewolfLocalDatabase.orm;
+  if (current?.path === path) return current.orm;
+  if (current) current.sqlite.close();
+  const next = openLocalDatabase(path);
+  globalState.__bluewolfLocalDatabase = next;
+  return next.orm;
 }
 
 export function getSqlitePath() {
