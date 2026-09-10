@@ -17,6 +17,11 @@
 /.next/
 /out/
 
+# local Blue Wolf runtime state
+/data/
+*.sqlite-wal
+*.sqlite-shm
+
 # misc
 .DS_Store
 *.pem
