@@ -1,6 +1,7 @@
 "use client";
 
-import { getRuntimeGroups, type LiveRuntimeVehicle } from "@/lib/live-runtime";
+import { getRuntimeGroups, getRuntimeTrace, type LiveRuntimeVehicle } from "@/lib/live-runtime";
+import { traceScoreColor, traceSegments } from "@/lib/score-trace";
 import type { VehicleType } from "@/lib/bluewolf";
 import { VehicleIconGlyph } from "./visuals";
 
@@ -86,6 +87,7 @@ export function OperationalLiveMap({
   selectedVehicle,
   vehicleTypes,
   showGrid,
+  showTrace,
   onSelectGroup,
   onSelectVehicle,
 }: {
@@ -94,10 +96,17 @@ export function OperationalLiveMap({
   selectedVehicle: number | null;
   vehicleTypes: VehicleType[];
   showGrid: boolean;
+  showTrace: boolean;
   onSelectGroup: (groupId: string) => void;
   onSelectVehicle: (vehicleId: number, groupId: string) => void;
 }) {
-  const points = fitToViewport(projectedPositions(serverId));
+  const current = projectedPositions(serverId);
+  const history = getRuntimeTrace(serverId);
+  const rows = history.map(point => ({ groupId: point.groupId, groupName: "", color: "", vehicle: { id: point.vehicleId } as LiveRuntimeVehicle, latitude: point.latitude, longitude: point.longitude }));
+  const projected = fitToViewport([...rows, ...current]);
+  const points = projected.slice(rows.length);
+  const segments = traceSegments(history.map((point, index) => ({ ...point, x: projected[index].x, y: projected[index].y })));
+
   const typeById = (id: string) => vehicleTypes.find((type) => type.id === id);
   const groupCount = new Set(points.map((point) => point.groupId)).size;
 
@@ -113,6 +122,7 @@ export function OperationalLiveMap({
       <text x="38" y="68">Auto-fit · {groupCount} קבוצות · {points.length} רכבים עם מיקום תקף</text>
     </g>
     {points.length === 0 && <g className="v04-map-labels"><text x={VIEW_WIDTH / 2} y={VIEW_HEIGHT / 2} textAnchor="middle">אין כרגע מיקום WGS84 תקף ב־runtime snapshot</text><text x={VIEW_WIDTH / 2} y={VIEW_HEIGHT / 2 + 28} textAnchor="middle">לא מוצג מיקום משוער מפאזה או מגאומטריית demo</text></g>}
+    {showTrace && <g className="score-trace">{segments.map(([a, b]) => <line key={`${b.vehicleId}:${b.timeMs}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} style={{ stroke: traceScoreColor(b.sync) }}><title>רכב {b.vehicleId} · סנכרון {b.sync === null ? "אין מידע" : Math.round(b.sync)} · {new Date(b.timeMs).toLocaleTimeString("he-IL")}</title></line>)}</g>}
     <g className="v04-vehicles">
       {points.map((point) => {
         const selected = point.groupId === selectedGroupId && point.vehicle.id === selectedVehicle;

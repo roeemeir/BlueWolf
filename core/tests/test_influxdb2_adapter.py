@@ -229,3 +229,26 @@ class InfluxDB2AdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class ConfigurableTimestampTests(unittest.TestCase):
+    def test_custom_timestamp_column_is_used_for_join_and_normalized(self):
+        adapter, client = adapter_with(
+            [[FakeTable([FakeRecord("latitude", "value", 31.8, START, {"slot": 7, "source_time": "2026-09-09T15:00:02+03:00"})])]],
+            [mapping(MetricName.LATITUDE, "latitude")],
+            schema=InfluxDB2StreamSchema("slot", time_column="source_time"),
+        )
+        points = adapter.query_points(server_id=3, server_tag_value=None, start_time_utc=START, stop_time_utc=START + timedelta(seconds=5))
+        self.assertEqual(points[0].source_time_utc, START + timedelta(seconds=2))
+        self.assertEqual(points[0].vehicle_number, 7)
+        self.assertTrue(client.closed)
+
+    def test_naive_or_numeric_timestamp_is_rejected_without_guessing_units(self):
+        for value in ["2026-09-09T12:00:02", 123456, None]:
+            adapter, client = adapter_with(
+                [[FakeTable([FakeRecord("latitude", "value", 31.8, START, {"slot": 7, "source_time": value})])]],
+                [mapping(MetricName.LATITUDE, "latitude")],
+                schema=InfluxDB2StreamSchema("slot", time_column="source_time"),
+            )
+            with self.assertRaises(InfluxDB2AdapterError):
+                adapter.query_points(server_id=3, server_tag_value=None, start_time_utc=START, stop_time_utc=START + timedelta(seconds=5))
+            self.assertTrue(client.closed)

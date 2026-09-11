@@ -49,8 +49,11 @@ class InfluxDB2StreamSchema:
 
     vehicle_number_column: str
     server_column: str | None = None
+    time_column: str = "_time"
 
     def __post_init__(self) -> None:
+        if not self.time_column.strip():
+            raise ValueError("time_column is required")
         if not self.vehicle_number_column.strip():
             raise ValueError("vehicle_number_column is required")
         if self.server_column is not None and not self.server_column.strip():
@@ -331,9 +334,14 @@ class InfluxDB2Adapter:
                                 f"bucket={bucket!r}, measurement={measurement!r}, field={field!r}"
                             )
                         mapping = matching[0]
-                        record_time = record.get_time()
-                        if record_time.tzinfo is None:
-                            raise InfluxDB2AdapterError("Influx _time must be timezone-aware")
+                        record_time = record.get_time() if self.schema.time_column == "_time" else _record_column(record, self.schema.time_column)
+                        if isinstance(record_time, str):
+                            try:
+                                record_time = datetime.fromisoformat(record_time.replace("Z", "+00:00"))
+                            except ValueError as exc:
+                                raise InfluxDB2AdapterError("Invalid configured source timestamp") from exc
+                        if not isinstance(record_time, datetime) or record_time.tzinfo is None or record_time.utcoffset() is None:
+                            raise InfluxDB2AdapterError("Influx source timestamp must be timezone-aware")
                         points.append(
                             RawMetricPoint(
                                 source_time_utc=record_time,

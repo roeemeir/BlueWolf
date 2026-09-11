@@ -13,13 +13,14 @@ for Windows and the single-writer OpenShift runtime without a new dependency.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import closing
 from datetime import UTC, datetime
 import hashlib
 import json
 import os
 from pathlib import Path
 import sqlite3
-from typing import Iterable, Mapping
+from typing import Iterable, Iterator, Mapping
 
 from bluewolf_core.models import FieldQuality, VehicleSample
 
@@ -305,12 +306,43 @@ class JoinedSampleArchive:
         start_time_utc: datetime,
         end_time_utc: datetime,
     ) -> tuple[VehicleSample, ...]:
+        """Compatibility helper for small windows; large replay uses batches."""
+        return tuple(
+            sample
+            for batch in self.iter_latest_batches(
+                server_id=server_id,
+                start_time_utc=start_time_utc,
+                end_time_utc=end_time_utc,
+            )
+            for sample in batch
+        )
+
+    def iter_latest_batches(
+        self,
+        *,
+        server_id: int,
+        start_time_utc: datetime,
+        end_time_utc: datetime,
+        batch_size: int = 1000,
+    ) -> Iterator[tuple[VehicleSample, ...]]:
+        """Stream one consistent SQLite snapshot with bounded Python memory.
+
+        Bounds are inclusive, matching ``read_latest_window``. The read snapshot
+        starts on first iteration. Corrections committed afterwards are visible
+        only to a new iterator, never halfway through this replay. Consumers
+        stopping early must close the generator (e.g. ``contextlib.closing``)
+        to release its read transaction. A long-lived reader can retain WAL
+        pages; this is not a durable revision selector for archived reports.
+        """
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or not 1 <= batch_size <= 10000:
+            raise ValueError("archive batch_size must be an integer in 1..10000")
         start = _utc(start_time_utc)
         end = _utc(end_time_utc)
         if end < start:
             raise ValueError("archive window end cannot precede start")
-        with self._connect() as connection:
-            rows = connection.execute(
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN")
+            cursor = connection.execute(
                 """
                 SELECT server_id, vehicle_identifier, sample_time_utc, payload_json
                 FROM joined_sample_latest
@@ -318,8 +350,13 @@ class JoinedSampleArchive:
                 ORDER BY sample_time_utc, vehicle_identifier
                 """,
                 (server_id, _iso(start), _iso(end)),
-            ).fetchall()
-        return tuple(_sample_from_row(row) for row in rows)
+            )
+            try:
+                while rows := cursor.fetchmany(batch_size):
+                    yield tuple(_sample_from_row(row) for row in rows)
+            finally:
+                cursor.close()
+                connection.rollback()
 
     def revision_history(
         self,

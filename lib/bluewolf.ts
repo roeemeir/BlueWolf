@@ -37,6 +37,8 @@ export type ScoreThresholds = {
   redScore: number;
 };
 
+export type SiPosition = { typeId: string; ring: RingRole; angleDeg: number };
+export const SI_POSITION_ANGLES = Array.from({ length: 12 }, (_, i) => i * 30);
 export type SiPairRule = { first: number; second: number; angle: number };
 export type SoTemplateSpec = {
   singleCounts: Record<string, number>;
@@ -56,6 +58,7 @@ export type SyncTemplate = {
   isDefault: boolean;
   updatedAt: string;
   siPairs?: SiPairRule[];
+  siPositions?: SiPosition[];
   soSpec?: SoTemplateSpec;
 };
 
@@ -76,7 +79,7 @@ export type MapServerDefinition = { id: string; name: string; urlTemplate: strin
 export type InfluxValueMode = "as-is" | "special";
 export type InfluxFillMode = "forward-fill" | "linear";
 export type InfluxFieldMapping = { systemKey: string; label: string; bucket: string; measurement: string; key: string; valueMode: InfluxValueMode; sourceValue: string; mappedValue: string; fillMode: InfluxFillMode };
-export type InfluxSettings = { url: string; organization: string; token: string; idleProbeMinutes: number; activePollSeconds: number; joinToleranceSeconds: number; mappings: InfluxFieldMapping[] };
+export type InfluxSettings = { url: string; organization: string; token: string; stream: { serverColumn: string; timeColumn: string; vehicleNumberColumn: string }; idleProbeMinutes: number; activePollSeconds: number; joinToleranceSeconds: number; mappings: InfluxFieldMapping[] };
 export type ServerDefinition = { id: string; name: string; enabled: boolean; arena?: string; influxTag: string };
 export type VehicleType = { id: string; name: string; minId: number; maxId: number; workSpeedKmh: number; siRoles: RingRole[]; icon: VehicleIconName; color: string };
 export type GtSegment = { id: string; family: Family; layer: "sync" | "route"; quality: "good" | "medium" | "low"; label: string; serverId: string; groupId: string; start: string; end: string; vehicleCount: number; routeType: string; score: number };
@@ -163,7 +166,7 @@ export const DEFAULT_WORKSPACE: WorkspaceState = {
     { id: "engineering", name: "מפת הנדסה", urlTemplate: "https://maps.internal/engineering/{z}/{x}/{y}.png", attribution: "BlueWolf GIS", enabled: true, isDefault: true },
     { id: "orthophoto", name: "אורתופוטו מאושר", urlTemplate: "https://maps.internal/ortho/{z}/{x}/{y}.jpg", attribution: "מאגר תצלומים ארגוני", enabled: true, isDefault: false },
   ],
-  influx: { url: "http://influx.internal:8086", organization: "blue-wolf", token: "", idleProbeMinutes: 5, activePollSeconds: 5, joinToleranceSeconds: 5, mappings: DEFAULT_INFLUX_MAPPINGS },
+  influx: { url: "http://influx.internal:8086", organization: "blue-wolf", token: "", stream: { serverColumn: "server", timeColumn: "_time", vehicleNumberColumn: "vehicle_number" }, idleProbeMinutes: 5, activePollSeconds: 5, joinToleranceSeconds: 5, mappings: DEFAULT_INFLUX_MAPPINGS },
   servers: Array.from({ length: 3 }, (_, index) => ({ id: String(index + 1), name: `שרת ${String(index + 1).padStart(2, "0")}`, enabled: true, influxTag: String(index + 1) })),
   arenas: ["זירה א׳", "זירה ב׳", "זירה ג׳"],
   vehicleTypes: [
@@ -241,7 +244,12 @@ export const generateSiAngleSets = (vehicleCount: number) => {
 export const relationCode = (relation: SoRelation) => relation === "same" ? 0 : relation === "mixed" ? 1 : 2;
 export const relationFromCode = (value: number): SoRelation => value === 0 ? "same" : value === 1 ? "mixed" : "opposite";
 
-export const canonicalTemplateKey = (template: Pick<SyncTemplate, "family" | "mix" | "constellation" | "values">) => {
+export const canonicalTemplateKey = (template: Pick<SyncTemplate, "family" | "mix" | "constellation" | "values" | "siPositions">) => {
+  if (template.family === "SI" && template.siPositions?.length) {
+    const slots = template.siPositions;
+    const keys = slots.flatMap(anchor => [1, -1].map(sign => slots.map(slot => `${slot.typeId}:${slot.ring}:${((sign * (slot.angleDeg - anchor.angleDeg)) % 360 + 360) % 360}`).sort().join("|")));
+    return `SI|${keys.sort()[0]}`;
+  }
   const normalizedValues = template.family === "SI" ? template.values.join(",") : [template.values.join(","), [...template.values].reverse().join(",")].sort()[0];
   const direct = template.constellation;
   const mirrored = template.constellation.split(" — ").reverse().join(" — ");

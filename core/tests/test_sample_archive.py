@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -41,6 +42,55 @@ def _sample(
 
 
 class JoinedSampleArchiveTests(unittest.TestCase):
+    def test_streamed_batches_match_window_for_all_batch_sizes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive = JoinedSampleArchive(Path(directory) / "samples.sqlite")
+            archive.record_batch(
+                [_sample(NOW + timedelta(seconds=i), vehicle_id=j)
+                 for i in range(13) for j in (11, 12)], recorded_at_utc=NOW,
+            )
+            query = dict(server_id=1, start_time_utc=NOW,
+                         end_time_utc=NOW + timedelta(seconds=12))
+            expected = archive.read_latest_window(**query)
+            self.assertEqual(len(expected), 26)
+            for size in (1, 5, 13, 1000):
+                batches = list(archive.iter_latest_batches(**query, batch_size=size))
+                self.assertTrue(all(0 < len(batch) <= size for batch in batches))
+                self.assertEqual(tuple(s for batch in batches for s in batch), expected)
+            self.assertEqual(list(archive.iter_latest_batches(**{**query, "server_id": 2})), [])
+
+    def test_concurrent_correction_does_not_change_running_read_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive = JoinedSampleArchive(Path(directory) / "samples.sqlite")
+            archive.record_batch([_sample(NOW + timedelta(seconds=i)) for i in range(3)],
+                                 recorded_at_utc=NOW)
+            query = dict(server_id=1, start_time_utc=NOW,
+                         end_time_utc=NOW + timedelta(seconds=2))
+            with closing(archive.iter_latest_batches(**query, batch_size=1)) as stream:
+                next(stream)
+                archive.record_batch([_sample(NOW + timedelta(seconds=2), latitude=33)],
+                                     recorded_at_utc=NOW + timedelta(seconds=10))
+                self.assertEqual(list(stream)[-1][0].latitude_deg, 32)
+            self.assertEqual(archive.read_latest_window(**query)[-1].latitude_deg, 33)
+
+    def test_stream_validation_and_early_close(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive = JoinedSampleArchive(Path(directory) / "samples.sqlite")
+            archive.record_batch([_sample(), _sample(vehicle_id=12)], recorded_at_utc=NOW)
+            query = dict(server_id=1, start_time_utc=NOW, end_time_utc=NOW)
+            for size in (0, -1, 10001, True, 1.5):
+                with self.subTest(size=size), self.assertRaises(ValueError):
+                    list(archive.iter_latest_batches(**query, batch_size=size))
+            with self.assertRaises(ValueError):
+                list(archive.iter_latest_batches(**{**query, "start_time_utc": NOW + timedelta(seconds=1)}))
+            with self.assertRaises(ValueError):
+                list(archive.iter_latest_batches(**{**query, "start_time_utc": NOW.replace(tzinfo=None)}))
+            with closing(archive.iter_latest_batches(**query, batch_size=1)) as stream:
+                self.assertEqual(len(next(stream)), 1)
+            # Early cancellation releases the read snapshot so WAL can truncate.
+            with closing(sqlite3.connect(archive.path)) as connection:
+                self.assertEqual(connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0], 0)
+
     def test_insert_identical_reobservation_and_revision_are_distinct(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             archive = JoinedSampleArchive(Path(directory) / "samples.sqlite")

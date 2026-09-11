@@ -1,3 +1,4 @@
+import { mergeScoreTrace, type ScoreTracePoint } from "./score-trace";
 import {
   SERVER_SCENARIOS,
   type DemoGroup,
@@ -69,6 +70,9 @@ export type LiveRuntimeSnapshot = {
 };
 
 const SIMULATION_BASELINES: Record<string, ServerScenario> = structuredClone(SERVER_SCENARIOS);
+const RUNTIME_TRACES: Record<string, ScoreTracePoint[]> = {};
+export const getRuntimeTrace = (serverId: string): ScoreTracePoint[] => RUNTIME_TRACES[serverId] ?? [];
+
 const RUNTIME_GROUP_LISTS: Record<string, LiveRuntimeGroup[] | undefined> = {};
 
 function baselineScenario(serverId: string): ServerScenario {
@@ -340,6 +344,9 @@ export function scenarioFromRuntimeSnapshot(snapshot: LiveRuntimeSnapshot): Serv
 }
 
 export function applyLiveRuntimeSnapshot(snapshot: LiveRuntimeSnapshot) {
+  const incoming = (snapshot.groupList ?? Object.values(snapshot.groups).filter((g): g is LiveRuntimeGroup => Boolean(g))).flatMap(group => group.members.flatMap(vehicle => vehicle.latitude === undefined || vehicle.longitude === undefined ? [] : [{ timeMs: Date.parse(group.observedAt), groupId: group.id, eventId: group.event?.id ?? group.id, vehicleId: vehicle.id, latitude: vehicle.latitude, longitude: vehicle.longitude, sync: vehicle.scoreValid ? vehicle.sync : null }]));
+  RUNTIME_TRACES[snapshot.serverId] = mergeScoreTrace(RUNTIME_TRACES[snapshot.serverId] ?? [], incoming);
+
   SERVER_SCENARIOS[snapshot.serverId] = scenarioFromRuntimeSnapshot(snapshot);
   RUNTIME_GROUP_LISTS[snapshot.serverId] = structuredClone(
     snapshot.groupList ?? Object.values(snapshot.groups).filter((group): group is LiveRuntimeGroup => Boolean(group)),
@@ -357,6 +364,7 @@ export function getRuntimeGroups(serverId: string): LiveRuntimeGroup[] {
 export function restoreSimulationScenario(serverId: string) {
   SERVER_SCENARIOS[serverId] = baselineScenario(serverId);
   delete RUNTIME_GROUP_LISTS[serverId];
+  delete RUNTIME_TRACES[serverId];
 }
 
 export async function fetchLiveRuntimeSnapshot(serverId: string, fetcher: typeof fetch = fetch): Promise<LiveRuntimeSnapshot> {

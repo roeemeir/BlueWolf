@@ -1,11 +1,14 @@
 import { desc, eq, sql } from "drizzle-orm";
 
-import { getDb } from "@/db";
 import { auditEntries, workspaces } from "@/db/schema";
+import { readLocalWorkspace, writeLocalWorkspace } from "@/lib/sqlite-workspace";
+
+const localStorage = () => process.env.BLUEWOLF_STORAGE === "sqlite";
 
 const workspacePattern = /^[a-zA-Z0-9_-]{8,80}$/;
 
 function getWorkspaceId(request: Request) {
+  if (localStorage()) return "installation";
   const value = request.headers.get("x-bluewolf-workspace") ?? "";
   return workspacePattern.test(value) ? value : null;
 }
@@ -23,6 +26,8 @@ export async function GET(request: Request) {
   if (!workspaceId) return Response.json({ error: "workspace id is required" }, { status: 400 });
 
   try {
+    if (localStorage()) return Response.json(await readLocalWorkspace(workspaceId));
+    const { getDb } = await import("@/db");
     const db = getDb();
     const [row] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
     const logs = await db.select().from(auditEntries).where(eq(auditEntries.workspaceId, workspaceId)).orderBy(desc(auditEntries.id)).limit(20);
@@ -37,10 +42,15 @@ export async function PUT(request: Request) {
   if (!workspaceId) return Response.json({ error: "workspace id is required" }, { status: 400 });
 
   try {
-    const body = await request.json() as { state?: unknown; category?: string; action?: string; detail?: string };
+    const body = await request.json() as { state?: unknown; category?: string; action?: string; detail?: string; expectedRevision?: number };
     const state = JSON.stringify(body.state ?? {});
     if (state.length > 750_000) return Response.json({ error: "workspace state is too large" }, { status: 413 });
 
+    if (localStorage()) {
+      const result = await writeLocalWorkspace(workspaceId, state, (body.category ?? "configuration").slice(0,40), (body.action ?? "save").slice(0,80), (body.detail ?? "").slice(0,500), body.expectedRevision);
+      return Response.json(result, { status: result.conflict ? 409 : 200 });
+    }
+    const { getDb } = await import("@/db");
     const db = getDb();
     const current = await db.select({ revision: workspaces.revision }).from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
     const nextRevision = (current[0]?.revision ?? 0) + 1;

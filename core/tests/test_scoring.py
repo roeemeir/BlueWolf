@@ -74,6 +74,12 @@ class VehicleScoreTests(unittest.TestCase):
         self.assertIsNone(score.components.route_curvature)
         self.assertEqual(score.route, 50)
 
+    def test_primary_reason_uses_effective_weights_at_low_speed(self) -> None:
+        score = score_vehicle(ideal_metrics(speed_fraction=0.2, distance_error_b_ratio=0.30, position_error=15))
+        # Distance loses 25 total points; phase loses only 11.25.
+        self.assertEqual(score.primary_reason, "distance")
+        self.assertEqual(score.total, 63.75)
+
     def test_si_wrong_direction_for_a_minute_forces_sync_to_zero(self) -> None:
         score = score_vehicle(ideal_metrics(wrong_direction_seconds=60))
         self.assertEqual(score.sync, 0)

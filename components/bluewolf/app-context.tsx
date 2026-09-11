@@ -35,7 +35,7 @@ function hydrateState(value: Partial<WorkspaceState> | null | undefined): Worksp
       total: { ...DEFAULT_WORKSPACE.weights.total, ...value.weights?.total },
     },
     thresholds: { ...DEFAULT_WORKSPACE.thresholds, ...value.thresholds },
-    influx: { ...DEFAULT_WORKSPACE.influx, ...value.influx, mappings },
+    influx: { ...DEFAULT_WORKSPACE.influx, ...value.influx, stream: { ...DEFAULT_WORKSPACE.influx.stream, ...value.influx?.stream }, mappings },
     mapServers: value.mapServers?.length ? value.mapServers : structuredClone(DEFAULT_WORKSPACE.mapServers),
     activeTemplateOverrides: { ...DEFAULT_WORKSPACE.activeTemplateOverrides, ...value.activeTemplateOverrides },
     templateApplications: { ...DEFAULT_WORKSPACE.templateApplications, ...value.templateApplications },
@@ -54,7 +54,9 @@ function getWorkspaceId() {
   const key = "bluewolf-workspace-id";
   const existing = window.localStorage.getItem(key);
   if (existing) return existing;
-  const created = `bw-${crypto.randomUUID()}`;
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  const created = `bw-${Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("")}`;
   window.localStorage.setItem(key, created);
   return created;
 }
@@ -105,18 +107,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const save = useCallback(async (next: WorkspaceState, category: string, action: string, detail = "") => {
-    setState(next);
-    window.localStorage.setItem("bluewolf-workspace-state", JSON.stringify(next));
     if (!workspaceId) return false;
     const saveToast = toast.loading("שומר את הקונפיגורציה…");
     try {
       const response = await fetch("/api/workspace", {
         method: "PUT",
         headers: { "content-type": "application/json", "x-bluewolf-workspace": workspaceId },
-        body: JSON.stringify({ state: next, category, action, detail }),
+        body: JSON.stringify({ state: next, category, action, detail, expectedRevision: revision }),
       });
+      if (response.status === 409) { toast.error("הפריט השתנה במקביל. רענן לפני שמירה נוספת; השינויים לא הופעלו.", { id: saveToast }); return false; }
       if (!response.ok) throw new Error("save failed");
       const payload = await response.json() as { revision?: number };
+      setState(next);
+      window.localStorage.setItem("bluewolf-workspace-state", JSON.stringify({ ...next, influx: { ...next.influx, token: "" } }));
       setRevision(payload.revision ?? revision + 1);
       setLastSavedAt(new Date().toISOString());
       setStorageMode("cloud");
@@ -124,7 +127,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       return true;
     } catch {
       setStorageMode("local");
-      toast.warning("נשמר במכשיר; האחסון המרכזי אינו זמין כרגע", { id: saveToast });
+      toast.error("השמירה נכשלה. השינוי לא הופעל; נסה שוב כשהשרת זמין", { id: saveToast });
       return false;
     }
   }, [revision, workspaceId]);

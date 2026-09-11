@@ -16,6 +16,8 @@ import json
 import math
 import os
 from pathlib import Path
+import sqlite3
+from contextlib import closing
 from typing import Any, Callable
 
 from bluewolf_core.live_so_event_runtime import LiveSOEventRuntime, TemplateComparisonDimension
@@ -244,6 +246,7 @@ def _connection_and_reader(config: Mapping[str, Any]) -> tuple[InfluxDB2WindowRe
             "influx.stream.vehicleNumberColumn",
         ),
         server_column=_optional_text(stream.get("serverColumn"), "influx.stream.serverColumn"),
+        time_column=_text(stream.get("timeColumn", "_time"), "influx.stream.timeColumn"),
     )
     connection = InfluxDB2Connection(
         url=_text(influx.get("url"), "influx.url"),
@@ -524,7 +527,25 @@ def load_operational_config(path: str | os.PathLike[str]) -> Mapping[str, Any]:
         raise ValueError(f"cannot read operational config: {config_path}") from exc
     except json.JSONDecodeError as exc:
         raise ValueError(f"operational config is not valid JSON: {config_path}") from exc
-    return _object(raw, "operational config")
+    config = dict(_object(raw, "operational config"))
+    # Optional local Web configuration bridge. Read one committed revision at
+    # startup; never change the join schema halfway through a running batch.
+    workspace_path = os.environ.get("BLUEWOLF_WORKSPACE_DB", "").strip()
+    if workspace_path:
+        uri = Path(workspace_path).resolve().as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(uri, uri=True)) as connection:
+            row = connection.execute(
+                "SELECT state FROM workspaces WHERE id='installation'"
+            ).fetchone()
+        if row is not None:
+            workspace = _object(json.loads(row[0]), "workspace")
+            web_influx = _object(workspace.get("influx", {}), "workspace.influx")
+            web_stream = web_influx.get("stream")
+            if web_stream is not None:
+                influx = dict(_object(config.get("influx"), "influx"))
+                influx["stream"] = dict(_object(web_stream, "workspace.influx.stream"))
+                config["influx"] = influx
+    return config
 
 
 def build_operational_runtime_from_environment(store: Any) -> OperationalRuntimeLoop:
