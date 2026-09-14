@@ -119,7 +119,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (!response.ok) throw new Error("save failed");
       const payload = await response.json() as { revision?: number };
       setState(next);
-      window.localStorage.setItem("bluewolf-workspace-state", JSON.stringify({ ...next, influx: { ...next.influx, token: "" } }));
+      // The server has committed. A disabled/full browser cache must not turn
+      // a successful save into a reported failure or leave the revision stale.
+      try {
+        window.localStorage.setItem("bluewolf-workspace-state", JSON.stringify({ ...next, influx: { ...next.influx, token: "" } }));
+      } catch {
+        toast.warning("נשמר בשרת; לא ניתן לעדכן את המטמון במכשיר");
+      }
       setRevision(payload.revision ?? revision + 1);
       setLastSavedAt(new Date().toISOString());
       setStorageMode("cloud");
