@@ -96,6 +96,13 @@ function formatTime(value: string | null) {
   return value || "—";
 }
 
+function lifecycleChangeTime(change: LifecycleChange) {
+  if (change.kind === "event_closed" && typeof change.details.finalized_time_utc === "string" && change.details.finalized_time_utc) {
+    return change.details.finalized_time_utc;
+  }
+  return change.occurredAt;
+}
+
 function jpeg(canvas: HTMLCanvasElement): JpegPage {
   const encoded = canvas.toDataURL("image/jpeg", 0.94);
   const comma = encoded.indexOf(",");
@@ -131,7 +138,7 @@ function lifecyclePages(report: InvestigationPdfReport) {
   const pages: JpegPage[] = [];
   for (const [eventIndex, event] of report.events.entries()) {
     const lifecycle = event.result.lifecycle;
-    const rows = lifecycle.changes.map((change) => ({ time: change.occurredAt, value: detail(change) }));
+    const rows = lifecycle.changes.map((change) => ({ time: lifecycleChangeTime(change), value: detail(change) }));
     if (!rows.length) rows.push({ time: "—", value: "אין lifecycle evidence בארכיון עבור אירוע legacy זה; אין הסקה של active/closed ואין סיבת סיום מומצאת." });
     let rowIndex = 0;
     let pageNumber = 1;
