@@ -10,6 +10,7 @@ export type InvestigationEventIndex = {
   startAt: string;
   endAt: string;
   frameCount: number;
+  activeTemplateId: string | null;
 };
 
 export type InvestigationEventList = {
@@ -84,6 +85,11 @@ function text(value: unknown, name: string): string {
   return value;
 }
 
+function optionalText(value: unknown, name: string): string | null {
+  if (value === null || value === undefined) return null;
+  return text(value, name);
+}
+
 function integer(value: unknown, name: string): number {
   if (!Number.isInteger(value) || Number(value) < 0) throw new Error(`${name} must be a non-negative integer`);
   return Number(value);
@@ -133,6 +139,7 @@ export function normalizeInvestigationEvents(value: unknown): InvestigationEvent
       startAt: time(event.startAt, "startAt"),
       endAt: time(event.endAt, "endAt"),
       frameCount: integer(event.frameCount, "frameCount"),
+      activeTemplateId: optionalText(event.activeTemplateId, "activeTemplateId"),
     };
   });
   return { schemaVersion: INVESTIGATION_EVENTS_SCHEMA, serverId, templates, events };
