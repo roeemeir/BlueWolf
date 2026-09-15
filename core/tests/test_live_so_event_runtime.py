@@ -128,6 +128,55 @@ class LiveSOEventRuntimeTests(unittest.TestCase):
             assert metric.observation is not None
             self.assertAlmostEqual(float(metric.observation.diagnostics["dt_s"]), 5.0)
 
+    def test_observation_sink_captures_same_source_navigation_even_when_score_pending(self) -> None:
+        runtime, _, _ = _runtime()
+        captured = []
+        runtime.observation_sink = captured.append
+        route = _route(period_s=100.0)
+        constellation = _constellation()
+        warmup_members = _members(route, 0)
+
+        warmup = runtime.process_snapshot(
+            "g1",
+            constellation,
+            warmup_members,
+            reference_period_s=100.0,
+            displayed_group_score=90.0,
+            displayed_score_valid=True,
+        )
+        self.assertEqual(len(captured), 1)
+        first = captured[0]
+        self.assertEqual(first.event_id, warmup.event.snapshot.event_id)
+        self.assertEqual(first.pending_reason, "core_observations_incomplete")
+        self.assertEqual([item.member_id for item in first.navigation], ["m1", "m2"])
+        self.assertEqual([item.vehicle_identifier for item in first.navigation], [1, 2])
+        for source, archived in zip(sorted(warmup_members, key=lambda item: item.member_id), first.navigation, strict=True):
+            self.assertEqual(archived.latitude_deg, source.sample.latitude_deg)
+            self.assertEqual(archived.longitude_deg, source.sample.longitude_deg)
+            self.assertEqual(archived.altitude_m, source.sample.altitude_m)
+            self.assertEqual(archived.velocity_north_mps, source.sample.velocity_north_mps)
+            self.assertEqual(archived.velocity_east_mps, source.sample.velocity_east_mps)
+            self.assertEqual(archived.active, source.sample.active)
+            self.assertEqual(archived.reliability, source.sample.reliability)
+
+        scored_members = _members(route, 5)
+        scored = runtime.process_snapshot(
+            "g1",
+            constellation,
+            scored_members,
+            reference_period_s=100.0,
+            displayed_group_score=90.0,
+            displayed_score_valid=True,
+        )
+        self.assertEqual(len(captured), 2)
+        second = captured[1]
+        self.assertEqual(second.event_id, first.event_id)
+        self.assertEqual(second.event_id, scored.event.snapshot.event_id)
+        self.assertIsNone(second.pending_reason)
+        self.assertEqual(second.sample_time_utc, scored_members[0].sample.sample_time_utc)
+        self.assertEqual(second.navigation[0].latitude_deg, scored_members[0].sample.latitude_deg)
+        self.assertEqual(second.navigation[1].longitude_deg, scored_members[1].sample.longitude_deg)
+
     def test_recommendation_opens_after_120_seconds_of_same_better_alternative(self) -> None:
         runtime, _, _ = _runtime()
         route = _route(period_s=100.0)
