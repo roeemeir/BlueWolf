@@ -1,21 +1,21 @@
 """Compose one live SO metric snapshot into template comparison + event state.
 
-This layer is intentionally thin.  It advances ``LiveSOMetricsEngine`` exactly
+This layer is intentionally thin. It advances ``LiveSOMetricsEngine`` exactly
 once per member/timestamp through ``LiveSOGroupScorer.score_snapshot()``, then
 reuses the immutable scoring observations to evaluate alternate approved
-SO templates.  No temporal derivative is updated twice.
+SO templates. No temporal derivative is updated twice.
 
 Two product decisions remain deliberately explicit rather than guessed:
 
 * V1 defines the low-score alert against the *displayed/smoothed* group score,
-  but does not define the smoothing algorithm.  The caller therefore supplies
+  but does not define the smoothing algorithm. The caller therefore supplies
   ``displayed_group_score`` and whether that displayed value is valid.
 * V1 says an alternate template must be better by 30 points, but does not say
-  whether the comparison dimension is synchronization or total score.  The
+  whether the comparison dimension is synchronization or total score. The
   runtime therefore requires an explicit ``TemplateComparisonDimension``.
 
 The runtime owns deterministic event context construction, alternate scoring,
-and checkpoint composition.  It does not alter grouping, route detection or the
+and checkpoint composition. It does not alter grouping, route detection or the
 active template selection registry.
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
 from .event_alert import EventAlertEngine, EventAlertResult, EventObservation
-from .event_recompute import SOEventObservationFrame
+from .event_recompute import SOEventNavigationPoint, SOEventObservationFrame
 from .live_so_scoring import LiveSOGroupScorer, LiveSOGroupScoringResult, LiveSOMemberInput
 from .models import GroupScores
 from .so_scoring import SOGroupScoringResult, score_so_template
@@ -60,16 +60,8 @@ class LiveSOEventRuntimeResult:
             raise ValueError("group_id is required")
         if not self.context_key:
             raise ValueError("context_key is required")
-        object.__setattr__(
-            self,
-            "scoring_by_template",
-            MappingProxyType(dict(self.scoring_by_template)),
-        )
-        object.__setattr__(
-            self,
-            "comparison_scores",
-            MappingProxyType(dict(self.comparison_scores)),
-        )
+        object.__setattr__(self, "scoring_by_template", MappingProxyType(dict(self.scoring_by_template)))
+        object.__setattr__(self, "comparison_scores", MappingProxyType(dict(self.comparison_scores)))
 
 
 def _score_value(scores: GroupScores, dimension: TemplateComparisonDimension) -> float | None:
@@ -92,7 +84,7 @@ def build_so_event_context_key(
 ) -> str:
     """Return a stable digest of the event-defining SO semantic context.
 
-    Dynamic lobe/quarter position is intentionally excluded.  Confirmed route
+    Dynamic lobe/quarter position is intentionally excluded. Confirmed route
     identity/geometry-period metadata and active template identity are included,
     so a route replacement or synchronization-configuration change produces a
     new context while ordinary progress around the route does not.
@@ -102,10 +94,7 @@ def build_so_event_context_key(
         raise ValueError("SO event context requires at least one member")
     payload = {
         "constellation": [
-            {
-                "route_kind": route.route_kind.value,
-                "vehicle_types": list(route.vehicle_types),
-            }
+            {"route_kind": route.route_kind.value, "vehicle_types": list(route.vehicle_types)}
             for route in constellation.routes
         ],
         "active_template_id": active_template_id,
@@ -123,11 +112,7 @@ def build_so_event_context_key(
             }
             for item in sorted(
                 members,
-                key=lambda value: (
-                    value.route_instance_id,
-                    value.member_id,
-                    value.vehicle_type,
-                ),
+                key=lambda value: (value.route_instance_id, value.member_id, value.vehicle_type),
             )
         ],
     }
@@ -135,11 +120,30 @@ def build_so_event_context_key(
     return "so:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _navigation_evidence(members: tuple[LiveSOMemberInput, ...]) -> tuple[SOEventNavigationPoint, ...]:
+    """Detach real same-timestamp WGS84 samples from live member inputs."""
+
+    return tuple(
+        SOEventNavigationPoint(
+            member_id=item.member_id,
+            vehicle_identifier=item.sample.vehicle_identifier,
+            latitude_deg=item.sample.latitude_deg,
+            longitude_deg=item.sample.longitude_deg,
+            altitude_m=item.sample.altitude_m,
+            velocity_north_mps=item.sample.velocity_north_mps,
+            velocity_east_mps=item.sample.velocity_east_mps,
+            active=item.sample.active,
+            reliability=item.sample.reliability,
+        )
+        for item in sorted(members, key=lambda value: value.member_id)
+    )
+
+
 class LiveSOEventRuntime:
     """One checkpointable SO live-scoring/event runtime.
 
     Alternate templates are evaluated only from the already-produced immutable
-    ``SOScoringObservation`` objects in the active live-scoring result.  This is
+    ``SOScoringObservation`` objects in the active live-scoring result. This is
     the key invariant that prevents recommendation evaluation from advancing
     movement/curvature temporal state multiple times at one timestamp.
 
@@ -147,8 +151,9 @@ class LiveSOEventRuntime:
     assigns the authoritative event id. Complete frames carry immutable Core
     observations; timestamps where the Core is not score-ready are persisted as
     pending frames with an explicit reason so investigation never shortens the
-    event range silently. The sink is application infrastructure (for example
-    SQLite); it never participates in scoring or template selection.
+    event range silently. The same frame also carries detached navigation data
+    from the exact member samples used at that timestamp. Navigation never
+    participates in scoring or template selection.
     """
 
     def __init__(
@@ -229,9 +234,6 @@ class LiveSOEventRuntime:
                             minimum_valid_vehicles=self.scorer.minimum_valid_vehicles,
                         )
                     except NoLegalSOTemplateAssignment:
-                        # Relevance is constellation-level; a template can still
-                        # be impossible for the current explicit Route Instance
-                        # binding.  It is not a legal recommendation candidate.
                         continue
                     scoring_by_template[template.template_id] = result
 
@@ -270,6 +272,7 @@ class LiveSOEventRuntime:
                     sample_time_utc=now,
                     observations=observations,
                     pending_reason=pending_reason,
+                    navigation=_navigation_evidence(members),
                 )
             )
 
@@ -328,3 +331,12 @@ class LiveSOEventRuntime:
             ),
             invalidated,
         )
+
+
+__all__ = [
+    "LiveSOEventRuntime",
+    "LiveSOEventRuntimeResult",
+    "ObservationSink",
+    "TemplateComparisonDimension",
+    "build_so_event_context_key",
+]
