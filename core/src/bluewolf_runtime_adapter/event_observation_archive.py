@@ -238,22 +238,46 @@ class SOEventObservationArchive:
             )
         return tuple(frames)
 
-    def list_events(self, server_id: int, *, limit: int = 200) -> tuple[dict[str, Any], ...]:
+    def list_events(
+        self,
+        server_id: int,
+        *,
+        from_utc: datetime | None = None,
+        to_utc: datetime | None = None,
+        limit: int = 200,
+    ) -> tuple[dict[str, Any], ...]:
+        """List complete events that intersect an optional UTC investigation range.
+
+        The range filters event selection only. Returned start/end/frameCount are
+        the event's full archived bounds so selecting a range never clips event
+        identity or silently turns one event into a shorter synthetic event.
+        """
+
         if isinstance(server_id, bool) or not isinstance(server_id, int) or server_id < 0:
             raise ValueError("server_id must be a non-negative integer")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 2000:
             raise ValueError("limit must be an integer in [1,2000]")
+        from_iso = None if from_utc is None else _iso(from_utc)
+        to_iso = None if to_utc is None else _iso(to_utc)
+        if from_utc is not None and to_utc is not None and _utc(from_utc) > _utc(to_utc):
+            raise ValueError("investigation range start must not be after end")
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT event_id,group_id,MIN(sample_time_utc) AS start_at,
-                       MAX(sample_time_utc) AS end_at,COUNT(*) AS frame_count
-                FROM so_event_observation_frames
-                WHERE server_id=?
-                GROUP BY event_id,group_id
+                WITH event_bounds AS (
+                    SELECT event_id,group_id,MIN(sample_time_utc) AS start_at,
+                           MAX(sample_time_utc) AS end_at,COUNT(*) AS frame_count
+                    FROM so_event_observation_frames
+                    WHERE server_id=?
+                    GROUP BY event_id,group_id
+                )
+                SELECT event_id,group_id,start_at,end_at,frame_count
+                FROM event_bounds
+                WHERE (? IS NULL OR end_at >= ?)
+                  AND (? IS NULL OR start_at <= ?)
                 ORDER BY start_at DESC LIMIT ?
                 """,
-                (server_id, limit),
+                (server_id, from_iso, from_iso, to_iso, to_iso, limit),
             ).fetchall()
         return tuple(
             {
