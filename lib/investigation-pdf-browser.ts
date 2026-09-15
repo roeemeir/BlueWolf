@@ -18,6 +18,7 @@ const SERIES = ["#126b87", "#6d4fc2", "#ad5f16", "#2e7c56", "#a63e74", "#4f6670"
 
 type BrowserPdfPage = { jpeg: Uint8Array; width: number; height: number };
 type TextOptions = { size?: number; weight?: 400 | 600 | 700; color?: string; dir?: "rtl" | "ltr"; align?: CanvasTextAlign };
+type GeoPoint = { latitude: number; longitude: number };
 
 function makeCanvas() {
   if (typeof document === "undefined") throw new Error("REP-01 browser PDF renderer requires a browser document");
@@ -105,6 +106,10 @@ function scoreColor(value: number | null) {
   return LOW;
 }
 
+function eventColor(index: number) {
+  return SERIES[index % SERIES.length];
+}
+
 function drawHeader(ctx: CanvasRenderingContext2D, title: string, subtitle?: string) {
   drawText(ctx, title, PAGE_WIDTH_PX - MARGIN, 92, { size: 38, weight: 700 });
   if (subtitle) drawText(ctx, subtitle, PAGE_WIDTH_PX - MARGIN, 132, { size: 20, color: MUTED });
@@ -172,36 +177,82 @@ function drawTimeline(ctx: CanvasRenderingContext2D, event: InvestigationPdfEven
   drawText(ctx, `מסגרות: ${result.scoredFrameCount} מחושבות · ${result.missingFrameCount} חסרות`, x + width - 18, y + height - 10, { size: 14, color: MUTED });
 }
 
-function drawMap(ctx: CanvasRenderingContext2D, event: InvestigationPdfEvent, x: number, y: number, width: number, height: number) {
-  const result = event.result;
-  panel(ctx, x, y, width, height);
-  drawText(ctx, "מפת WGS84 של האירוע", x + width - 18, y + 28, { size: 17, weight: 700 });
-  const nav = result.points.flatMap((point) => point.navigation).filter((item) => item.latitude !== null && item.longitude !== null);
-  if (!nav.length) {
-    drawText(ctx, "אין עדות ניווט WGS84 באירוע", x + width / 2, y + height / 2, { size: 19, color: MUTED, align: "center" });
-    return;
-  }
-  const lats = nav.map((item) => item.latitude as number);
-  const lons = nav.map((item) => item.longitude as number);
+function geoBounds(points: GeoPoint[]) {
+  if (!points.length) return null;
+  const lats = points.map((item) => item.latitude);
+  const lons = points.map((item) => item.longitude);
   const minLat0 = Math.min(...lats); const maxLat0 = Math.max(...lats);
   const minLon0 = Math.min(...lons); const maxLon0 = Math.max(...lons);
   const latSpan = Math.max(maxLat0 - minLat0, 0.0002);
   const lonSpan = Math.max(maxLon0 - minLon0, 0.0002);
-  const minLat = minLat0 - latSpan * 0.08; const maxLat = maxLat0 + latSpan * 0.08;
-  const minLon = minLon0 - lonSpan * 0.08; const maxLon = maxLon0 + lonSpan * 0.08;
-  const left = x + 24; const right = x + width - 24; const top = y + 48; const bottom = y + height - 30;
-  const project = (lat: number, lon: number) => ({
-    x: left + ((lon - minLon) / (maxLon - minLon)) * (right - left),
-    y: bottom - ((lat - minLat) / (maxLat - minLat)) * (bottom - top),
+  return {
+    minLat: minLat0 - latSpan * 0.08,
+    maxLat: maxLat0 + latSpan * 0.08,
+    minLon: minLon0 - lonSpan * 0.08,
+    maxLon: maxLon0 + lonSpan * 0.08,
+  };
+}
+
+function projector(bounds: NonNullable<ReturnType<typeof geoBounds>>, left: number, right: number, top: number, bottom: number) {
+  return (lat: number, lon: number) => ({
+    x: left + ((lon - bounds.minLon) / (bounds.maxLon - bounds.minLon)) * (right - left),
+    y: bottom - ((lat - bounds.minLat) / (bounds.maxLat - bounds.minLat)) * (bottom - top),
   });
+}
+
+function eventGeoPoints(event: InvestigationPdfEvent) {
+  const navigation = event.result.points.flatMap((point) => point.navigation)
+    .filter((item) => item.latitude !== null && item.longitude !== null)
+    .map((item) => ({ latitude: item.latitude as number, longitude: item.longitude as number }));
+  const routes = event.result.routes.flatMap((route) => route.centerline);
+  return [...navigation, ...routes];
+}
+
+function drawRouteEvidence(
+  ctx: CanvasRenderingContext2D,
+  event: InvestigationPdfEvent,
+  project: ReturnType<typeof projector>,
+  color: string,
+  lineWidth = 2,
+) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth;
+  for (const route of event.result.routes) {
+    if (route.centerline.length < 2) continue;
+    ctx.beginPath();
+    route.centerline.forEach((row, index) => {
+      const point = project(row.latitude, row.longitude);
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+    const first = route.centerline[0];
+    const last = route.centerline[route.centerline.length - 1];
+    if (first.latitude !== last.latitude || first.longitude !== last.longitude) {
+      const point = project(first.latitude, first.longitude);
+      ctx.lineTo(point.x, point.y);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawNavigationEvidence(
+  ctx: CanvasRenderingContext2D,
+  event: InvestigationPdfEvent,
+  project: ReturnType<typeof projector>,
+  colorForMember: (index: number) => string,
+  lineWidth = 4,
+) {
+  const nav = event.result.points.flatMap((point) => point.navigation).filter((item) => item.latitude !== null && item.longitude !== null);
   const memberIds = Array.from(new Set(nav.map((item) => item.memberId)));
   ctx.save();
   memberIds.forEach((memberId, memberIndex) => {
-    ctx.strokeStyle = SERIES[memberIndex % SERIES.length];
-    ctx.lineWidth = 4;
+    ctx.strokeStyle = colorForMember(memberIndex);
+    ctx.lineWidth = lineWidth;
     let drawing = false;
     ctx.beginPath();
-    for (const frame of result.points) {
+    for (const frame of event.result.points) {
       const row = frame.navigation.find((item) => item.memberId === memberId);
       if (!row || row.latitude === null || row.longitude === null) {
         if (drawing) { ctx.stroke(); ctx.beginPath(); drawing = false; }
@@ -214,7 +265,25 @@ function drawMap(ctx: CanvasRenderingContext2D, event: InvestigationPdfEvent, x:
     if (drawing) ctx.stroke();
   });
   ctx.restore();
-  drawText(ctx, `${minLat.toFixed(5)}…${maxLat.toFixed(5)} / ${minLon.toFixed(5)}…${maxLon.toFixed(5)}`, x + 16, y + height - 8, { size: 13, color: MUTED, dir: "ltr", align: "left" });
+}
+
+function drawMap(ctx: CanvasRenderingContext2D, event: InvestigationPdfEvent, x: number, y: number, width: number, height: number) {
+  const result = event.result;
+  panel(ctx, x, y, width, height);
+  drawText(ctx, "מפת WGS84 של האירוע", x + width - 18, y + 28, { size: 17, weight: 700 });
+  const evidence = eventGeoPoints(event);
+  const bounds = geoBounds(evidence);
+  if (!bounds) {
+    drawText(ctx, "אין עדות ניווט או נתיב מזוהה בארכיון", x + width / 2, y + height / 2, { size: 19, color: MUTED, align: "center" });
+    return;
+  }
+  const left = x + 24; const right = x + width - 24; const top = y + 48; const bottom = y + height - 50;
+  const project = projector(bounds, left, right, top, bottom);
+  drawRouteEvidence(ctx, event, project, "#263238", 2);
+  drawNavigationEvidence(ctx, event, project, (memberIndex) => SERIES[memberIndex % SERIES.length], 4);
+  if (!result.routes.length) drawText(ctx, "אין route geometry evidence בארכיון הישן", x + width - 18, y + height - 24, { size: 13, color: MUTED });
+  else drawText(ctx, `נתיבים מזוהים: ${result.routes.map((route) => `${route.routeInstanceId}/${route.subtype}`).join(" · ")}`, x + width - 18, y + height - 24, { size: 13, color: MUTED });
+  drawText(ctx, `${bounds.minLat.toFixed(5)}…${bounds.maxLat.toFixed(5)} / ${bounds.minLon.toFixed(5)}…${bounds.maxLon.toFixed(5)}`, x + 16, y + height - 8, { size: 13, color: MUTED, dir: "ltr", align: "left" });
 }
 
 function coverPage(report: InvestigationPdfReport) {
@@ -233,11 +302,52 @@ function coverPage(report: InvestigationPdfReport) {
   let y = 648;
   for (const [index, item] of report.events.slice(0, 18).entries()) {
     const result = item.result;
-    drawText(ctx, `${index + 1}. ${result.eventId} · קבוצה ${result.groupId} · תבנית ${result.templateId} · ציון ${scoreLabel(result.summary.total)}`, PAGE_WIDTH_PX - MARGIN, y, { size: 18 });
+    drawText(ctx, `${index + 1}. ${result.eventId} · קבוצה ${result.groupId} · תבנית ${result.templateId} · ציון ${scoreLabel(result.summary.total)}`, PAGE_WIDTH_PX - MARGIN, y, { size: 18, color: eventColor(index) });
     y += 43;
   }
   if (report.events.length > 18) drawText(ctx, `ועוד ${report.events.length - 18} אירועים — לכל אירוע מוקדש פרק נפרד`, PAGE_WIDTH_PX - MARGIN, y + 12, { size: 18, color: MUTED });
   drawFooter(ctx, "שער");
+  return canvas;
+}
+
+function summaryMapPage(report: InvestigationPdfReport) {
+  const { canvas, ctx } = makeCanvas();
+  drawHeader(ctx, "מפה מסכמת לכל טווח התחקור", `${report.from ?? "תחילת הארכיון"} ← ${report.to ?? "סוף הארכיון"}`);
+  const mapX = MARGIN;
+  const mapY = 205;
+  const mapWidth = PAGE_WIDTH_PX - MARGIN * 2;
+  const mapHeight = 1040;
+  panel(ctx, mapX, mapY, mapWidth, mapHeight);
+  const allPoints = report.events.flatMap(eventGeoPoints);
+  const bounds = geoBounds(allPoints);
+  if (!bounds) {
+    drawText(ctx, "אין עדות WGS84 או route geometry בטווח שנבחר", PAGE_WIDTH_PX / 2, 700, { size: 22, color: MUTED, align: "center" });
+  } else {
+    const left = mapX + 28; const right = mapX + mapWidth - 28; const top = mapY + 40; const bottom = mapY + mapHeight - 50;
+    const project = projector(bounds, left, right, top, bottom);
+    report.events.forEach((event, eventIndex) => {
+      const color = eventColor(eventIndex);
+      drawRouteEvidence(ctx, event, project, color, 2);
+      drawNavigationEvidence(ctx, event, project, () => color, 4);
+      const anchor = event.result.routes[0]?.centerline[0]
+        ?? event.result.points.flatMap((point) => point.navigation).find((row) => row.latitude !== null && row.longitude !== null);
+      if (anchor && anchor.latitude !== null && anchor.longitude !== null) {
+        const point = project(anchor.latitude, anchor.longitude);
+        drawText(ctx, `${eventIndex + 1} · ${event.result.groupId}`, point.x + 8, point.y - 8, { size: 16, weight: 700, color, dir: "ltr", align: "left" });
+      }
+    });
+    drawText(ctx, `${bounds.minLat.toFixed(5)}…${bounds.maxLat.toFixed(5)} / ${bounds.minLon.toFixed(5)}…${bounds.maxLon.toFixed(5)}`, mapX + 18, mapY + mapHeight - 14, { size: 13, color: MUTED, dir: "ltr", align: "left" });
+  }
+
+  drawText(ctx, "מקרא אירועים", PAGE_WIDTH_PX - MARGIN, 1305, { size: 24, weight: 700 });
+  let legendY = 1345;
+  for (const [index, event] of report.events.slice(0, 8).entries()) {
+    drawText(ctx, `${index + 1}. ${event.result.eventId} · קבוצה ${event.result.groupId} · ${event.result.routes.length ? `נתיב ${event.result.routes.map((route) => route.subtype).join("/")}` : "ללא route evidence"}`, PAGE_WIDTH_PX - MARGIN, legendY, { size: 17, color: eventColor(index) });
+    legendY += 34;
+  }
+  if (report.events.length > 8) drawText(ctx, `ועוד ${report.events.length - 8} אירועים; הצבע נשמר גם בפרקי האירועים`, PAGE_WIDTH_PX - MARGIN, legendY, { size: 16, color: MUTED });
+  drawText(ctx, "העקבות נשברות בחורי ניווט ובין אירועים; אין קו מלאכותי המחבר evidence חסר.", PAGE_WIDTH_PX - MARGIN, 1590, { size: 16, color: MUTED });
+  drawFooter(ctx, "מפה מסכמת · REP-02");
   return canvas;
 }
 
@@ -273,6 +383,7 @@ function detailRows(event: InvestigationPdfEvent) {
   const rows: { label: string; value: string; tone?: string }[] = [];
   rows.push({ label: "תבנית", value: `${result.templateId} · ${result.templateVersion}` });
   rows.push({ label: "גרסת חישוב", value: `code ${result.codeVersion} · config ${result.configVersion}` });
+  rows.push({ label: "נתיבים מזוהים", value: result.routes.length ? result.routes.map((route) => `${route.routeInstanceId}: ${route.subtype} · ${route.routeId} · ${route.direction} · quality ${route.detectionQuality.toFixed(3)}`).join(" · ") : "אין route geometry evidence בארכיון" });
   rows.push({ label: "סיבות שורש", value: result.rootCauses.length ? result.rootCauses.map((cause) => `${cause.reason}: ${cause.occurrences}`).join(" · ") : "ללא סיבה מדווחת" });
   const lastScored = [...result.points].reverse().find((point) => point.members.length > 0);
   if (!lastScored) rows.push({ label: "ציוני רכבים", value: "אין מסגרת מחושבת עם ציוני רכבים" });
@@ -393,7 +504,7 @@ export function jpegPagesToPdf(pages: BrowserPdfPage[]) {
 export async function buildInvestigationPdfBrowser(report: InvestigationPdfReport) {
   if (!report.events.length) throw new Error("REP-01 PDF cannot be generated without report events");
   if (typeof document !== "undefined" && "fonts" in document) await document.fonts.ready;
-  const pages: BrowserPdfPage[] = [canvasJpeg(coverPage(report))];
+  const pages: BrowserPdfPage[] = [canvasJpeg(coverPage(report)), canvasJpeg(summaryMapPage(report))];
   report.events.forEach((event, index) => {
     pages.push(canvasJpeg(eventMainPage(event, index, report.events.length)));
     for (const canvas of eventDetailPages(event, index, report.events.length)) pages.push(canvasJpeg(canvas));
