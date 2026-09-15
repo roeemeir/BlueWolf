@@ -151,7 +151,7 @@ test('REP-01/02 renderer sends Hebrew metadata to RTL canvas, draws summary map 
     assert.equal(canvases.length, count);
     assert.ok(rendered.some((item) => item.text.includes('זאב כחול — דוח תחקור הנדסי') && item.direction === 'rtl'));
     assert.ok(rendered.some((item) => item.text.includes('מפה מסכמת לכל טווח התחקור') && item.direction === 'rtl'));
-    assert.ok(rendered.some((item) => item.text.includes('העקבות נשברות בחורי ניווט ובין אירועים') && item.direction === 'rtl'));
+    assert.ok(rendered.some((item) => item.text.includes('העקבות נחתכות לטווח שנבחר ונשברות בחורי ניווט ובין אירועים') && item.direction === 'rtl'));
     assert.ok(rendered.some((item) => item.text.includes('route-core-1') && item.direction === 'rtl'));
     assert.ok(rendered.some((item) => item.text.includes('זירה צפונית') && item.direction === 'rtl'));
     assert.ok(rendered.some((item) => item.text.includes('טקסט תחקור בעברית ללא חיתוך') && item.direction === 'rtl'));
