@@ -136,8 +136,9 @@ export function RouteBankWktWorkbench() {
             const d = screen.map((point, index) => `${index ? "L" : "M"}${point.x},${point.y}`).join(" ");
             const selectedRoute = route.id === selectedId;
             return <g key={route.id} data-testid={`route-wkt-path-${route.id}`} onPointerDown={(event) => startDrag(event, route)} onClick={() => setSelectedId(route.id)} style={{ cursor: "grab" }}>
-              <path d={d} fill="none" stroke={selectedRoute ? "currentColor" : "#8396a4"} strokeWidth={selectedRoute ? 5 : 3} opacity={selectedRoute ? 1 : .75} />
-              {selectedRoute && screen[0] && <><circle cx={screen[0].x} cy={screen[0].y} r="7" /><text x={screen[0].x + 12} y={screen[0].y - 10}>{route.name}</text></>}
+              <path data-testid={`route-wkt-hit-${route.id}`} d={d} fill="none" stroke="transparent" strokeWidth="22" pointerEvents="stroke" />
+              <path d={d} fill="none" stroke={selectedRoute ? "currentColor" : "#8396a4"} strokeWidth={selectedRoute ? 5 : 3} opacity={selectedRoute ? 1 : .75} pointerEvents="none" />
+              {selectedRoute && screen[0] && <><circle cx={screen[0].x} cy={screen[0].y} r="7" pointerEvents="none" /><text x={screen[0].x + 12} y={screen[0].y - 10} pointerEvents="none">{route.name}</text></>}
             </g>;
           })}
         </svg>
