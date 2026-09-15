@@ -59,23 +59,33 @@ async def _request(
 
 
 class QaRunnerTests(unittest.TestCase):
-    def test_real_runner_executes_existing_core_selftest_with_provenance(self) -> None:
+    def test_real_runner_executes_existing_core_smoke_with_provenance(self) -> None:
         with patch.dict(os.environ, {"BLUEWOLF_CODE_SHA": "test-sha-123"}, clear=False):
             result = run_deterministic_qa(
-                {"scenarioId": "deterministic-core", "configVersion": "cfg-17"}
+                {
+                    "scenarioId": "deterministic-core",
+                    "configVersion": "cfg-17",
+                    "scope": "smoke",
+                }
             )
         self.assertEqual(result["schemaVersion"], QA_RUN_SCHEMA_VERSION)
         self.assertEqual(result["scenarioId"], "deterministic-core")
         self.assertEqual(result["codeSha"], "test-sha-123")
         self.assertEqual(result["configVersion"], "cfg-17")
+        self.assertEqual(result["scope"], "smoke")
         self.assertGreater(result["durationMs"], 0)
         self.assertEqual(
             {category["id"] for category in result["categories"]},
-            {"scoring", "determinism", "capacity"},
+            {"scoring", "determinism"},
         )
         for category in result["categories"]:
             self.assertEqual(category["passed"] + category["failed"], category["scenarios"])
         self.assertTrue(any(item["name"] == "batch_increment_equivalence" for item in result["details"]))
+        self.assertFalse(any(item["name"] == "core_envelope_150_vehicles" for item in result["details"]))
+
+    def test_invalid_scope_is_rejected_not_silently_downgraded(self) -> None:
+        with self.assertRaisesRegex(ValueError, "scope"):
+            run_deterministic_qa({"scope": "pretend-fast"})
 
 
 class QaServiceTests(unittest.TestCase):
@@ -105,6 +115,7 @@ class QaServiceTests(unittest.TestCase):
             "startedAt": "2026-09-15T06:00:00Z",
             "durationMs": 10.0,
             "passed": True,
+            "scope": "smoke",
             "categories": [{"id": "route", "title": "Route", "scenarios": 1, "passed": 1, "failed": 0}],
         }
         app = QaEnabledASGI(base, token="secret")
@@ -113,7 +124,7 @@ class QaServiceTests(unittest.TestCase):
                 _request(
                     app,
                     "/v1/qa/run",
-                    payload={"scenarioId": "gt-1", "configVersion": "cfg-1"},
+                    payload={"scenarioId": "gt-1", "configVersion": "cfg-1", "scope": "smoke"},
                     token="secret",
                 )
             )
