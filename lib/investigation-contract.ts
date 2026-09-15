@@ -32,11 +32,25 @@ export type RecomputedMember = {
   primaryReason: string | null;
 };
 
+export type RecomputedNavigation = {
+  memberId: string;
+  vehicleIdentifier: number;
+  latitude: number | null;
+  longitude: number | null;
+  altitudeM: number | null;
+  velocityNorthMps: number | null;
+  velocityEastMps: number | null;
+  headingDeg: number | null;
+  active: boolean | null;
+  reliability: number;
+};
+
 export type EventRecomputePoint = {
   observedAt: string;
   pendingReason: string | null;
   group: { valid: boolean; sync: number | null; route: number | null; total: number | null };
   members: RecomputedMember[];
+  navigation: RecomputedNavigation[];
 };
 
 export type EventRecomputeResult = {
@@ -92,6 +106,11 @@ function finite(value: unknown, name: string): number {
   return value;
 }
 
+function finiteOrNull(value: unknown, name: string): number | null {
+  if (value === null || value === undefined) return null;
+  return finite(value, name);
+}
+
 export function normalizeInvestigationEvents(value: unknown): InvestigationEventList {
   const row = object(value, "investigation event list");
   if (row.schemaVersion !== INVESTIGATION_EVENTS_SCHEMA) throw new Error("unsupported investigation event schema");
@@ -139,6 +158,8 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
     const group = object(point.group, "group score");
     if (typeof group.valid !== "boolean") throw new Error("group valid must be boolean");
     if (!Array.isArray(point.members)) throw new Error("members must be an array");
+    const navigationRows = point.navigation === undefined ? [] : point.navigation;
+    if (!Array.isArray(navigationRows)) throw new Error("navigation must be an array");
     const pendingReason = point.pendingReason === null ? null : text(point.pendingReason, "pendingReason");
     const members = point.members.map((raw, memberIndex) => {
       const member = object(raw, `member ${memberIndex + 1}`);
@@ -156,6 +177,33 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
         primaryReason: member.primaryReason === null ? null : text(member.primaryReason, "primaryReason"),
       };
     });
+    const navigation = navigationRows.map((raw, navigationIndex) => {
+      const nav = object(raw, `navigation ${navigationIndex + 1}`);
+      const latitude = finiteOrNull(nav.latitude, "navigation latitude");
+      const longitude = finiteOrNull(nav.longitude, "navigation longitude");
+      if ((latitude === null) !== (longitude === null)) throw new Error("navigation latitude/longitude must both exist or both be null");
+      if (latitude !== null && (latitude < -90 || latitude > 90)) throw new Error("navigation latitude is outside WGS84 range");
+      if (longitude !== null && (longitude < -180 || longitude > 180)) throw new Error("navigation longitude is outside WGS84 range");
+      const headingDeg = finiteOrNull(nav.headingDeg, "navigation headingDeg");
+      if (headingDeg !== null && (headingDeg < 0 || headingDeg >= 360)) throw new Error("navigation headingDeg must be in [0,360)");
+      const reliability = finite(nav.reliability, "navigation reliability");
+      if (reliability < 0 || reliability > 1) throw new Error("navigation reliability must be in [0,1]");
+      if (nav.active !== null && typeof nav.active !== "boolean") throw new Error("navigation active must be boolean or null");
+      return {
+        memberId: text(nav.memberId, "navigation memberId"),
+        vehicleIdentifier: integer(nav.vehicleIdentifier, "navigation vehicleIdentifier"),
+        latitude,
+        longitude,
+        altitudeM: finiteOrNull(nav.altitudeM, "navigation altitudeM"),
+        velocityNorthMps: finiteOrNull(nav.velocityNorthMps, "navigation velocityNorthMps"),
+        velocityEastMps: finiteOrNull(nav.velocityEastMps, "navigation velocityEastMps"),
+        headingDeg,
+        active: nav.active as boolean | null,
+        reliability,
+      };
+    });
+    if (new Set(navigation.map((item) => item.memberId)).size !== navigation.length) throw new Error("navigation member ids must be unique per frame");
+    if (new Set(navigation.map((item) => item.vehicleIdentifier)).size !== navigation.length) throw new Error("navigation vehicle identifiers must be unique per frame");
     const normalizedGroup = {
       valid: group.valid,
       sync: score(group.sync, "group sync"),
@@ -171,6 +219,7 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
       pendingReason,
       group: normalizedGroup,
       members,
+      navigation,
     };
   });
   const observedMissing = points.filter((point) => point.pendingReason !== null).length;
