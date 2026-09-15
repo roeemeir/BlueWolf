@@ -31,6 +31,14 @@ export function canonicalSoOrderKey(chain: readonly SoRouteKind[]) {
   return forward < reversed ? forward : reversed;
 }
 
+export function directSoPlacementKey(chain: readonly SoRouteKind[], placements: readonly SoDirectPlacement[]) {
+  const placementKey = placements
+    .map((item) => `${item.routeIndex}:${normalizePhase(item.phase)}:${item.typeId}:${item.direction}`)
+    .sort()
+    .join("|");
+  return `${key(chain)}|${placementKey}`;
+}
+
 export function generateUniqueSoOrders(singleCount: number, doubleCount: number) {
   if (!Number.isInteger(singleCount) || singleCount < 0 || !Number.isInteger(doubleCount) || doubleCount < 0) {
     throw new Error("SO counts must be non-negative integers");
