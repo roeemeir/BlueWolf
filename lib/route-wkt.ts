@@ -4,7 +4,7 @@ export type RouteGeometry = { kind: "LINESTRING" | "POLYGON"; points: GeoPoint[]
 
 export function parseRouteWkt(value: string): RouteGeometry {
   if (value.length > 100000) throw new Error("הנתיב ארוך מדי");
-  const match = /^\s*(LINESTRING|POLYGON)\s*\((.*)\)\s*$/is.exec(value);
+  const match = /^\s*(LINESTRING|POLYGON)\s*\(([\s\S]*)\)\s*$/i.exec(value);
   if (!match) throw new Error("נדרש LINESTRING סגור או POLYGON ללא חורים");
   const kind = match[1].toUpperCase() as RouteGeometry["kind"];
   let body = match[2].trim();
