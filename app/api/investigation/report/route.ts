@@ -167,7 +167,9 @@ export async function POST(request: Request) {
       events: reportEvents,
     });
     const day = generatedAt.slice(0, 10).replaceAll("-", "");
-    return new Response(pdf, {
+    const pdfBody = new ArrayBuffer(pdf.byteLength);
+    new Uint8Array(pdfBody).set(pdf);
+    return new Response(pdfBody, {
       status: 200,
       headers: {
         "content-type": "application/pdf",
