@@ -62,6 +62,17 @@ def _frame(at: datetime, phase_a: float = 0.0, phase_b: float = 0.5) -> SOEventO
     )
 
 
+def _pending_frame(at: datetime) -> SOEventObservationFrame:
+    return SOEventObservationFrame(
+        event_id="g-1@2026-09-15T06:00:00Z",
+        server_id=7,
+        group_id="g-1",
+        sample_time_utc=at,
+        observations=(),
+        pending_reason="core_observations_incomplete",
+    )
+
+
 class EventRecomputeTests(unittest.TestCase):
     def test_template_change_recomputes_real_scores_from_same_core_observations(self) -> None:
         start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
@@ -89,6 +100,8 @@ class EventRecomputeTests(unittest.TestCase):
         )
 
         self.assertEqual(baseline["frameCount"], 2)
+        self.assertEqual(baseline["scoredFrameCount"], 2)
+        self.assertEqual(baseline["missingFrameCount"], 0)
         self.assertEqual(baseline["serverId"], 7)
         self.assertEqual(baseline["groupId"], "g-1")
         self.assertEqual(baseline["scenarioId"], "investigation-17")
@@ -100,6 +113,32 @@ class EventRecomputeTests(unittest.TestCase):
         )
         self.assertTrue(changed["rootCauses"])
         self.assertGreater(changed["rootCauses"][0]["occurrences"], 0)
+
+    def test_pending_frame_preserves_full_event_range_without_fabricating_score(self) -> None:
+        start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
+        pending = _pending_frame(start)
+        scored = _frame(start + timedelta(seconds=5))
+        result = recompute_so_event(
+            event_id=pending.event_id,
+            template=_template("opposite", Quarter.Q2),
+            frames=(pending, scored),
+            code_version="sha-pending",
+            config_version="cfg-pending",
+            scenario_id="pending-range",
+            run_id="pending-run",
+        )
+
+        self.assertEqual(result["startAt"], "2026-09-15T06:00:00Z")
+        self.assertEqual(result["endAt"], "2026-09-15T06:00:05Z")
+        self.assertEqual(result["frameCount"], 2)
+        self.assertEqual(result["scoredFrameCount"], 1)
+        self.assertEqual(result["missingFrameCount"], 1)
+        self.assertEqual(result["points"][0]["pendingReason"], "core_observations_incomplete")
+        self.assertFalse(result["points"][0]["group"]["valid"])
+        self.assertIsNone(result["points"][0]["group"]["total"])
+        self.assertEqual(result["points"][0]["members"], [])
+        self.assertIsNone(result["points"][1]["pendingReason"])
+        self.assertEqual(len(result["points"][1]["members"]), 2)
 
     def test_frames_from_multiple_groups_are_rejected(self) -> None:
         start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
@@ -124,22 +163,27 @@ class EventRecomputeTests(unittest.TestCase):
 class EventObservationArchiveTests(unittest.TestCase):
     def test_event_evidence_is_immutable_round_trips_and_recompute_provenance_persists(self) -> None:
         start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
-        frame = _frame(start)
+        pending = _pending_frame(start)
+        frame = _frame(start + timedelta(seconds=5))
         template = _template("opposite", Quarter.Q2)
         with TemporaryDirectory() as directory:
             archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
+            self.assertTrue(archive.record_frame(pending))
             self.assertTrue(archive.record_frame(frame))
+            self.assertFalse(archive.record_frame(pending))
             self.assertFalse(archive.record_frame(frame))
 
-            conflicting = _frame(start, 0.1, 0.6)
+            conflicting = _frame(frame.sample_time_utc, 0.1, 0.6)
             with self.assertRaisesRegex(ValueError, "conflicting immutable"):
                 archive.record_frame(conflicting)
 
             restored = archive.read_event(frame.event_id)
-            self.assertEqual(restored, (frame,))
+            self.assertEqual(restored, (pending, frame))
             listed = archive.list_events(7)
             self.assertEqual(listed[0]["eventId"], frame.event_id)
-            self.assertEqual(listed[0]["frameCount"], 1)
+            self.assertEqual(listed[0]["frameCount"], 2)
+            self.assertEqual(listed[0]["startAt"], "2026-09-15T06:00:00Z")
+            self.assertEqual(listed[0]["endAt"], "2026-09-15T06:00:05Z")
 
             result = recompute_so_event(
                 event_id=frame.event_id,
@@ -150,6 +194,7 @@ class EventObservationArchiveTests(unittest.TestCase):
                 scenario_id="scenario-archive",
                 run_id="recompute-fixed",
             )
+            self.assertEqual(result["missingFrameCount"], 1)
             archive.record_recompute(result, created_at_utc=start + timedelta(minutes=1))
             saved = archive.recomputations(frame.event_id)
             self.assertEqual(len(saved), 1)
@@ -157,6 +202,7 @@ class EventObservationArchiveTests(unittest.TestCase):
             self.assertEqual(saved[0]["codeVersion"], "sha-archive")
             self.assertEqual(saved[0]["configVersion"], "cfg-archive")
             self.assertEqual(saved[0]["templateVersion"], template_fingerprint(template))
+            self.assertEqual(saved[0]["missingFrameCount"], 1)
 
 
 if __name__ == "__main__":
