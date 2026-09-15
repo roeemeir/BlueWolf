@@ -2,7 +2,9 @@ import type { LiveRuntimeSnapshot } from "./live-runtime";
 
 export const LIVE_RUNTIME_HISTORY_SCHEMA_VERSION = "bluewolf.live-runtime-history.v1" as const;
 
-const DEFAULT_HISTORY_WINDOW_MS = 30 * 60 * 1000;
+// BW-OP-013 exposes 30/60/90/120 minute views. Keep the compact client cache
+// for the longest selectable view; the selected UI window remains 30 minutes by default.
+const DEFAULT_HISTORY_WINDOW_MS = 120 * 60 * 1000;
 const DEFAULT_HISTORY_LIMIT = 2000;
 const MAX_HISTORY_LIMIT = 5000;
 
