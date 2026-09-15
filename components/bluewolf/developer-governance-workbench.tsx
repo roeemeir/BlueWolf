@@ -4,6 +4,7 @@ import { useWorkspace } from "./app-context";
 import { DeveloperView } from "./developer-view";
 import { QaTruthWorkbench } from "./qa-truth-workbench";
 import { RouteBankWktWorkbench } from "./route-bank-wkt-workbench";
+import { SoTemplateGovernanceWorkbench } from "./so-template-governance-workbench";
 import { TemplateGovernanceWorkbench } from "./template-governance-workbench";
 import { VehicleRangeWorkbench } from "./vehicle-range-workbench";
 
@@ -23,8 +24,14 @@ export function DeveloperGovernanceWorkbench() {
         opacity: 0.22 !important;
         stroke-width: 2.5 !important;
       }
+      /* SO-01/SO-02: the temporary selector-based SO editor is not an active editing path.
+         The dedicated direct SO workbench below is the only SO authoring surface. */
+      [data-testid="template-governance-workbench"] .v04-family-switch > button:nth-child(2) {
+        display: none !important;
+      }
     `}</style>
     <TemplateGovernanceWorkbench />
+    <SoTemplateGovernanceWorkbench />
     <RouteBankWktWorkbench key={`route-bank-${revision}`} />
     <VehicleRangeWorkbench />
     <QaTruthWorkbench />
