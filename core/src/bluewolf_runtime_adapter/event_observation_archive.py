@@ -1,13 +1,13 @@
 """Durable SQLite archive for SO event scoring evidence and recomputations.
 
-The archive stores the immutable ``SOScoringObservation`` frames produced by the
-real Core runtime. Investigation recomputation therefore reuses Core evidence
-instead of reconstructing phases or changing a displayed score cosmetically.
+The archive stores immutable Core evidence frames, including timestamps where
+scoring evidence was not yet sufficient. Investigation recomputation therefore
+reuses Core observations and preserves the complete observed event range rather
+than reconstructing phases or silently dropping missing points.
 
 A frame is immutable by ``(event_id, sample_time_utc)``. Re-recording the exact
 same frame is idempotent; conflicting evidence at the same key is rejected.
-Recomputation results are stored separately with their code/config/template
-provenance so a report can always identify what was recalculated.
+Recomputation results are stored separately with code/config/template provenance.
 """
 from __future__ import annotations
 
@@ -71,14 +71,8 @@ def _observation_from_payload(value: Mapping[str, Any]) -> SOScoringObservation:
         period_error_ratio=float(value["period_error_ratio"]),
         movement_error_ratio=float(value["movement_error_ratio"]),
         distance_error_b_ratio=float(value["distance_error_b_ratio"]),
-        tangent_error_deg=(
-            None if value.get("tangent_error_deg") is None else float(value["tangent_error_deg"])
-        ),
-        curvature_error_ratio=(
-            None
-            if value.get("curvature_error_ratio") is None
-            else float(value["curvature_error_ratio"])
-        ),
+        tangent_error_deg=(None if value.get("tangent_error_deg") is None else float(value["tangent_error_deg"])),
+        curvature_error_ratio=(None if value.get("curvature_error_ratio") is None else float(value["curvature_error_ratio"])),
         reliability=float(value["reliability"]),
         speed_fraction=float(value["speed_fraction"]),
         active=value.get("active"),
@@ -92,6 +86,7 @@ def _frame_payload(frame: SOEventObservationFrame) -> str:
         {
             "server_id": frame.server_id,
             "group_id": frame.group_id,
+            "pending_reason": frame.pending_reason,
             "observations": [_observation_payload(item) for item in frame.observations],
         },
         ensure_ascii=False,
@@ -182,17 +177,12 @@ class SOEventObservationArchive:
             )
 
     def record_frame(self, frame: SOEventObservationFrame) -> bool:
-        """Store one immutable Core frame; return True when newly inserted."""
-
         payload = _frame_payload(frame)
         payload_hash = _hash(payload)
         timestamp = _iso(frame.sample_time_utc)
         with self._connect() as connection:
             existing = connection.execute(
-                """
-                SELECT payload_hash FROM so_event_observation_frames
-                WHERE event_id=? AND sample_time_utc=?
-                """,
+                "SELECT payload_hash FROM so_event_observation_frames WHERE event_id=? AND sample_time_utc=?",
                 (frame.event_id, timestamp),
             ).fetchone()
             if existing is not None:
@@ -205,14 +195,7 @@ class SOEventObservationArchive:
                     event_id,server_id,group_id,sample_time_utc,payload_hash,payload_json
                 ) VALUES(?,?,?,?,?,?)
                 """,
-                (
-                    frame.event_id,
-                    frame.server_id,
-                    frame.group_id,
-                    timestamp,
-                    payload_hash,
-                    payload,
-                ),
+                (frame.event_id, frame.server_id, frame.group_id, timestamp, payload_hash, payload),
             )
         return True
 
@@ -224,8 +207,7 @@ class SOEventObservationArchive:
                 """
                 SELECT server_id,group_id,sample_time_utc,payload_json
                 FROM so_event_observation_frames
-                WHERE event_id=?
-                ORDER BY sample_time_utc ASC
+                WHERE event_id=? ORDER BY sample_time_utc ASC
                 """,
                 (event_id,),
             ).fetchall()
@@ -242,6 +224,8 @@ class SOEventObservationArchive:
             )
             if len(observations) != len(observations_raw):
                 raise ValueError("archived SO event observation row is malformed")
+            pending_raw = payload.get("pending_reason")
+            pending_reason = None if pending_raw is None else str(pending_raw)
             frames.append(
                 SOEventObservationFrame(
                     event_id=event_id,
@@ -249,6 +233,7 @@ class SOEventObservationArchive:
                     group_id=str(row["group_id"]),
                     sample_time_utc=_parse_time(str(row["sample_time_utc"])),
                     observations=observations,
+                    pending_reason=pending_reason,
                 )
             )
         return tuple(frames)
@@ -266,8 +251,7 @@ class SOEventObservationArchive:
                 FROM so_event_observation_frames
                 WHERE server_id=?
                 GROUP BY event_id,group_id
-                ORDER BY start_at DESC
-                LIMIT ?
+                ORDER BY start_at DESC LIMIT ?
                 """,
                 (server_id, limit),
             ).fetchall()
@@ -330,10 +314,7 @@ class SOEventObservationArchive:
             raise ValueError("event_id is required")
         with self._connect() as connection:
             rows = connection.execute(
-                """
-                SELECT result_json FROM so_event_recomputations
-                WHERE event_id=? ORDER BY created_at_utc ASC, run_id ASC
-                """,
+                "SELECT result_json FROM so_event_recomputations WHERE event_id=? ORDER BY created_at_utc ASC, run_id ASC",
                 (event_id,),
             ).fetchall()
         return tuple(json.loads(str(row["result_json"])) for row in rows)
