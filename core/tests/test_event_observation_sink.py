@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+import unittest
+
+from bluewolf_core.event_alert import EventAlertEngine
+from bluewolf_core.live_so_event_runtime import LiveSOEventRuntime, TemplateComparisonDimension
+from bluewolf_core.live_so_scoring import LiveSOGroupScorer
+from bluewolf_core.so_template_bank import SOTemplateBank, SOTemplateBankEntry
+from bluewolf_core.so_template_selection import SOTemplateSelectionRegistry
+
+from test_live_so_event_runtime import _members
+from test_live_so_scoring import _constellation, _route, _template
+
+
+class EventObservationSinkTests(unittest.TestCase):
+    def test_complete_scored_snapshot_emits_event_id_and_core_observations(self) -> None:
+        bank = SOTemplateBank((SOTemplateBankEntry(_template("default"), is_default=True),))
+        registry = SOTemplateSelectionRegistry(bank)
+        scorer = LiveSOGroupScorer(registry)
+        captured = []
+        runtime = LiveSOEventRuntime(
+            scorer,
+            comparison_dimension=TemplateComparisonDimension.SYNC,
+            event_engine=EventAlertEngine(),
+            observation_sink=captured.append,
+        )
+        route = _route(period_s=100.0)
+        constellation = _constellation()
+
+        warmup = runtime.process_snapshot(
+            "g1",
+            constellation,
+            _members(route, 0),
+            reference_period_s=100.0,
+            displayed_group_score=90.0,
+            displayed_score_valid=True,
+        )
+        self.assertEqual(captured, [])
+
+        scored = runtime.process_snapshot(
+            "g1",
+            constellation,
+            _members(route, 5),
+            reference_period_s=100.0,
+            displayed_group_score=90.0,
+            displayed_score_valid=True,
+        )
+        self.assertEqual(len(captured), 1)
+        frame = captured[0]
+        self.assertEqual(frame.event_id, scored.event.snapshot.event_id)
+        self.assertEqual(frame.group_id, "g1")
+        self.assertEqual(frame.server_id, 1)
+        self.assertEqual(frame.sample_time_utc, scored.event.snapshot.event_start_utc.replace(second=5))
+        self.assertEqual({item.member_id for item in frame.observations}, {"m1", "m2"})
+        self.assertTrue(all(item.diagnostics for item in frame.observations))
+
+
+if __name__ == "__main__":
+    unittest.main()
