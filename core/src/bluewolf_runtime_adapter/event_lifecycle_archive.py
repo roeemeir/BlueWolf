@@ -164,8 +164,10 @@ class SOEventLifecycleArchive:
             status = "closed"
         elif ending is not None:
             status = "finalizing"
-        else:
+        elif opened is not None:
             status = "active"
+        else:
+            status = "unknown"
         return {
             "status": status,
             "openedAt": None if opened is None else opened["occurredAt"],
