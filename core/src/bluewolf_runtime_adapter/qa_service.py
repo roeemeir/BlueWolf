@@ -1,8 +1,8 @@
 """ASGI wrapper adding truth-backed QA and investigation execution.
 
 The wrapper delegates live-runtime paths unchanged. QA executes the real Core
-self-test. Investigation reads immutable SO event evidence captured by the Core
-and recomputes through ``score_so_template``; no demo fallback is allowed.
+self-test. Investigation reads immutable SO event observations and lifecycle
+evidence captured by the Core; no demo fallback is allowed.
 """
 from __future__ import annotations
 
@@ -17,16 +17,15 @@ from urllib.parse import parse_qs
 from bluewolf_core.event_recompute import recompute_so_event
 
 from . import service
-from .event_archive_binding import (
-    attach_event_observation_archive,
-    operational_config_fingerprint,
-)
+from .event_archive_binding import attach_event_archives, operational_config_fingerprint
+from .event_lifecycle_archive import SOEventLifecycleArchive
 from .event_observation_archive import SOEventObservationArchive
 from .qa_runner import run_deterministic_qa
 
 _MAX_BODY_BYTES = 64 * 1024
 
 event_archive: SOEventObservationArchive | None = None
+event_lifecycle_archive: SOEventLifecycleArchive | None = None
 
 
 def _json_bytes(payload: Mapping[str, Any]) -> bytes:
@@ -34,10 +33,7 @@ def _json_bytes(payload: Mapping[str, Any]) -> bytes:
 
 
 def _code_version() -> str | None:
-    value = (
-        os.environ.get("BLUEWOLF_CODE_SHA", "").strip()
-        or os.environ.get("GITHUB_SHA", "").strip()
-    )
+    value = os.environ.get("BLUEWOLF_CODE_SHA", "").strip() or os.environ.get("GITHUB_SHA", "").strip()
     return value or None
 
 
@@ -92,26 +88,18 @@ class QaEnabledASGI:
         return hmac.compare_digest(raw, f"Bearer {self.token}")
 
     @staticmethod
-    async def _send_json(
-        send,
-        status: int,
-        payload: Mapping[str, Any],
-        *,
-        surface: bytes = b"python-core",
-    ) -> None:
+    async def _send_json(send, status: int, payload: Mapping[str, Any], *, surface: bytes = b"python-core") -> None:
         body = _json_bytes(payload)
-        await send(
-            {
-                "type": "http.response.start",
-                "status": status,
-                "headers": [
-                    (b"content-type", b"application/json; charset=utf-8"),
-                    (b"cache-control", b"no-store"),
-                    (b"content-length", str(len(body)).encode("ascii")),
-                    (b"x-bluewolf-source", surface),
-                ],
-            }
-        )
+        await send({
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json; charset=utf-8"),
+                (b"cache-control", b"no-store"),
+                (b"content-length", str(len(body)).encode("ascii")),
+                (b"x-bluewolf-source", surface),
+            ],
+        })
         await send({"type": "http.response.body", "body": body})
 
     @staticmethod
@@ -138,10 +126,7 @@ class QaEnabledASGI:
 
     @staticmethod
     def _query(scope) -> dict[str, list[str]]:
-        return parse_qs(
-            bytes(scope.get("query_string", b"")).decode("utf-8", errors="strict"),
-            keep_blank_values=True,
-        )
+        return parse_qs(bytes(scope.get("query_string", b"")).decode("utf-8", errors="strict"), keep_blank_values=True)
 
     async def _handle_qa(self, scope, receive, send) -> None:
         method = str(scope.get("method", "GET")).upper()
@@ -155,12 +140,8 @@ class QaEnabledASGI:
             return
         try:
             result = await asyncio.to_thread(run_deterministic_qa, request)
-        except Exception as error:  # QA execution must fail closed, never synthesize a pass.
-            await self._send_json(
-                send,
-                500,
-                {"status": "error", "error": f"QA execution failed: {type(error).__name__}: {error}"},
-            )
+        except Exception as error:
+            await self._send_json(send, 500, {"status": "error", "error": f"QA execution failed: {type(error).__name__}: {error}"})
             return
         await self._send_json(send, 200, result)
 
@@ -169,13 +150,9 @@ class QaEnabledASGI:
             await self._send_json(send, 405, {"error": "method not allowed"})
             return
         archive = event_archive
-        if archive is None:
-            await self._send_json(
-                send,
-                503,
-                {"status": "unavailable", "error": "SO event evidence archive is not configured"},
-                surface=b"core-event-archive",
-            )
+        lifecycle_archive = event_lifecycle_archive
+        if archive is None or lifecycle_archive is None:
+            await self._send_json(send, 503, {"status": "unavailable", "error": "SO event evidence archive is not configured"}, surface=b"core-event-archive")
             return
         try:
             query = self._query(scope)
@@ -193,31 +170,21 @@ class QaEnabledASGI:
             await self._send_json(send, 400, {"error": str(error)})
             return
         try:
-            events = await asyncio.to_thread(
-                archive.list_events,
-                server_id,
-                from_utc=from_utc,
-                to_utc=to_utc,
-            )
+            events = await asyncio.to_thread(archive.list_events, server_id, from_utc=from_utc, to_utc=to_utc)
+            enriched_events = []
+            for event in events:
+                enriched_events.append({**event, "lifecycle": await asyncio.to_thread(lifecycle_archive.event_lifecycle, str(event["eventId"]))})
         except ValueError as error:
             await self._send_json(send, 400, {"error": str(error)})
             return
         pipeline = _pipeline_for_server(server_id)
         templates = []
         if pipeline is not None:
-            templates = [
-                {"id": entry.template.template_id, "name": entry.template.name}
-                for entry in pipeline.producer.runtime.bank.entries
-            ]
+            templates = [{"id": entry.template.template_id, "name": entry.template.name} for entry in pipeline.producer.runtime.bank.entries]
         await self._send_json(
             send,
             200,
-            {
-                "schemaVersion": "bluewolf.investigation-events.v1",
-                "serverId": server_id,
-                "templates": templates,
-                "events": list(events),
-            },
+            {"schemaVersion": "bluewolf.investigation-events.v1", "serverId": server_id, "templates": templates, "events": enriched_events},
             surface=b"core-event-archive",
         )
 
@@ -226,13 +193,9 @@ class QaEnabledASGI:
             await self._send_json(send, 405, {"error": "method not allowed"})
             return
         archive = event_archive
-        if archive is None:
-            await self._send_json(
-                send,
-                503,
-                {"status": "unavailable", "error": "SO event evidence archive is not configured"},
-                surface=b"core-event-archive",
-            )
+        lifecycle_archive = event_lifecycle_archive
+        if archive is None or lifecycle_archive is None:
+            await self._send_json(send, 503, {"status": "unavailable", "error": "SO event evidence archive is not configured"}, surface=b"core-event-archive")
             return
         try:
             request = await self._read_json(receive)
@@ -256,11 +219,7 @@ class QaEnabledASGI:
         server_id = next(iter(server_ids))
         pipeline = _pipeline_for_server(server_id)
         if pipeline is None:
-            await self._send_json(
-                send,
-                503,
-                {"status": "unavailable", "error": "operational Core runtime is unavailable for event server"},
-            )
+            await self._send_json(send, 503, {"status": "unavailable", "error": "operational Core runtime is unavailable for event server"})
             return
         template = pipeline.producer.runtime.bank.template_by_id(template_id)
         if template is None:
@@ -269,11 +228,7 @@ class QaEnabledASGI:
         code_version = _code_version()
         config_version = _config_version()
         if code_version is None or config_version is None:
-            await self._send_json(
-                send,
-                503,
-                {"status": "unavailable", "error": "code/config provenance is unavailable"},
-            )
+            await self._send_json(send, 503, {"status": "unavailable", "error": "code/config provenance is unavailable"})
             return
         try:
             result = await asyncio.to_thread(
@@ -287,28 +242,16 @@ class QaEnabledASGI:
                 config=pipeline.producer.runtime.scorer.scoring_config,
                 minimum_valid_vehicles=pipeline.producer.runtime.scorer.minimum_valid_vehicles,
             )
-            await asyncio.to_thread(
-                archive.record_recompute,
-                result,
-                created_at_utc=datetime.now(UTC),
-            )
+            result = {**result, "lifecycle": await asyncio.to_thread(lifecycle_archive.event_lifecycle, event_id)}
+            await asyncio.to_thread(archive.record_recompute, result, created_at_utc=datetime.now(UTC))
         except (TypeError, ValueError) as error:
-            await self._send_json(
-                send,
-                422,
-                {"status": "error", "error": f"event recomputation rejected: {error}"},
-                surface=b"core-event-archive",
-            )
+            await self._send_json(send, 422, {"status": "error", "error": f"event recomputation rejected: {error}"}, surface=b"core-event-archive")
             return
         await self._send_json(send, 200, result, surface=b"core-event-archive")
 
     async def __call__(self, scope, receive, send) -> None:
         path = str(scope.get("path", ""))
-        if scope.get("type") != "http" or path not in {
-            "/v1/qa/run",
-            "/v1/investigation/events",
-            "/v1/investigation/recompute",
-        }:
+        if scope.get("type") != "http" or path not in {"/v1/qa/run", "/v1/investigation/events", "/v1/investigation/recompute"}:
             await self.base_app(scope, receive, send)
             return
         headers = {key.lower(): value for key, value in scope.get("headers", [])}
@@ -323,20 +266,16 @@ class QaEnabledASGI:
             await self._handle_recompute(scope, receive, send)
 
 
-app = QaEnabledASGI(
-    service.app,
-    token=os.environ.get("BLUEWOLF_CORE_API_TOKEN"),
-)
+app = QaEnabledASGI(service.app, token=os.environ.get("BLUEWOLF_CORE_API_TOKEN"))
 
 
 def main() -> None:
     """Run the operational loop with live, QA and investigation endpoints."""
 
-    global event_archive
-
+    global event_archive, event_lifecycle_archive
     try:
         import uvicorn
-    except ImportError as exc:  # pragma: no cover - deployment-only guard.
+    except ImportError as exc:
         raise SystemExit("Install the runtime service extra: pip install -e '.[service]'") from exc
 
     from .runtime_host import host_from_environment
@@ -346,12 +285,15 @@ def main() -> None:
     service.operational_host = host_from_environment(service.runtime_store)
     config_path = os.environ.get("BLUEWOLF_OPERATIONAL_CONFIG", "").strip()
     if service.operational_host is not None and config_path:
-        event_archive = attach_event_observation_archive(
-            service.operational_host.loop,
-            config_path=config_path,
-        )
+        attached = attach_event_archives(service.operational_host.loop, config_path=config_path)
+        if attached is None:
+            event_archive = None
+            event_lifecycle_archive = None
+        else:
+            event_archive, event_lifecycle_archive = attached
     else:
         event_archive = None
+        event_lifecycle_archive = None
     if service.operational_host is not None:
         service.operational_host.start()
     try:
@@ -361,6 +303,7 @@ def main() -> None:
             service.operational_host.stop()
         service.operational_host = None
         event_archive = None
+        event_lifecycle_archive = None
 
 
-__all__ = ["QaEnabledASGI", "app", "event_archive", "main"]
+__all__ = ["QaEnabledASGI", "app", "event_archive", "event_lifecycle_archive", "main"]
