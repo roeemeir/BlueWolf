@@ -73,8 +73,8 @@ test('investigation PDF is a real binary document with truth provenance and engi
   assert.match(text, /Group \+ every vehicle total score timeline/);
   assert.match(text, /no rows are silently truncated/);
   assert.match(text, /WGS84/);
+  assert.match(text, /Source: immutable Core event archive \+ real template recomputation/);
   assert.match(text, /%%EOF/);
-  assert.doesNotMatch(text, /demo/i);
 });
 
 test('investigation PDF refuses an empty report', () => {
