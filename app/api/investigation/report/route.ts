@@ -1,4 +1,4 @@
-import { buildInvestigationPdf, type InvestigationPdfEvent } from "@/lib/investigation-pdf";
+import { buildInvestigationPdf, type InvestigationPdfEvent, type InvestigationPdfReport } from "@/lib/investigation-pdf";
 import { normalizeEventRecompute, normalizeInvestigationEvents } from "@/lib/investigation-contract";
 
 export const runtime = "nodejs";
@@ -16,6 +16,7 @@ type ReportRequest = {
   from?: string | null;
   to?: string | null;
   overrides?: ReportOverride[];
+  format: "pdf" | "data";
 };
 
 function object(value: unknown, name: string): Record<string, unknown> {
@@ -37,6 +38,9 @@ function parseRequest(value: unknown): ReportRequest {
   const from = optionalIso(row.from, "from");
   const to = optionalIso(row.to, "to");
   if (from && to && from > to) throw new Error("from must not be after to");
+  const rawFormat = row.format;
+  const format = rawFormat === undefined || rawFormat === null || rawFormat === "" || rawFormat === "pdf" ? "pdf" : rawFormat === "data" ? "data" : null;
+  if (!format) throw new Error("format must be pdf or data");
   const rawOverrides = row.overrides ?? [];
   if (!Array.isArray(rawOverrides)) throw new Error("overrides must be an array");
   if (rawOverrides.length > 200) throw new Error("overrides exceeds report event limit");
@@ -50,7 +54,7 @@ function parseRequest(value: unknown): ReportRequest {
     return { eventId, templateId: templateId || null, arena: arena || null, note: note || null };
   });
   if (new Set(overrides.map((item) => item.eventId)).size !== overrides.length) throw new Error("override event ids must be unique");
-  return { serverId: Number(row.serverId), from, to, overrides };
+  return { serverId: Number(row.serverId), from, to, overrides, format };
 }
 
 async function coreJson(baseUrl: string, token: string | undefined, path: string, init?: RequestInit, timeoutMs = 90_000) {
@@ -159,13 +163,35 @@ export async function POST(request: Request) {
       return Response.json({ status: "error", error: "report recomputations do not share one code/config version" }, { status: 409 });
     }
 
-    const pdf = buildInvestigationPdf({
+    const reportData: InvestigationPdfReport = {
       serverId: parsed.serverId,
       from: parsed.from ?? null,
       to: parsed.to ?? null,
       generatedAt,
       events: reportEvents,
-    });
+    };
+    const codeVersion = reportEvents[0].result.codeVersion;
+    const configVersion = reportEvents[0].result.configVersion;
+
+    if (parsed.format === "data") {
+      return Response.json({
+        schemaVersion: "bluewolf.investigation-report-data.v1",
+        source: "core-event-archive",
+        report: reportData,
+        codeVersion,
+        configVersion,
+      }, {
+        status: 200,
+        headers: {
+          "cache-control": "no-store",
+          "x-bluewolf-report-source": "core-event-archive",
+          "x-bluewolf-code-version": codeVersion,
+          "x-bluewolf-config-version": configVersion,
+        },
+      });
+    }
+
+    const pdf = buildInvestigationPdf(reportData);
     const day = generatedAt.slice(0, 10).replaceAll("-", "");
     const pdfBody = new ArrayBuffer(pdf.byteLength);
     new Uint8Array(pdfBody).set(pdf);
@@ -176,8 +202,8 @@ export async function POST(request: Request) {
         "content-disposition": `attachment; filename="bluewolf-investigation-${day}.pdf"`,
         "cache-control": "no-store",
         "x-bluewolf-report-source": "core-event-archive",
-        "x-bluewolf-code-version": reportEvents[0].result.codeVersion,
-        "x-bluewolf-config-version": reportEvents[0].result.configVersion,
+        "x-bluewolf-code-version": codeVersion,
+        "x-bluewolf-config-version": configVersion,
       },
     });
   } catch (error) {
