@@ -19,12 +19,11 @@ import {
   generateUniqueSoOrders,
   placeSoVehicle,
   removeSoVehicle,
-  soPhasesForRoute,
-  soSmilePoses,
   toggleSoVehicleDirection,
   validateSoPlacements,
   type SoDirectPlacement,
 } from "@/lib/so-direct-placement";
+import { buildSoSmileGeometry, pointAtSoPhase, soPhasesForRoute } from "@/lib/so-geometry";
 import { useWorkspace } from "./app-context";
 
 type HoverSlot = { routeIndex: number; phase: number } | null;
@@ -36,31 +35,6 @@ type PersistedDirectSoSpec = NonNullable<SyncTemplate["soSpec"]> & DirectSoSpecE
 
 function chainLabel(chain: readonly SoRouteKind[]) {
   return chain.map((kind) => kind === "single" ? "יחיד" : "כפול").join(" — ");
-}
-
-function slotGeometry(kind: SoRouteKind, phase: number) {
-  if (kind === "single") {
-    return phase === 0
-      ? { x: 0, y: -24, heading: 90 }
-      : { x: 0, y: 24, heading: 270 };
-  }
-  const slots = [
-    { x: -44, y: -23, heading: 90 },
-    { x: 44, y: -23, heading: 90 },
-    { x: 44, y: 23, heading: 270 },
-    { x: -44, y: 23, heading: 270 },
-  ];
-  const index = Math.round(phase * 4) % 4;
-  return slots[index];
-}
-
-function SingleRouteShape() {
-  return <rect x="-54" y="-25" width="108" height="50" rx="25" fill="none" stroke="currentColor" strokeWidth="3" />;
-}
-
-function DoubleRouteShape() {
-  // One continuous physical centerline/outline: a single peanut-shaped loop, not two overlapping capsules.
-  return <path d="M-82 0 C-82-28-52-36-30-18 C-16-7-12-7 0-18 C20-37 54-34 76-15 C96 2 94 28 74 44 C52 61 20 57 0 39 C-12 28-16 28-30 39 C-52 56-82 46-88 20 C-91 9-89 4-82 0 Z" fill="none" stroke="currentColor" strokeWidth="3" />;
 }
 
 function countByType(placements: readonly SoDirectPlacement[], chain: readonly SoRouteKind[], kind: SoRouteKind) {
@@ -88,12 +62,24 @@ export function SoTemplateGovernanceWorkbench() {
 
   const orders = useMemo(() => generateUniqueSoOrders(singleCount, doubleCount), [singleCount, doubleCount]);
   const chain = orders[Math.min(selectedOrderIndex, Math.max(0, orders.length - 1))] ?? [];
-  const poses = soSmilePoses(chain.length, 142);
   const relations = deriveSoRelations(chain, placements);
   const selectedType = state.vehicleTypes.find((type) => type.id === selectedTypeId) ?? null;
   const typeById = useMemo(() => new Map(state.vehicleTypes.map((type) => [type.id, type])), [state.vehicleTypes]);
-  const width = Math.max(760, 260 + Math.max(0, chain.length - 1) * 175);
-  const centerX = width / 2;
+  const width = Math.max(760, 300 + Math.max(0, chain.length - 1) * 185);
+  const halfIndex = Math.max(0, (chain.length - 1) / 2);
+  const height = Math.max(460, 330 + halfIndex * halfIndex * 22 + 135);
+  const geometry = useMemo(
+    () => buildSoSmileGeometry(chain, {
+      centerX: width / 2,
+      centerY: 175,
+      spacing: 170,
+      risePerStep: 22,
+      radius: 22,
+      singleHalfLeg: 54,
+      doubleHalfLeg: 104,
+    }),
+    [chain, width],
+  );
 
   const changeCounts = (kind: SoRouteKind, delta: number) => {
     const current = kind === "single" ? singleCount : doubleCount;
@@ -216,34 +202,27 @@ export function SoTemplateGovernanceWorkbench() {
     </div>
 
     {chain.length ? <div style={{ marginTop: 16, overflowX: "auto" }}>
-      <svg data-testid="so-direct-board" viewBox={`0 0 ${width} 460`} aria-label="SO smile direct placement board" style={{ width: "100%", minWidth: Math.min(width, 760), minHeight: 350, border: "1px solid currentColor", borderRadius: 16 }}>
-        {chain.map((kind, routeIndex) => {
-          const pose = poses[routeIndex];
-          const tx = centerX + pose.offsetX;
-          const ty = 210 + pose.offsetY;
-          return <g key={`${kind}-${routeIndex}`} transform={`translate(${tx} ${ty}) rotate(${pose.rotationDeg})`} data-testid={`so-route-${routeIndex}-${kind}`}>
-            {kind === "single" ? <SingleRouteShape /> : <DoubleRouteShape />}
-            <text x="0" y="-45" textAnchor="middle" fill="currentColor" stroke="none" fontSize="12">{routeIndex + 1} · {kind === "single" ? "Single" : "Double"} · {pose.rotationDeg}°</text>
-            {soPhasesForRoute(kind).map((phase) => {
-              const geometry = slotGeometry(kind, phase);
-              const existing = placements.find((item) => item.routeIndex === routeIndex && item.phase === phase) ?? null;
-              const type = existing ? typeById.get(existing.typeId) : selectedType;
-              const hovered = hoverSlot?.routeIndex === routeIndex && hoverSlot.phase === phase;
-              const directionSign = existing?.direction === "reverse" ? -1 : 1;
-              const heading = geometry.heading + (directionSign < 0 ? 180 : 0);
-              const radians = (heading - 90) * Math.PI / 180;
-              const dx = Math.cos(radians) * 22;
-              const dy = Math.sin(radians) * 22;
-              return <g key={`${routeIndex}-${phase}`} data-testid={`so-slot-${routeIndex}-${phase}`} role="button" tabIndex={0} transform={`translate(${geometry.x} ${geometry.y})`} onMouseEnter={() => !existing && setHoverSlot({ routeIndex, phase })} onMouseLeave={() => setHoverSlot(null)} onFocus={() => !existing && setHoverSlot({ routeIndex, phase })} onBlur={() => setHoverSlot(null)} onClick={() => clickSlot(routeIndex, phase)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); clickSlot(routeIndex, phase); } }} style={{ cursor: "pointer" }}>
-                <circle r={existing ? 12 : 8} fill={existing ? (type?.color ?? "currentColor") : hovered ? (type?.color ?? "currentColor") : "transparent"} fillOpacity={existing ? 1 : hovered ? .25 : 0} stroke="currentColor" strokeWidth={existing ? 2.5 : 1.2} />
-                {(existing || hovered) && <><line x1="0" y1="0" x2={dx} y2={dy} stroke={type?.color ?? "currentColor"} strokeWidth="2.5" strokeOpacity={existing ? 1 : .35} /><path d={`M${dx},${dy} l${-dx * .22 - dy * .14},${-dy * .22 + dx * .14} M${dx},${dy} l${-dx * .22 + dy * .14},${-dy * .22 - dx * .14}`} fill="none" stroke={type?.color ?? "currentColor"} strokeWidth="2" strokeOpacity={existing ? 1 : .35} /></>}
-                {existing && <text x="0" y="4" textAnchor="middle" fill="currentColor" stroke="none" fontSize="8" fontWeight="700">{type?.name.slice(0,2)}</text>}
-              </g>;
-            })}
-          </g>;
-        })}
+      <svg data-testid="so-direct-board" viewBox={`0 0 ${width} ${height}`} aria-label="SO smile direct placement board" style={{ width: "100%", minWidth: Math.min(width, 760), minHeight: 350, border: "1px solid currentColor", borderRadius: 16 }}>
+        {geometry.map((route) => <g key={`${route.kind}-${route.routeIndex}`} data-testid={`so-route-${route.routeIndex}-${route.kind}`}>
+          <path d={route.path} fill="none" stroke="currentColor" strokeWidth="3" />
+          <text x={route.center.x} y={route.center.y - 58} textAnchor="middle" fill="currentColor" stroke="none" fontSize="12">{route.routeIndex + 1} · {route.kind === "single" ? "Single" : "Double"} · {route.rotationDeg}°</text>
+          {soPhasesForRoute(route.kind).map((phase) => {
+            const existing = placements.find((item) => item.routeIndex === route.routeIndex && item.phase === phase) ?? null;
+            const type = existing ? typeById.get(existing.typeId) : selectedType;
+            const hovered = hoverSlot?.routeIndex === route.routeIndex && hoverSlot.phase === phase;
+            const point = pointAtSoPhase(route.points, phase, existing?.direction === "reverse");
+            const radians = (point.heading - 90) * Math.PI / 180;
+            const dx = Math.cos(radians) * 22;
+            const dy = Math.sin(radians) * 22;
+            return <g key={`${route.routeIndex}-${phase}`} data-testid={`so-slot-${route.routeIndex}-${phase}`} role="button" tabIndex={0} transform={`translate(${point.x} ${point.y})`} onMouseEnter={() => !existing && setHoverSlot({ routeIndex: route.routeIndex, phase })} onMouseLeave={() => setHoverSlot(null)} onFocus={() => !existing && setHoverSlot({ routeIndex: route.routeIndex, phase })} onBlur={() => setHoverSlot(null)} onClick={() => clickSlot(route.routeIndex, phase)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); clickSlot(route.routeIndex, phase); } }} style={{ cursor: "pointer" }}>
+              <circle r={existing ? 12 : 8} fill={existing ? (type?.color ?? "currentColor") : hovered ? (type?.color ?? "currentColor") : "transparent"} fillOpacity={existing ? 1 : hovered ? .25 : 0} stroke="currentColor" strokeWidth={existing ? 2.5 : 1.2} />
+              {(existing || hovered) && <><line x1="0" y1="0" x2={dx} y2={dy} stroke={type?.color ?? "currentColor"} strokeWidth="2.5" strokeOpacity={existing ? 1 : .35} /><path d={`M${dx},${dy} l${-dx * .22 - dy * .14},${-dy * .22 + dx * .14} M${dx},${dy} l${-dx * .22 + dy * .14},${-dy * .22 - dx * .14}`} fill="none" stroke={type?.color ?? "currentColor"} strokeWidth="2" strokeOpacity={existing ? 1 : .35} /></>}
+              {existing && <text x="0" y="4" textAnchor="middle" fill="currentColor" stroke="none" fontSize="8" fontWeight="700">{type?.name.slice(0,2)}</text>}
+            </g>;
+          })}
+        </g>)}
       </svg>
-      <p className="card-hint">ריחוף מציג רכב שקוף בלבד; placement מתבצע בקליק/מגע. לחיצה חוזרת על רכב קיים הופכת את הכיוון. Double מצויר כנתיב רציף יחיד ולא כשתי קפסולות חופפות.</p>
+      <p className="card-hint">ריחוף מציג רכב שקוף בלבד; placement מתבצע בקליק/מגע. לחיצה חוזרת על רכב קיים הופכת את הכיוון המשיק. Single, Double והמיקומים נגזרים מאותו מקור גאומטרי שמשמש את שאר תצוגות SO.</p>
     </div> : <div className="empty-state" style={{ marginTop: 18 }}>בחר לפחות Single או Double אחד.</div>}
 
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(260px,.6fr)", gap: 14, marginTop: 16 }}>
