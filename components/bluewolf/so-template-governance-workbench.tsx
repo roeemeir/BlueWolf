@@ -8,15 +8,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   SO_RELATION_LABELS,
-  canonicalTemplateKey,
   createId,
   relationCode,
   type SoRouteKind,
   type SyncTemplate,
-  type VehicleType,
 } from "@/lib/bluewolf";
 import {
   deriveSoRelations,
+  directSoPlacementKey,
   generateUniqueSoOrders,
   placeSoVehicle,
   removeSoVehicle,
@@ -33,6 +32,7 @@ type DirectSoSpecExtension = {
   directPlacements: SoDirectPlacement[];
   generatorCounts: { single: number; double: number };
 };
+type PersistedDirectSoSpec = NonNullable<SyncTemplate["soSpec"]> & DirectSoSpecExtension;
 
 function chainLabel(chain: readonly SoRouteKind[]) {
   return chain.map((kind) => kind === "single" ? "יחיד" : "כפול").join(" — ");
@@ -154,14 +154,14 @@ export function SoTemplateGovernanceWorkbench() {
     }
     const singleCounts = countByType(placements, chain, "single");
     const doubleCounts = countByType(placements, chain, "double");
-    const extendedSpec = {
+    const extendedSpec: PersistedDirectSoSpec = {
       singleCounts,
       doubleCounts,
       chain: [...chain],
       relations,
       directPlacements: placements.map((item) => ({ ...item })),
       generatorCounts: { single: singleCount, double: doubleCount },
-    } as SyncTemplate["soSpec"] & DirectSoSpecExtension;
+    };
     const template: SyncTemplate = {
       id: createId("tpl-so-direct"),
       family: "SO",
@@ -174,8 +174,15 @@ export function SoTemplateGovernanceWorkbench() {
       isDefault: false,
       updatedAt: new Date().toISOString(),
     };
-    if (state.templates.some((item) => canonicalTemplateKey(item) === canonicalTemplateKey(template))) {
-      toast.warning("כבר קיימת תבנית SO שקולה בסדר וביחסים");
+    const candidateIdentity = directSoPlacementKey(chain, placements);
+    const duplicate = state.templates.some((item) => {
+      if (item.family !== "SO" || !item.soSpec) return false;
+      const existing = item.soSpec as PersistedDirectSoSpec;
+      if (!Array.isArray(existing.directPlacements)) return false;
+      return directSoPlacementKey(existing.chain, existing.directPlacements) === candidateIdentity;
+    });
+    if (duplicate) {
+      toast.warning("כבר קיימת תבנית SO עם אותו סדר ואותה הצבה ישירה");
       return;
     }
     const ok = await save({ ...state, templates: [...state.templates, template] }, "templates", "create-direct-so", template.name);
