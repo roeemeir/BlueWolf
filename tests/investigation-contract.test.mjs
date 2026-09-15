@@ -37,7 +37,12 @@ test('investigation event contract rejects a cross-server event', () => {
   }), /different server/);
 });
 
-test('recompute contract preserves pending frames and real version provenance', () => {
+test('recompute contract preserves pending frames, navigation and real version provenance', () => {
+  const navigation = [{
+    memberId: 'v1', vehicleIdentifier: 101, latitude: 32.0, longitude: 34.8,
+    altitudeM: 12, velocityNorthMps: 4, velocityEastMps: 3, headingDeg: 36.8698976458,
+    active: true, reliability: 0.95,
+  }];
   const result = contract.normalizeEventRecompute({
     schemaVersion: 'bluewolf.event-recompute.v1',
     runId: 'run-1', scenarioId: 'scenario-1', eventId: 'event-1', serverId: 7, groupId: 'g1',
@@ -52,6 +57,7 @@ test('recompute contract preserves pending frames and real version provenance', 
         pendingReason: 'core_observations_incomplete',
         group: { valid: false, sync: null, route: null, total: null },
         members: [],
+        navigation,
       },
       {
         observedAt: '2026-09-15T06:00:01Z',
@@ -62,6 +68,7 @@ test('recompute contract preserves pending frames and real version provenance', 
           positionErrorCycle: 0.02, valid: true, sync: 90, route: 91, total: 90,
           primaryReason: 'so_template_phase',
         }],
+        navigation: [{ ...navigation[0], latitude: 32.0001, longitude: 34.8001 }],
       },
     ],
   });
@@ -69,10 +76,31 @@ test('recompute contract preserves pending frames and real version provenance', 
   assert.equal(result.templateVersion, 'tpl-hash');
   assert.equal(result.rootCauses[0].occurrences, 2);
   assert.equal(result.points[0].pendingReason, 'core_observations_incomplete');
+  assert.equal(result.points[0].navigation[0].vehicleIdentifier, 101);
+  assert.equal(result.points[1].navigation[0].latitude, 32.0001);
   assert.equal(result.missingFrameCount, 1);
   assert.throws(() => contract.normalizeEventRecompute({ ...result, codeVersion: '' }), /codeVersion/);
   assert.throws(() => contract.normalizeEventRecompute({ ...result, summary: { ...result.summary, sync: 101 } }), /\[0,100\]/);
   assert.throws(() => contract.normalizeEventRecompute({ ...result, missingFrameCount: 0 }), /must equal frameCount/);
+  const invalidNavigation = structuredClone(result);
+  invalidNavigation.points[0].navigation[0].latitude = 95;
+  assert.throws(() => contract.normalizeEventRecompute(invalidNavigation), /WGS84/);
+});
+
+test('older recompute payload without navigation remains readable as empty evidence', () => {
+  const result = contract.normalizeEventRecompute({
+    schemaVersion: 'bluewolf.event-recompute.v1',
+    runId: 'legacy-run', scenarioId: 'legacy-scenario', eventId: 'legacy-event', serverId: 7, groupId: 'g1',
+    templateId: 'so-a', templateVersion: 'tpl-hash', codeVersion: 'sha-legacy', configVersion: 'cfg-legacy',
+    startAt: '2026-09-15T06:00:00Z', endAt: '2026-09-15T06:00:00Z', frameCount: 1,
+    scoredFrameCount: 0, missingFrameCount: 1,
+    summary: { sync: null, route: null, total: null }, rootCauses: [],
+    points: [{
+      observedAt: '2026-09-15T06:00:00Z', pendingReason: 'core_observations_incomplete',
+      group: { valid: false, sync: null, route: null, total: null }, members: [],
+    }],
+  });
+  assert.deepEqual(result.points[0].navigation, []);
 });
 
 test('pending recompute point cannot smuggle a score or member result', () => {
@@ -92,6 +120,7 @@ test('pending recompute point cannot smuggle a score or member result', () => {
       pendingReason: 'core_scoring_not_ready',
       group: { valid: false, sync: 55, route: null, total: null },
       members: [],
+      navigation: [],
     }],
   }), /pending point/);
 });
