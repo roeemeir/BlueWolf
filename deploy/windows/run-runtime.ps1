@@ -12,9 +12,23 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Resolve-Path (Join-Path $ScriptDir "..\..")
 $ResolvedVenv = Join-Path $RepoRoot $VenvPath
 $RuntimeExe = Join-Path $ResolvedVenv "Scripts\bluewolf-runtime.exe"
+$BuildProvenancePath = Join-Path $ResolvedVenv "bluewolf-build-provenance.json"
 
 if (-not (Test-Path $RuntimeExe)) {
     throw "Blue Wolf runtime is not installed. Run deploy\windows\install-runtime.ps1 first."
+}
+if (-not (Test-Path $BuildProvenancePath -PathType Leaf)) {
+    throw "Blue Wolf build provenance is missing. Reinstall the runtime with deploy\windows\install-runtime.ps1."
+}
+try {
+    $BuildProvenance = Get-Content -Raw -Path $BuildProvenancePath | ConvertFrom-Json
+}
+catch {
+    throw "Blue Wolf build provenance is unreadable. Reinstall the runtime."
+}
+$InstalledCodeSha = [string]$BuildProvenance.codeSha
+if ([string]::IsNullOrWhiteSpace($InstalledCodeSha) -or $InstalledCodeSha -eq "unknown" -or $InstalledCodeSha -notmatch '^[0-9a-fA-F]{7,64}$') {
+    throw "Blue Wolf build provenance does not contain a valid code SHA. Reinstall the runtime."
 }
 if ([string]::IsNullOrWhiteSpace($env:BLUEWOLF_CORE_API_TOKEN)) {
     throw "BLUEWOLF_CORE_API_TOKEN must be supplied through the Windows service/environment configuration."
@@ -29,6 +43,7 @@ if (-not [string]::IsNullOrWhiteSpace($StatePath) -and [string]::IsNullOrWhiteSp
     throw "StatePath requires OperationalConfig so checkpoint compatibility can be verified."
 }
 
+$env:BLUEWOLF_CODE_SHA = $InstalledCodeSha
 $env:BLUEWOLF_RUNTIME_HOST = "0.0.0.0"
 $env:BLUEWOLF_RUNTIME_PORT = [string]$Port
 $env:BLUEWOLF_RUNTIME_STALE_SECONDS = [string]$StaleSeconds
@@ -37,12 +52,15 @@ $env:BLUEWOLF_RUNTIME_EXPIRE_SECONDS = [string]$ExpireSeconds
 if (-not [string]::IsNullOrWhiteSpace($OperationalConfig)) {
     $ResolvedConfig = Resolve-Path $OperationalConfig -ErrorAction Stop
     $env:BLUEWOLF_OPERATIONAL_CONFIG = [string]$ResolvedConfig
+    Remove-Item Env:BLUEWOLF_CONFIG_VERSION -ErrorAction SilentlyContinue
     Write-Host "Operational polling enabled with config $ResolvedConfig"
+    Write-Host "Runtime config provenance will be the fingerprint of this exact file."
 }
 else {
     Remove-Item Env:BLUEWOLF_OPERATIONAL_CONFIG -ErrorAction SilentlyContinue
     Remove-Item Env:BLUEWOLF_OPERATIONAL_STATE_PATH -ErrorAction SilentlyContinue
-    Write-Host "No operational config supplied; runtime will start in transport-only mode."
+    Remove-Item Env:BLUEWOLF_CONFIG_VERSION -ErrorAction SilentlyContinue
+    Write-Host "No operational config supplied; runtime will start in transport-only mode and QA/report provenance remains unavailable."
 }
 
 if (-not [string]::IsNullOrWhiteSpace($StatePath)) {
@@ -64,6 +82,6 @@ elseif (-not [string]::IsNullOrWhiteSpace($OperationalConfig)) {
     Write-Host "No StatePath supplied; persistence may still be enabled by persistence.path in runtime.json."
 }
 
-Write-Host "Starting Blue Wolf runtime on port $Port (single process)."
+Write-Host "Starting Blue Wolf runtime on port $Port (single process) · code $($InstalledCodeSha.Substring(0, [Math]::Min(12, $InstalledCodeSha.Length)))."
 & $RuntimeExe
 exit $LASTEXITCODE
