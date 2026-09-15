@@ -120,14 +120,14 @@ export function RouteBankWktWorkbench() {
     }
   };
 
-  return <section className="glass-panel" style={{ margin: "0 0 16px", padding: 18 }} data-requirements="BW-DEV-002 BW-DEV-003 BW-OFF-005 BW-OFF-006 BW-QA-003">
+  return <section className="glass-panel" style={{ margin: "0 0 16px", padding: 18 }} data-requirements="BW-DEV-002 BW-DEV-003 BW-OFF-005 BW-OFF-006 BW-QA-003" data-testid="route-wkt-workbench">
     <header className="developer-section-header" style={{ marginBottom: 14 }}>
       <div><p className="eyebrow">WGS84 · מקור אמת</p><h2>בנק נתיבים — עורך WKT וגרירה</h2><p>הטקסט והמפה עורכים את אותה גאומטריה. גרירה מזיזה longitude/latitude בפועל; mapX/mapY הם תצוגה נגזרת בלבד.</p></div>
-      <div className="header-actions"><Badge variant="outline">{routes.filter((route) => isWkt(route.geometry)).length}/{routes.length} WKT</Badge><Button onClick={saveBank}><Save />שמור WKT</Button></div>
+      <div className="header-actions"><Badge variant="outline">{routes.filter((route) => isWkt(route.geometry)).length}/{routes.length} WKT</Badge><Button onClick={saveBank} data-testid="route-wkt-save"><Save />שמור WKT</Button></div>
     </header>
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(280px, 360px)", gap: 16 }}>
       <div>
-        <svg ref={svgRef} className="v04-route-bank-map" viewBox="0 0 900 460" onPointerMove={moveDrag} onPointerUp={() => setDrag(null)} onPointerLeave={() => setDrag(null)} style={{ width: "100%", minHeight: 360 }}>
+        <svg ref={svgRef} data-testid="route-wkt-map" className="v04-route-bank-map" viewBox="0 0 900 460" onPointerMove={moveDrag} onPointerUp={() => setDrag(null)} onPointerLeave={() => setDrag(null)} style={{ width: "100%", minHeight: 360 }}>
           <defs><pattern id="wkt-grid" width="45" height="45" patternUnits="userSpaceOnUse"><path d="M45 0H0V45" fill="none" stroke="currentColor" opacity=".08" /></pattern></defs>
           <rect width="900" height="460" rx="18" /><rect width="900" height="460" fill="url(#wkt-grid)" />
           {routes.map((route) => {
@@ -135,7 +135,7 @@ export function RouteBankWktWorkbench() {
             const screen = points.map((point) => toSvg(point.longitude, point.latitude, viewport));
             const d = screen.map((point, index) => `${index ? "L" : "M"}${point.x},${point.y}`).join(" ");
             const selectedRoute = route.id === selectedId;
-            return <g key={route.id} onPointerDown={(event) => startDrag(event, route)} onClick={() => setSelectedId(route.id)} style={{ cursor: "grab" }}>
+            return <g key={route.id} data-testid={`route-wkt-path-${route.id}`} onPointerDown={(event) => startDrag(event, route)} onClick={() => setSelectedId(route.id)} style={{ cursor: "grab" }}>
               <path d={d} fill="none" stroke={selectedRoute ? "currentColor" : "#8396a4"} strokeWidth={selectedRoute ? 5 : 3} opacity={selectedRoute ? 1 : .75} />
               {selectedRoute && screen[0] && <><circle cx={screen[0].x} cy={screen[0].y} r="7" /><text x={screen[0].x + 12} y={screen[0].y - 10}>{route.name}</text></>}
             </g>;
@@ -144,7 +144,7 @@ export function RouteBankWktWorkbench() {
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}><Badge variant="outline">W {viewport.west.toFixed(5)}</Badge><Badge variant="outline">E {viewport.east.toFixed(5)}</Badge><Badge variant="outline">S {viewport.south.toFixed(5)}</Badge><Badge variant="outline">N {viewport.north.toFixed(5)}</Badge></div>
       </div>
       <aside>
-        {selected ? <><div style={{ display: "flex", alignItems: "center", gap: 8 }}><MapPinned /><strong>{selected.name}</strong></div><p className="card-hint">{isWkt(selected.geometry) ? "גרור את הקו במפה או ערוך את ה-WKT. שניהם נשמרים באותו שדה geometry." : "זהו נתיב legacy. לא מומצא עבורו מיקום: הדבק WKT WGS84 תקין כדי להמיר אותו."}</p><label style={{ display: "grid", gap: 6 }}><span>WKT · WGS84</span><Textarea dir="ltr" rows={10} value={selected.geometry} onChange={(event) => patch(selected.id, { geometry: event.target.value })} /></label>{isWkt(selected.geometry) && <div style={{ marginTop: 10 }}><Badge variant="outline"><Move /> ניתן לגרירה</Badge></div>}</> : <div className="empty-state"><MapPinned /><strong>בחר נתיב</strong></div>}
+        {selected ? <><div style={{ display: "flex", alignItems: "center", gap: 8 }}><MapPinned /><strong>{selected.name}</strong></div><p className="card-hint">{isWkt(selected.geometry) ? "גרור את הקו במפה או ערוך את ה-WKT. שניהם נשמרים באותו שדה geometry." : "זהו נתיב legacy. לא מומצא עבורו מיקום: הדבק WKT WGS84 תקין כדי להמיר אותו."}</p><label style={{ display: "grid", gap: 6 }}><span>WKT · WGS84</span><Textarea data-testid="route-wkt-input" dir="ltr" rows={10} value={selected.geometry} onChange={(event) => patch(selected.id, { geometry: event.target.value })} /></label>{isWkt(selected.geometry) && <div style={{ marginTop: 10 }}><Badge variant="outline"><Move /> ניתן לגרירה</Badge></div>}</> : <div className="empty-state"><MapPinned /><strong>בחר נתיב</strong></div>}
       </aside>
     </div>
   </section>;
