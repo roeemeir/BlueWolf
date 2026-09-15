@@ -27,20 +27,22 @@ class EventObservationSinkTests(unittest.TestCase):
         route = _route(period_s=100.0)
         constellation = _constellation()
 
-        warmup = runtime.process_snapshot(
+        warmup_members = _members(route, 0)
+        runtime.process_snapshot(
             "g1",
             constellation,
-            _members(route, 0),
+            warmup_members,
             reference_period_s=100.0,
             displayed_group_score=90.0,
             displayed_score_valid=True,
         )
         self.assertEqual(captured, [])
 
+        scored_members = _members(route, 5)
         scored = runtime.process_snapshot(
             "g1",
             constellation,
-            _members(route, 5),
+            scored_members,
             reference_period_s=100.0,
             displayed_group_score=90.0,
             displayed_score_valid=True,
@@ -50,7 +52,7 @@ class EventObservationSinkTests(unittest.TestCase):
         self.assertEqual(frame.event_id, scored.event.snapshot.event_id)
         self.assertEqual(frame.group_id, "g1")
         self.assertEqual(frame.server_id, 1)
-        self.assertEqual(frame.sample_time_utc, scored.event.snapshot.event_start_utc.replace(second=5))
+        self.assertEqual(frame.sample_time_utc, scored_members[0].sample.sample_time_utc)
         self.assertEqual({item.member_id for item in frame.observations}, {"m1", "m2"})
         self.assertTrue(all(item.diagnostics for item in frame.observations))
 
