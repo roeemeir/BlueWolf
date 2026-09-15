@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from bluewolf_core.event_recompute import SOEventObservationFrame
+from bluewolf_core.event_recompute import SOEventNavigationPoint, SOEventObservationFrame
 from bluewolf_core.so_scoring import SOScoringObservation
 from bluewolf_core.so_template_bank import SOTemplateBank, SOTemplateBankEntry
 from bluewolf_core.so_templates import Quarter, SORouteInstance, SORouteKind, SOTemplate, SOVehicleSlot
@@ -58,6 +58,33 @@ def _observation(member: str, phase: float) -> SOScoringObservation:
     )
 
 
+def _navigation(offset: float = 0.0) -> tuple[SOEventNavigationPoint, ...]:
+    return (
+        SOEventNavigationPoint(
+            member_id="v1",
+            vehicle_identifier=101,
+            latitude_deg=32.0 + offset,
+            longitude_deg=34.8 + offset,
+            altitude_m=10.0,
+            velocity_north_mps=4.0,
+            velocity_east_mps=3.0,
+            active=True,
+            reliability=0.95,
+        ),
+        SOEventNavigationPoint(
+            member_id="v2",
+            vehicle_identifier=102,
+            latitude_deg=32.0005 + offset,
+            longitude_deg=34.8005 + offset,
+            altitude_m=11.0,
+            velocity_north_mps=0.0,
+            velocity_east_mps=5.0,
+            active=True,
+            reliability=0.9,
+        ),
+    )
+
+
 def _pending_frame() -> SOEventObservationFrame:
     return SOEventObservationFrame(
         event_id=EVENT_ID,
@@ -66,6 +93,7 @@ def _pending_frame() -> SOEventObservationFrame:
         sample_time_utc=NOW,
         observations=(),
         pending_reason="core_observations_incomplete",
+        navigation=_navigation(),
     )
 
 
@@ -76,6 +104,7 @@ def _frame() -> SOEventObservationFrame:
         group_id="g1",
         sample_time_utc=NOW + timedelta(seconds=5),
         observations=(_observation("v1", 0.0), _observation("v2", 0.5)),
+        navigation=_navigation(0.0001),
     )
 
 
@@ -86,6 +115,7 @@ def _later_frame() -> SOEventObservationFrame:
         group_id="g2",
         sample_time_utc=NOW + timedelta(hours=1),
         observations=(_observation("v1", 0.25), _observation("v2", 0.75)),
+        navigation=_navigation(0.01),
     )
 
 
@@ -145,7 +175,7 @@ async def _base(scope, receive, send):
 
 
 class InvestigationServiceTests(unittest.TestCase):
-    def test_event_list_and_recompute_use_archive_and_active_core_template_bank(self) -> None:
+    def test_event_list_and_recompute_use_archive_active_template_bank_and_navigation(self) -> None:
         template = _template()
         bank = SOTemplateBank((SOTemplateBankEntry(template, is_default=True),))
         scorer = SimpleNamespace(scoring_config=None, minimum_valid_vehicles=2)
@@ -205,10 +235,15 @@ class InvestigationServiceTests(unittest.TestCase):
                 self.assertEqual(result["missingFrameCount"], 1)
                 self.assertEqual(result["points"][0]["pendingReason"], "core_observations_incomplete")
                 self.assertIsNone(result["points"][0]["group"]["total"])
+                self.assertEqual(result["points"][0]["navigation"][0]["vehicleIdentifier"], 101)
+                self.assertEqual(result["points"][0]["navigation"][0]["latitude"], 32.0)
+                self.assertAlmostEqual(result["points"][0]["navigation"][0]["headingDeg"], 36.86989764584402)
+                self.assertEqual(result["points"][1]["navigation"][1]["longitude"], 34.8006)
                 saved = archive.recomputations(EVENT_ID)
                 self.assertEqual(len(saved), 1)
                 self.assertEqual(saved[0]["runId"], result["runId"])
                 self.assertEqual(saved[0]["missingFrameCount"], 1)
+                self.assertEqual(saved[0]["points"][0]["navigation"][1]["vehicleIdentifier"], 102)
 
     def test_event_list_range_is_applied_in_archive_and_does_not_clip_event(self) -> None:
         with TemporaryDirectory() as directory:
