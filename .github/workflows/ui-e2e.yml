@@ -1,4 +1,4 @@
-name: Blue Wolf UI Browser E2E
+name: Blue Wolf UI/PDF Browser E2E
 
 on:
   push:
@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
   ui-browser-e2e:
-    name: UI-01 — desktop/mobile readability and overflow
+    name: UI-01 + REP-01 — readability and offline Hebrew PDF canvas
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -31,5 +31,5 @@ jobs:
         run: |
           python -m pip install 'playwright==1.55.0'
           python -m playwright install --with-deps chromium
-      - name: Verify desktop/mobile readability and template dialog bounds
+      - name: Verify UI readability and offline Hebrew RTL PDF canvas primitives
         run: python scripts/verify_ui_browser_e2e.py
