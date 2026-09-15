@@ -35,8 +35,10 @@ test("BW-QA-008 release surfaces retain code provenance and fail closed", async 
   assert.match(run, /build provenance is missing/);
   assert.match(run, /Runtime config provenance will be the fingerprint of this exact file/);
 
-  assert.doesNotMatch(qaUi, /configVersion\s*[,}]/);
-  assert.match(qaUi, /scenarioId:\s*"full-regression"/);
+  assert.match(
+    qaUi,
+    /body:\s*JSON\.stringify\(\{\s*scenarioId:\s*"full-regression",\s*scope:\s*"full"\s*\}\)/,
+  );
   assert.match(qaUi, /code \{completed\.codeSha\.slice\(0, 10\)\}/);
   assert.match(qaUi, /config \{completed\.configVersion\}/);
 });
