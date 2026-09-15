@@ -97,6 +97,44 @@ def assert_svg_text_has_no_stroke(page: Page, label: str) -> None:
     assert not offenders, f"{label}: visible SVG text inherits a stroke: {offenders}"
 
 
+def assert_local_hebrew_canvas(page: Page) -> None:
+    result = page.evaluate(
+        """async () => {
+          await document.fonts.ready;
+          const canvas = document.createElement('canvas');
+          canvas.width = 700;
+          canvas.height = 180;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return { ok: false, reason: 'no-2d-context' };
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = '#102433';
+          ctx.font = '700 46px Arial, "Noto Sans Hebrew", sans-serif';
+          ctx.direction = 'rtl';
+          ctx.textAlign = 'right';
+          ctx.fillText('זאב כחול — דוח תחקור הנדסי', 650, 105);
+          const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+          let nonWhite = 0;
+          for (let i = 0; i < pixels.length; i += 4) {
+            if (pixels[i] < 245 || pixels[i + 1] < 245 || pixels[i + 2] < 245) nonWhite += 1;
+          }
+          const jpeg = canvas.toDataURL('image/jpeg', 0.94);
+          return {
+            ok: true,
+            direction: ctx.direction,
+            nonWhite,
+            jpegPrefix: jpeg.slice(0, 23),
+            width: ctx.measureText('זאב כחול — דוח תחקור הנדסי').width,
+          };
+        }"""
+    )
+    assert result.get("ok"), f"REP-01: local Hebrew canvas could not initialize: {result}"
+    assert result["direction"] == "rtl", f"REP-01: canvas direction is not RTL: {result}"
+    assert result["nonWhite"] > 500, f"REP-01: Hebrew canvas did not render enough visible glyph pixels: {result}"
+    assert result["width"] > 100, f"REP-01: Hebrew canvas text width is unexpectedly small: {result}"
+    assert result["jpegPrefix"].startswith("data:image/jpeg;base64,"), f"REP-01: canvas did not encode a local JPEG page: {result}"
+
+
 def open_operator(page: Page) -> None:
     page.goto(ORIGIN, wait_until="domcontentloaded")
     operator_tab = page.get_by_role("tab", name="מפעיל")
@@ -147,9 +185,10 @@ def run_browser_regression() -> None:
                     context = browser.new_context(viewport={"width": 1440, "height": 900})
                     page = context.new_page()
                     verify_viewport(page, width=1440, height=900, label="desktop")
+                    assert_local_hebrew_canvas(page)
                     verify_viewport(page, width=390, height=844, label="mobile-390")
                     browser.close()
-                print("PASS UI-01: desktop/mobile operator and template-switch dialog have no page overflow; dialog stays in viewport; visible SVG text has no stroke")
+                print("PASS UI-01 + REP-01 canvas: desktop/mobile operator and template dialog have no page overflow; SVG text has no stroke; offline Chromium renders RTL Hebrew to a local JPEG page")
             except Exception:
                 log_file.flush()
                 log_file.seek(0)
