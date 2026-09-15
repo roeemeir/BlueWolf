@@ -19,19 +19,18 @@ type RunState =
   | { kind: "complete"; result: QaRunResult; persisted: boolean };
 
 export function QaTruthWorkbench() {
-  const { state: workspace, save, revision } = useWorkspace();
+  const { state: workspace, save } = useWorkspace();
   const [runState, setRunState] = useState<RunState>({ kind: "not-run" });
   const persistedRuns = (workspace as WorkspaceWithQaRuns).qaRuns ?? [];
 
   const runQa = async () => {
     setRunState({ kind: "running" });
     try {
-      const configVersion = String(revision);
       const response = await fetch("/api/qa/run", {
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ scenarioId: "full-regression", configVersion }),
+        body: JSON.stringify({ scenarioId: "full-regression", scope: "full" }),
       });
       const payload = await response.json() as unknown;
       if (response.status === 503) {
@@ -58,8 +57,8 @@ export function QaTruthWorkbench() {
   const total = completed?.categories.reduce((sum, category) => sum + category.scenarios, 0) ?? null;
   const passed = completed?.categories.reduce((sum, category) => sum + category.passed, 0) ?? null;
 
-  return <section className="glass-panel" style={{ margin: "0 0 16px", padding: 18 }} data-requirements="BW-DEV-010 BW-DEV-011 BW-DEV-012 BW-DEV-013 BW-DEV-014 BW-QA-004">
-    <header className="developer-section-header" style={{ marginBottom: 14 }}><div><p className="eyebrow">Truth-backed QA</p><h2>GT / QA מול Python Core</h2><p>אין מספרים קבועים ואין progress מומצא. עד שה-Core מחזיר חוזה ריצה תקף, הסטטוס הוא missing/not run או unavailable. ריצה תקפה נשמרת עם scenario, SHA וגרסת קונפיגורציה.</p></div><Button onClick={runQa} disabled={runState.kind === "running"}><Play />{runState.kind === "running" ? "מריץ…" : "הרץ QA אמיתי"}</Button></header>
+  return <section className="glass-panel" style={{ margin: "0 0 16px", padding: 18 }} data-requirements="BW-DEV-010 BW-DEV-011 BW-DEV-012 BW-DEV-013 BW-DEV-014 BW-QA-004 BW-QA-008">
+    <header className="developer-section-header" style={{ marginBottom: 14 }}><div><p className="eyebrow">Truth-backed QA</p><h2>GT / QA מול Python Core</h2><p>אין מספרים קבועים ואין progress מומצא. עד שה-Core מחזיר חוזה ריצה תקף, הסטטוס הוא missing/not run או unavailable. ה-SHA וגרסת הקונפיגורציה מגיעים מה-runtime/deployment בלבד; הדפדפן אינו רשאי לקבוע provenance.</p></div><Button onClick={runQa} disabled={runState.kind === "running"}><Play />{runState.kind === "running" ? "מריץ…" : "הרץ QA אמיתי"}</Button></header>
 
     {runState.kind === "not-run" && <div className="empty-state"><ShieldCheck /><strong>missing / not run</strong><span>לא קיימת עדיין תוצאת QA אמיתית לסשן הזה.</span></div>}
     {runState.kind === "running" && <div className="empty-state"><ShieldCheck /><strong>running</strong><span>ממתין לתוצאה מה-Python Core. לא מוצג אחוז התקדמות ללא telemetry אמיתי.</span></div>}
