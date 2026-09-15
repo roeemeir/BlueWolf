@@ -177,6 +177,13 @@ class LiveSOEventRuntime:
             else:
                 self._emit_lifecycle(change)
 
+    def advance_events(self, observed_until_utc) -> tuple[StateChange, ...]:
+        """Finalize pending ended events even when no group produces a new frame."""
+
+        changes = self.event_engine.advance(observed_until_utc)
+        self._emit_engine_changes(changes)
+        return changes
+
     def process_snapshot(
         self,
         group_id: str,
