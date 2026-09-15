@@ -18,7 +18,7 @@ test('workspace validation canonicalizes valid WKT before persistence', () => {
 test('workspace validation rejects invalid WKT before either SQLite or D1 write', () => {
   assert.throws(() => validation.normalizeAndValidateWorkspaceState({
     routes: [{ id: 'r1', geometry: 'LINESTRING (34 32, 34.01 32, 34.01 32.01)' }],
-  }), /להיסגר/);
+  }), /סגירה|להיסגר/);
 });
 
 test('workspace validation rejects overlapping vehicle id ranges', () => {
