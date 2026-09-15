@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, FileChartColumn, History, Play, RefreshCw, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileChartColumn, History, MapPin, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import {
   type EventRecomputeResult,
   type InvestigationEventIndex,
   type InvestigationTemplate,
+  type RecomputedNavigation,
 } from "@/lib/investigation-contract";
 import { useWorkspace } from "./app-context";
 
@@ -94,6 +95,57 @@ function ScoreTimeline({ result, cursor, onCursor }: { result: EventRecomputeRes
   const cursorX = cursor / denominator * width;
   const cursorPoint = result.points[cursor];
   return <div style={{ marginTop: 14 }} data-requirements="BW-REP-004"><div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 6, flexWrap: "wrap" }}><strong>Group + vehicle scores לאורך האירוע</strong><span>{result.scoredFrameCount} scored · {result.missingFrameCount} missing · {result.frameCount} total</span></div><div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>{series.map((item) => <span key={item.id} style={{ display: "inline-flex", gap: 5, alignItems: "center" }}><svg width="34" height="8" aria-hidden="true"><line x1="0" x2="34" y1="4" y2="4" stroke="currentColor" strokeWidth={item.strokeWidth} strokeDasharray={item.dash} /></svg>{item.label}</span>)}</div><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Recomputed group and vehicle score timelines with one synchronized cursor" style={{ width: "100%", minHeight: 190 }}>{[0, 25, 50, 75, 100].map((score) => { const y = height - score / 100 * height; return <g key={score}><line x1="0" x2={width} y1={y} y2={y} stroke="currentColor" opacity=".12" /><text x="4" y={Math.max(12, y - 4)} fontSize="18" fill="currentColor" opacity=".6">{score}</text></g>; })}{series.map((item) => pathSegments(item.values, width, height).map((path, index) => <path key={`${item.id}-${index}`} d={path} fill="none" stroke="currentColor" strokeWidth={item.strokeWidth} strokeDasharray={item.dash} opacity={item.id === "group" ? 1 : .65} vectorEffect="non-scaling-stroke" />))}<line x1={cursorX} x2={cursorX} y1="0" y2={height} stroke="currentColor" strokeWidth="2" opacity=".45" /></svg><input aria-label="סליידר זמן אחיד לתחקור" type="range" min={0} max={Math.max(0, result.points.length - 1)} step={1} value={cursor} onChange={(event) => onCursor(Number(event.target.value))} style={{ width: "100%" }} /><div className="glass-panel" style={{ marginTop: 8, padding: 12 }}><strong>{cursorPoint ? formatTime(cursorPoint.observedAt) : "ללא frame"}</strong>{cursorPoint?.pendingReason ? <p>missing · {cursorPoint.pendingReason}</p> : cursorPoint ? <><p>Group: S {scoreLabel(cursorPoint.group.sync)} · R {scoreLabel(cursorPoint.group.route)} · T {scoreLabel(cursorPoint.group.total)}</p><div style={{ display: "grid", gap: 5 }}>{cursorPoint.members.map((member) => <span key={member.memberId}>{member.memberId} · {member.slotId} · S {scoreLabel(member.sync)} · R {scoreLabel(member.route)} · T {scoreLabel(member.total)}</span>)}</div></> : null}</div>{result.missingFrameCount > 0 && <p className="card-hint">פער בגרף פירושו evidence חסר בזמן אמת. ציר הזמן אינו נדחס והנקודות משני צדי הפער אינן מחוברות.</p>}</div>;
+}
+
+type ProjectedPoint = { x: number; y: number };
+
+function NavigationEvidenceMap({ result, cursor }: { result: EventRecomputeResult; cursor: number }) {
+  const width = 900;
+  const height = 360;
+  const allNavigation = result.points.flatMap((point) => point.navigation).filter((item) => item.latitude !== null && item.longitude !== null);
+  if (!allNavigation.length) return <div className="empty-state" style={{ marginTop: 16 }} data-requirements="BW-REP-003"><MapPin /><strong>אין navigation evidence באירוע</strong><span>המפה לא משחזרת מיקום מפאזה או מגאומטריית המסלול. אירועים ישנים ללא lat/lon נשארים ללא מיקום.</span></div>;
+
+  const latitudes = allNavigation.map((item) => item.latitude as number);
+  const longitudes = allNavigation.map((item) => item.longitude as number);
+  const rawMinLat = Math.min(...latitudes);
+  const rawMaxLat = Math.max(...latitudes);
+  const rawMinLon = Math.min(...longitudes);
+  const rawMaxLon = Math.max(...longitudes);
+  const latSpan = Math.max(rawMaxLat - rawMinLat, 0.0002);
+  const lonSpan = Math.max(rawMaxLon - rawMinLon, 0.0002);
+  const latPad = latSpan * 0.08;
+  const lonPad = lonSpan * 0.08;
+  const minLat = rawMinLat - latPad;
+  const maxLat = rawMaxLat + latPad;
+  const minLon = rawMinLon - lonPad;
+  const maxLon = rawMaxLon + lonPad;
+  const project = (item: RecomputedNavigation): ProjectedPoint | null => {
+    if (item.latitude === null || item.longitude === null) return null;
+    return {
+      x: (item.longitude - minLon) / (maxLon - minLon) * width,
+      y: height - (item.latitude - minLat) / (maxLat - minLat) * height,
+    };
+  };
+  const memberIds = Array.from(new Set(allNavigation.map((item) => item.memberId)));
+  const dashPatterns = [undefined, "10 5", "4 4", "14 4 3 4", "2 5", "18 6"];
+  const trailSegments = (memberId: string) => {
+    const segments: string[] = [];
+    let current = "";
+    for (let index = 0; index <= cursor; index += 1) {
+      const item = result.points[index]?.navigation.find((nav) => nav.memberId === memberId);
+      const projected = item ? project(item) : null;
+      if (!projected) {
+        if (current) segments.push(current);
+        current = "";
+        continue;
+      }
+      current += `${current ? " L" : "M"}${projected.x.toFixed(2)},${projected.y.toFixed(2)}`;
+    }
+    if (current) segments.push(current);
+    return segments;
+  };
+  const current = result.points[cursor]?.navigation ?? [];
+  return <section className="glass-panel" style={{ marginTop: 16, padding: 14 }} data-requirements="BW-REP-003"><div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 8 }}><div><strong>מפת event · navigation evidence</strong><p className="card-hint">WGS84 אמיתי מה־VehicleSample של אותו frame. אין רקע WMS/WMTS בשלב הזה, ולכן `BW-REP-010` עדיין פתוח.</p></div><Badge variant="outline"><MapPin />{formatTime(result.points[cursor]?.observedAt ?? result.startAt)}</Badge></div><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Truth-backed WGS84 vehicle positions and trails synchronized to investigation slider" style={{ width: "100%", minHeight: 260, border: "1px solid currentColor", borderRadius: 12 }}><rect x="0" y="0" width={width} height={height} fill="none" /><text x="12" y="24" fill="currentColor" opacity=".55" fontSize="16">N ↑ · {minLat.toFixed(6)}..{maxLat.toFixed(6)} / {minLon.toFixed(6)}..{maxLon.toFixed(6)}</text>{memberIds.map((memberId, memberIndex) => trailSegments(memberId).map((path, index) => <path key={`${memberId}-${index}`} d={path} fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray={dashPatterns[memberIndex % dashPatterns.length]} opacity=".55" vectorEffect="non-scaling-stroke" />))}{current.map((item) => { const point = project(item); if (!point) return null; const heading = item.headingDeg === null ? null : item.headingDeg * Math.PI / 180; const dx = heading === null ? 0 : Math.sin(heading) * 22; const dy = heading === null ? 0 : -Math.cos(heading) * 22; return <g key={item.memberId}><circle cx={point.x} cy={point.y} r="8" fill="currentColor" opacity={item.active === false ? .35 : .9} />{heading !== null && <line x1={point.x} y1={point.y} x2={point.x + dx} y2={point.y + dy} stroke="currentColor" strokeWidth="3" />}<text x={point.x + 11} y={point.y - 9} fill="currentColor" fontSize="18">{item.memberId}</text></g>; })}</svg><div style={{ display: "grid", gap: 6, marginTop: 10 }}>{current.length ? current.map((item) => <div key={item.memberId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 10 }}><span>{item.memberId} · vehicle {item.vehicleIdentifier}</span><span>{item.latitude === null ? "lat missing" : item.latitude.toFixed(6)}</span><span>{item.longitude === null ? "lon missing" : item.longitude.toFixed(6)}</span><span>{item.headingDeg === null ? "heading missing" : `${item.headingDeg.toFixed(1)}°`}</span></div>) : <span>אין navigation sample ב־frame הנבחר.</span>}</div></section>;
 }
 
 type EventsState =
@@ -237,5 +289,5 @@ function RecomputeResultView({ state }: { state: Extract<RecomputeState, { kind:
   const result = state.result;
   const [cursor, setCursor] = useState(Math.max(0, result.points.length - 1));
   const lastScored = [...result.points].reverse().find((point) => point.members.length > 0);
-  return <div style={{ marginTop: 18 }}><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Badge variant={state.persisted ? "default" : "outline"}>{state.persisted ? <CheckCircle2 /> : <AlertTriangle />}{state.persisted ? "נשמר" : "לא נשמר ב-Workspace"}</Badge><Badge variant="outline">run {result.runId}</Badge><Badge variant="outline">template {result.templateId}</Badge><Badge variant="outline">tpl-ver {result.templateVersion.slice(0, 14)}</Badge><Badge variant="outline">code {result.codeVersion.slice(0, 10)}</Badge><Badge variant="outline">config {result.configVersion.slice(0, 10)}</Badge><Badge variant="outline">scored {result.scoredFrameCount}</Badge><Badge variant="outline">missing {result.missingFrameCount}</Badge></div><div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10, marginTop: 14 }}><div className="metric-card"><span>Sync ממוצע</span><strong>{scoreLabel(result.summary.sync)}</strong></div><div className="metric-card"><span>Route ממוצע</span><strong>{scoreLabel(result.summary.route)}</strong></div><div className="metric-card"><span>Total ממוצע</span><strong>{scoreLabel(result.summary.total)}</strong></div></div><ScoreTimeline result={result} cursor={cursor} onCursor={setCursor} /><div style={{ display: "grid", gridTemplateColumns: "minmax(220px, .8fr) minmax(0, 1.2fr)", gap: 14, marginTop: 16 }}><div><strong>Root causes</strong><div style={{ display: "grid", gap: 6, marginTop: 8 }}>{result.rootCauses.length ? result.rootCauses.map((cause) => <div key={cause.reason} className="glass-panel" style={{ padding: 10, display: "flex", justifyContent: "space-between" }}><span>{cause.reason}</span><b>{cause.occurrences}</b></div>) : <span>אין primary reasons בריצה זו.</span>}</div></div><div><strong>מצב אחרון scoreable לפי רכב</strong><div style={{ display: "grid", gap: 6, marginTop: 8 }}>{lastScored?.members.map((member) => <div key={member.memberId} className="glass-panel" style={{ padding: 10, display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 10 }}><span>{member.memberId} · {member.slotId}</span><b>S {scoreLabel(member.sync)}</b><b>R {scoreLabel(member.route)}</b><b>T {scoreLabel(member.total)}</b></div>) ?? <span>אין member frames scoreable.</span>}</div></div></div><div className="empty-state" style={{ marginTop: 16 }}><FileChartColumn /><strong>PDF truth-backed עדיין לא הופק</strong><span>הדוח לא יסומן מוכן עד ש־BW-REP/PDF יעבוד מאותם event frames ו־recompute results.</span></div></div>;
+  return <div style={{ marginTop: 18 }}><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Badge variant={state.persisted ? "default" : "outline"}>{state.persisted ? <CheckCircle2 /> : <AlertTriangle />}{state.persisted ? "נשמר" : "לא נשמר ב-Workspace"}</Badge><Badge variant="outline">run {result.runId}</Badge><Badge variant="outline">template {result.templateId}</Badge><Badge variant="outline">tpl-ver {result.templateVersion.slice(0, 14)}</Badge><Badge variant="outline">code {result.codeVersion.slice(0, 10)}</Badge><Badge variant="outline">config {result.configVersion.slice(0, 10)}</Badge><Badge variant="outline">scored {result.scoredFrameCount}</Badge><Badge variant="outline">missing {result.missingFrameCount}</Badge></div><div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10, marginTop: 14 }}><div className="metric-card"><span>Sync ממוצע</span><strong>{scoreLabel(result.summary.sync)}</strong></div><div className="metric-card"><span>Route ממוצע</span><strong>{scoreLabel(result.summary.route)}</strong></div><div className="metric-card"><span>Total ממוצע</span><strong>{scoreLabel(result.summary.total)}</strong></div></div><ScoreTimeline result={result} cursor={cursor} onCursor={setCursor} /><NavigationEvidenceMap result={result} cursor={cursor} /><div style={{ display: "grid", gridTemplateColumns: "minmax(220px, .8fr) minmax(0, 1.2fr)", gap: 14, marginTop: 16 }}><div><strong>Root causes</strong><div style={{ display: "grid", gap: 6, marginTop: 8 }}>{result.rootCauses.length ? result.rootCauses.map((cause) => <div key={cause.reason} className="glass-panel" style={{ padding: 10, display: "flex", justifyContent: "space-between" }}><span>{cause.reason}</span><b>{cause.occurrences}</b></div>) : <span>אין primary reasons בריצה זו.</span>}</div></div><div><strong>מצב אחרון scoreable לפי רכב</strong><div style={{ display: "grid", gap: 6, marginTop: 8 }}>{lastScored?.members.map((member) => <div key={member.memberId} className="glass-panel" style={{ padding: 10, display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 10 }}><span>{member.memberId} · {member.slotId}</span><b>S {scoreLabel(member.sync)}</b><b>R {scoreLabel(member.route)}</b><b>T {scoreLabel(member.total)}</b></div>) ?? <span>אין member frames scoreable.</span>}</div></div></div><div className="empty-state" style={{ marginTop: 16 }}><FileChartColumn /><strong>PDF truth-backed עדיין לא הופק</strong><span>הדוח לא יסומן מוכן עד ש־BW-REP/PDF יעבוד מאותם event frames ו־recompute results.</span></div></div>;
 }
