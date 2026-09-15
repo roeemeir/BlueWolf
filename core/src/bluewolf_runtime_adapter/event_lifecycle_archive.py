@@ -135,7 +135,19 @@ class SOEventLifecycleArchive:
                 SELECT change_time_utc,kind,payload_json
                 FROM so_event_lifecycle_changes
                 WHERE event_id=?
-                ORDER BY change_time_utc ASC, kind ASC
+                ORDER BY change_time_utc ASC,
+                    CASE kind
+                        WHEN 'event_opened' THEN 10
+                        WHEN 'alert_opened' THEN 20
+                        WHEN 'template_suggested' THEN 30
+                        WHEN 'template_suggestion_rejected' THEN 40
+                        WHEN 'template_suggestion_closed' THEN 50
+                        WHEN 'alert_closed' THEN 60
+                        WHEN 'event_ending' THEN 70
+                        WHEN 'event_closed' THEN 80
+                        ELSE 90
+                    END ASC,
+                    kind ASC
                 """,
                 (event_id,),
             ).fetchall()
@@ -168,6 +180,7 @@ class SOEventLifecycleArchive:
             status = "active"
         else:
             status = "unknown"
+        finalized_at = None if closed is None else closed["details"].get("finalized_time_utc")
         return {
             "status": status,
             "openedAt": None if opened is None else opened["occurredAt"],
@@ -175,7 +188,7 @@ class SOEventLifecycleArchive:
             "endedAt": None if ending is None else ending["occurredAt"],
             "endingReason": None if ending is None else ending["details"].get("reason"),
             "finalizeAt": None if ending is None else ending["details"].get("finalize_at_utc"),
-            "closedAt": None if closed is None else closed["occurredAt"],
+            "closedAt": finalized_at,
             "changes": changes,
         }
 
