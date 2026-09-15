@@ -8,8 +8,11 @@ than reconstructing phases or silently dropping missing points.
 Navigation samples captured from the same live inputs are stored inside each
 immutable frame payload. Older rows without navigation remain readable as an
 empty navigation tuple; no position is reconstructed from phase or geometry.
-The original active Core template id is stored in the same immutable payload so
-reports can reproduce the event without selecting an arbitrary template.
+Detected-route snapshots captured from the same live Core inputs are stored in
+the same payload. Older rows without route geometry remain readable with empty
+route evidence; reporting must not invent a route for them. The original active
+Core template id is stored in the same immutable payload so reports can
+reproduce the event without selecting an arbitrary template.
 
 A frame is immutable by ``(event_id, sample_time_utc)``. Re-recording the exact
 same frame is idempotent; conflicting evidence at the same key is rejected.
@@ -26,6 +29,7 @@ import sqlite3
 from typing import Any, Mapping
 
 from bluewolf_core.event_recompute import SOEventNavigationPoint, SOEventObservationFrame
+from bluewolf_core.event_route_evidence import SOEventRouteEvidence, SOEventRoutePoint
 from bluewolf_core.so_scoring import SOScoringObservation
 
 
@@ -123,6 +127,62 @@ def _navigation_from_payload(value: Mapping[str, Any]) -> SOEventNavigationPoint
     )
 
 
+def _route_payload(item: SOEventRouteEvidence) -> dict[str, Any]:
+    return {
+        "route_instance_id": item.route_instance_id,
+        "route_id": item.route_id,
+        "family": item.family,
+        "subtype": item.subtype,
+        "topology": item.topology,
+        "center_latitude_deg": item.center_latitude_deg,
+        "center_longitude_deg": item.center_longitude_deg,
+        "length_m": item.length_m,
+        "long_axis_a_m": item.long_axis_a_m,
+        "short_axis_b_m": item.short_axis_b_m,
+        "orientation_deg": item.orientation_deg,
+        "estimated_period_s": item.estimated_period_s,
+        "direction": item.direction,
+        "detection_quality": item.detection_quality,
+        "centerline_wgs84": [
+            {"latitude_deg": point.latitude_deg, "longitude_deg": point.longitude_deg}
+            for point in item.centerline_wgs84
+        ],
+    }
+
+
+def _route_from_payload(value: Mapping[str, Any]) -> SOEventRouteEvidence:
+    centerline_raw = value.get("centerline_wgs84", [])
+    if not isinstance(centerline_raw, list):
+        raise ValueError("archived route centerline must be an array")
+    centerline = tuple(
+        SOEventRoutePoint(
+            latitude_deg=float(point["latitude_deg"]),
+            longitude_deg=float(point["longitude_deg"]),
+        )
+        for point in centerline_raw
+        if isinstance(point, Mapping)
+    )
+    if len(centerline) != len(centerline_raw):
+        raise ValueError("archived route centerline row is malformed")
+    return SOEventRouteEvidence(
+        route_instance_id=str(value["route_instance_id"]),
+        route_id=str(value["route_id"]),
+        family=str(value["family"]),
+        subtype=str(value["subtype"]),
+        topology=str(value["topology"]),
+        center_latitude_deg=float(value["center_latitude_deg"]),
+        center_longitude_deg=float(value["center_longitude_deg"]),
+        length_m=float(value["length_m"]),
+        long_axis_a_m=float(value["long_axis_a_m"]),
+        short_axis_b_m=float(value["short_axis_b_m"]),
+        orientation_deg=float(value["orientation_deg"]),
+        estimated_period_s=float(value["estimated_period_s"]),
+        direction=str(value["direction"]),
+        detection_quality=float(value["detection_quality"]),
+        centerline_wgs84=centerline,
+    )
+
+
 def _frame_payload(frame: SOEventObservationFrame) -> str:
     return json.dumps(
         {
@@ -132,6 +192,7 @@ def _frame_payload(frame: SOEventObservationFrame) -> str:
             "pending_reason": frame.pending_reason,
             "observations": [_observation_payload(item) for item in frame.observations],
             "navigation": [_navigation_payload(item) for item in frame.navigation],
+            "routes": [_route_payload(item) for item in frame.routes],
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -278,6 +339,16 @@ class SOEventObservationArchive:
             )
             if len(navigation) != len(navigation_raw):
                 raise ValueError("archived SO event navigation row is malformed")
+            routes_raw = payload.get("routes", [])
+            if not isinstance(routes_raw, list):
+                raise ValueError("archived SO event routes are malformed")
+            routes = tuple(
+                _route_from_payload(item)
+                for item in routes_raw
+                if isinstance(item, Mapping)
+            )
+            if len(routes) != len(routes_raw):
+                raise ValueError("archived SO event route row is malformed")
             pending_raw = payload.get("pending_reason")
             pending_reason = None if pending_raw is None else str(pending_raw)
             active_template_raw = payload.get("active_template_id")
@@ -292,6 +363,7 @@ class SOEventObservationArchive:
                     active_template_id=active_template_id,
                     pending_reason=pending_reason,
                     navigation=navigation,
+                    routes=routes,
                 )
             )
         return tuple(frames)
