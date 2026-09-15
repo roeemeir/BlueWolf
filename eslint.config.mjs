@@ -24,11 +24,14 @@ const eslintConfig = defineConfig([
     },
   },
   {
-    files: ["components/bluewolf/visuals.tsx"],
+    files: [
+      "components/bluewolf/visuals.tsx",
+      "components/bluewolf/so-governed-visuals.tsx",
+    ],
     rules: {
-      // LiveMap records the deterministic navigation frame exactly when the
-      // external server/tick input changes. Keeping this one file-specific
-      // exception avoids weakening the rule for the rest of the application.
+      // These simulation maps record a deterministic navigation frame exactly
+      // when the external server/tick input changes. Keep the exception scoped
+      // to these trace collectors rather than weakening the rule application-wide.
       "react-hooks/set-state-in-effect": "off",
     },
   },
