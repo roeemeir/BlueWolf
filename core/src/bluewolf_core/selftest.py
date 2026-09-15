@@ -212,13 +212,26 @@ def _capacity_check() -> CheckResult:
     )
 
 
-def run_self_test(algorithm_version: str = "0.1.0") -> SelfTestReport:
-    checks = (
+def run_self_test(
+    algorithm_version: str = "0.1.0",
+    *,
+    include_capacity: bool = True,
+) -> SelfTestReport:
+    """Run deterministic Core checks.
+
+    ``include_capacity=False`` is a real smoke scope: it still executes scoring,
+    batch/incremental equivalence and checkpoint/restart against ``CoreSession``.
+    It skips only the explicitly expensive 150-vehicle capacity envelope.  The
+    default remains the full foundation self-test for backward compatibility.
+    """
+
+    checks: list[CheckResult] = [
         _capture("approved_scoring_contract", _ideal_score_check),
         _capture("batch_increment_equivalence", _equivalence_check),
         _capture("checkpoint_restart_equivalence", _restart_check),
-        _capture("core_envelope_150_vehicles", _capacity_check),
-    )
+    ]
+    if include_capacity:
+        checks.append(_capture("core_envelope_150_vehicles", _capacity_check))
     statuses = {check.status for check in checks}
     overall = (
         CheckStatus.FAILED
@@ -228,9 +241,13 @@ def run_self_test(algorithm_version: str = "0.1.0") -> SelfTestReport:
         else CheckStatus.PASSED
     )
     return SelfTestReport(
-        scope="foundation only: contracts, scoring, session, checkpoint and load envelope",
+        scope=(
+            "foundation: contracts, scoring, session, checkpoint and load envelope"
+            if include_capacity
+            else "smoke: contracts, scoring, session and checkpoint; capacity not run"
+        ),
         overall_status=overall,
         generated_at_utc=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         algorithm_version=algorithm_version,
-        checks=checks,
+        checks=tuple(checks),
     )
