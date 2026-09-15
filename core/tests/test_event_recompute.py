@@ -1,0 +1,161 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import unittest
+
+from bluewolf_core.event_recompute import (
+    SOEventObservationFrame,
+    recompute_so_event,
+    template_fingerprint,
+)
+from bluewolf_core.so_scoring import SOScoringObservation
+from bluewolf_core.so_templates import Quarter, SORouteInstance, SORouteKind, SOTemplate, SOVehicleSlot
+from bluewolf_runtime_adapter.event_observation_archive import SOEventObservationArchive
+
+
+def _template(template_id: str, second_quarter: Quarter) -> SOTemplate:
+    return SOTemplate(
+        template_id=template_id,
+        name=template_id,
+        route_instances=(
+            SORouteInstance(
+                route_instance_id="r1",
+                route_kind=SORouteKind.SINGLE,
+                vehicle_slots=(
+                    SOVehicleSlot("slot-a", "outer", Quarter.Q0),
+                    SOVehicleSlot("slot-b", "outer", second_quarter),
+                ),
+            ),
+        ),
+    )
+
+
+def _observations(phase_a: float, phase_b: float) -> tuple[SOScoringObservation, ...]:
+    def one(member_id: str, phase: float) -> SOScoringObservation:
+        return SOScoringObservation(
+            member_id=member_id,
+            vehicle_type="outer",
+            route_instance_id="r1",
+            semantic_phase=phase,
+            period_error_ratio=0.0,
+            movement_error_ratio=0.0,
+            distance_error_b_ratio=0.0,
+            tangent_error_deg=0.0,
+            curvature_error_ratio=0.0,
+            reliability=1.0,
+            speed_fraction=1.0,
+            diagnostics={"source": "core-test"},
+        )
+
+    return one("v1", phase_a), one("v2", phase_b)
+
+
+def _frame(at: datetime, phase_a: float = 0.0, phase_b: float = 0.5) -> SOEventObservationFrame:
+    return SOEventObservationFrame(
+        event_id="g-1@2026-09-15T06:00:00Z",
+        server_id=7,
+        group_id="g-1",
+        sample_time_utc=at,
+        observations=_observations(phase_a, phase_b),
+    )
+
+
+class EventRecomputeTests(unittest.TestCase):
+    def test_template_change_recomputes_real_scores_from_same_core_observations(self) -> None:
+        start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
+        frames = (_frame(start), _frame(start + timedelta(seconds=1), 0.02, 0.52))
+        opposite = _template("opposite", Quarter.Q2)
+        adjacent = _template("adjacent", Quarter.Q1)
+
+        baseline = recompute_so_event(
+            event_id=frames[0].event_id,
+            template=opposite,
+            frames=frames,
+            code_version="sha-1",
+            config_version="cfg-4",
+            scenario_id="investigation-17",
+            run_id="run-baseline",
+        )
+        changed = recompute_so_event(
+            event_id=frames[0].event_id,
+            template=adjacent,
+            frames=frames,
+            code_version="sha-1",
+            config_version="cfg-4",
+            scenario_id="investigation-17",
+            run_id="run-changed",
+        )
+
+        self.assertEqual(baseline["frameCount"], 2)
+        self.assertEqual(baseline["serverId"], 7)
+        self.assertEqual(baseline["groupId"], "g-1")
+        self.assertEqual(baseline["scenarioId"], "investigation-17")
+        self.assertEqual(baseline["templateVersion"], template_fingerprint(opposite))
+        self.assertNotEqual(baseline["summary"]["sync"], changed["summary"]["sync"])
+        self.assertEqual(
+            baseline["points"][0]["members"][0]["primaryReason"],
+            baseline["points"][0]["members"][0]["primaryReason"],
+        )
+
+    def test_frames_from_multiple_groups_are_rejected(self) -> None:
+        start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
+        first = _frame(start)
+        second = SOEventObservationFrame(
+            event_id=first.event_id,
+            server_id=7,
+            group_id="other",
+            sample_time_utc=start + timedelta(seconds=1),
+            observations=_observations(0.0, 0.5),
+        )
+        with self.assertRaisesRegex(ValueError, "one server and one group"):
+            recompute_so_event(
+                event_id=first.event_id,
+                template=_template("opposite", Quarter.Q2),
+                frames=(first, second),
+                code_version="sha",
+                config_version="cfg",
+            )
+
+
+class EventObservationArchiveTests(unittest.TestCase):
+    def test_event_evidence_is_immutable_round_trips_and_recompute_provenance_persists(self) -> None:
+        start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
+        frame = _frame(start)
+        template = _template("opposite", Quarter.Q2)
+        with TemporaryDirectory() as directory:
+            archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
+            self.assertTrue(archive.record_frame(frame))
+            self.assertFalse(archive.record_frame(frame))
+
+            conflicting = _frame(start, 0.1, 0.6)
+            with self.assertRaisesRegex(ValueError, "conflicting immutable"):
+                archive.record_frame(conflicting)
+
+            restored = archive.read_event(frame.event_id)
+            self.assertEqual(restored, (frame,))
+            listed = archive.list_events(7)
+            self.assertEqual(listed[0]["eventId"], frame.event_id)
+            self.assertEqual(listed[0]["frameCount"], 1)
+
+            result = recompute_so_event(
+                event_id=frame.event_id,
+                template=template,
+                frames=restored,
+                code_version="sha-archive",
+                config_version="cfg-archive",
+                scenario_id="scenario-archive",
+                run_id="recompute-fixed",
+            )
+            archive.record_recompute(result, created_at_utc=start + timedelta(minutes=1))
+            saved = archive.recomputations(frame.event_id)
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0]["runId"], "recompute-fixed")
+            self.assertEqual(saved[0]["codeVersion"], "sha-archive")
+            self.assertEqual(saved[0]["configVersion"], "cfg-archive")
+            self.assertEqual(saved[0]["templateVersion"], template_fingerprint(template))
+
+
+if __name__ == "__main__":
+    unittest.main()
