@@ -1,6 +1,8 @@
 export const INVESTIGATION_EVENTS_SCHEMA = "bluewolf.investigation-events.v1" as const;
 export const EVENT_RECOMPUTE_SCHEMA = "bluewolf.event-recompute.v1" as const;
 
+export type InvestigationTemplate = { id: string; name: string };
+
 export type InvestigationEventIndex = {
   eventId: string;
   serverId: number;
@@ -13,6 +15,7 @@ export type InvestigationEventIndex = {
 export type InvestigationEventList = {
   schemaVersion: typeof INVESTIGATION_EVENTS_SCHEMA;
   serverId: number;
+  templates: InvestigationTemplate[];
   events: InvestigationEventIndex[];
 };
 
@@ -89,6 +92,12 @@ export function normalizeInvestigationEvents(value: unknown): InvestigationEvent
   if (row.schemaVersion !== INVESTIGATION_EVENTS_SCHEMA) throw new Error("unsupported investigation event schema");
   const serverId = integer(row.serverId, "serverId");
   if (!Array.isArray(row.events)) throw new Error("events must be an array");
+  if (!Array.isArray(row.templates)) throw new Error("templates must be an array");
+  const templates = row.templates.map((item, index) => {
+    const template = object(item, `template ${index + 1}`);
+    return { id: text(template.id, "template id"), name: text(template.name, "template name") };
+  });
+  if (new Set(templates.map((template) => template.id)).size !== templates.length) throw new Error("template ids must be unique");
   const events = row.events.map((item, index) => {
     const event = object(item, `event ${index + 1}`);
     const eventServerId = integer(event.serverId, "event serverId");
@@ -102,7 +111,7 @@ export function normalizeInvestigationEvents(value: unknown): InvestigationEvent
       frameCount: integer(event.frameCount, "frameCount"),
     };
   });
-  return { schemaVersion: INVESTIGATION_EVENTS_SCHEMA, serverId, events };
+  return { schemaVersion: INVESTIGATION_EVENTS_SCHEMA, serverId, templates, events };
 }
 
 export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
