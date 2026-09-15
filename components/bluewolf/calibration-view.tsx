@@ -28,7 +28,7 @@ function SectionHeader({ eyebrow, title, description, children }: { eyebrow: str
 }
 
 function GtWorkspace() {
-  const { state, save } = useWorkspace();
+  const { state, save, timeCursor, setTimeCursor, timeWindowMinutes } = useWorkspace();
   const [serverId, setServerId] = useState(state.servers.find((item) => item.enabled)?.id ?? "1");
   const [arena, setArena] = useState(state.arenas[0] ?? "זירה א׳");
   const [family, setFamily] = useState<Family>("SO");
@@ -38,7 +38,6 @@ function GtWorkspace() {
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [playhead, setPlayhead] = useState(36);
   const [clipStart, setClipStart] = useState(8);
   const [clipEnd, setClipEnd] = useState(92);
   const [syncJudge, setSyncJudge] = useState(75);
@@ -50,9 +49,9 @@ function GtWorkspace() {
 
   useEffect(() => {
     if (!playing) return;
-    const timer = window.setInterval(() => setPlayhead((value) => value >= clipEnd ? clipStart : value + 1), 110);
+    const timer = window.setInterval(() => setTimeCursor((value) => value >= clipEnd ? clipStart : value + 1), 110);
     return () => window.clearInterval(timer);
-  }, [playing, clipStart, clipEnd]);
+  }, [playing, clipStart, clipEnd, setTimeCursor]);
 
   const load = () => {
     if (new Date(from) >= new Date(to)) { toast.error("זמן ההתחלה חייב להיות לפני זמן הסיום"); return; }
@@ -64,7 +63,7 @@ function GtWorkspace() {
         window.clearInterval(timer);
         setLoading(false);
         setLoaded(true);
-        setPlayhead(Math.max(clipStart, Math.min(clipEnd, playhead)));
+        setTimeCursor((cursor) => Math.max(clipStart, Math.min(clipEnd, cursor)));
       }
       return next;
     }), 90);
@@ -92,7 +91,7 @@ function GtWorkspace() {
   };
 
   return <div className="calibration-stack">
-    <SectionHeader eyebrow="Ground Truth" title="Playback, Clip ותיוג" description="ה־GT הוא Scenario היררכי: טווח זמן, קבוצות, רכבים, גיאומטריה, כללי סנכרון ופרופיל ציונים." />
+    <SectionHeader eyebrow="Ground Truth" title="Playback, Clip ותיוג" description="ה־GT הוא Scenario היררכי: טווח זמן, קבוצות, רכבים, גיאומטריה, כללי סנכרון ופרופיל ציונים."><Badge variant="outline">cursor {Math.round(timeCursor)}% · חלון {timeWindowMinutes} דק׳</Badge></SectionHeader>
     <section className="v04-gt-source glass-panel">
       <div className="gt-source-grid calibration-source-grid">
         <label><span>שרת</span><Select value={serverId} onValueChange={setServerId}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.servers.filter((item) => item.enabled).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></label>
@@ -105,9 +104,9 @@ function GtWorkspace() {
       {loading && <Progress value={progress} />}
       {loaded && <div className="v04-gt-review calibration-review">
         <div className="v04-gt-player">
-          <GtPlayback family={family} progress={playhead / 100} vehicleTypes={state.vehicleTypes} />
-          <div className="v04-player-controls"><Button variant="outline" size="icon" onClick={() => setPlaying((value) => !value)}>{playing ? <Pause /> : <Play />}</Button><Slider value={[playhead]} min={clipStart} max={clipEnd} step={1} onValueChange={(values) => setPlayhead(values[0])} /><b>{playhead}%</b></div>
-          <div className="clip-controls"><label><span>Start</span><Slider value={[clipStart]} min={0} max={Math.max(0, clipEnd - 1)} step={1} onValueChange={(values) => { setClipStart(values[0]); setPlayhead((p) => Math.max(p, values[0])); }} /><b>{clipStart}%</b></label><label><span>End</span><Slider value={[clipEnd]} min={Math.min(99, clipStart + 1)} max={100} step={1} onValueChange={(values) => { setClipEnd(values[0]); setPlayhead((p) => Math.min(p, values[0])); }} /><b>{clipEnd}%</b></label></div>
+          <GtPlayback family={family} progress={timeCursor / 100} vehicleTypes={state.vehicleTypes} />
+          <div className="v04-player-controls"><Button variant="outline" size="icon" onClick={() => setPlaying((value) => !value)}>{playing ? <Pause /> : <Play />}</Button><Slider value={[timeCursor]} min={clipStart} max={clipEnd} step={1} onValueChange={(values) => setTimeCursor(values[0])} /><b>{Math.round(timeCursor)}%</b></div>
+          <div className="clip-controls"><label><span>Start</span><Slider value={[clipStart]} min={0} max={Math.max(0, clipEnd - 1)} step={1} onValueChange={(values) => { setClipStart(values[0]); setTimeCursor((cursor) => Math.max(cursor, values[0])); }} /><b>{clipStart}%</b></label><label><span>End</span><Slider value={[clipEnd]} min={Math.min(99, clipStart + 1)} max={100} step={1} onValueChange={(values) => { setClipEnd(values[0]); setTimeCursor((cursor) => Math.min(cursor, values[0])); }} /><b>{clipEnd}%</b></label></div>
         </div>
         <aside className="calibration-judgement">
           <p className="eyebrow">שיפוט מפתח</p><h3>ציוני אמת נפרדים</h3>
@@ -131,7 +130,6 @@ function SweepWorkspace({ mode }: { mode: "ranking" | "heatmap" }) {
 
   const run = () => {
     if (scenarioCount === 0) { toast.warning("נדרש לפחות GT Scenario אחד לפני Sweep"); return; }
-    // UI contract only: no synthetic ranking. A real ranking must come from Core Replay/Sweep.
     setRunning(true); setProgress(8); setResults([]);
     const timer = window.setInterval(() => setProgress((value) => {
       const next = Math.min(100, value + 12);
