@@ -23,9 +23,8 @@ function configuredInflux() {
   return influx;
 }
 
-test("IN-01 converts saved join columns and transformations into real operational runtime config", () => {
-  const influx = configuredInflux();
-  const existing = {
+function existingConfig(activeValueMap = undefined) {
+  return {
     unrelated: { preserve: true },
     influx: {
       url: "old",
@@ -33,13 +32,18 @@ test("IN-01 converts saved join columns and transformations into real operationa
       tokenEnv: "BLUEWOLF_INFLUX_TOKEN",
       timeoutMs: 9000,
       stream: { serverColumn: "old-server", timeColumn: "_time", vehicleNumberColumn: "old-vehicle" },
-      metrics: [],
+      metrics: activeValueMap === undefined ? [] : [
+        { metric: "active", bucket: "navigation", measurement: "active", field: "value", valueMap: activeValueMap },
+      ],
     },
     join: { logicalGridSeconds: 1, toleranceSeconds: 99 },
     polling: { logicalGridSeconds: 1, activePollSeconds: 99, idleProbeSeconds: 99, joinToleranceSeconds: 99 },
   };
+}
 
-  const output = buildOperationalInfluxConfig(existing, influx);
+test("IN-01 converts saved join columns and transformations into real operational runtime config", () => {
+  const influx = configuredInflux();
+  const output = buildOperationalInfluxConfig(existingConfig(), influx);
   assert.deepEqual(output.unrelated, { preserve: true });
   assert.equal(output.influx.tokenEnv, "BLUEWOLF_INFLUX_TOKEN");
   assert.equal(output.influx.timeoutMs, 9000);
@@ -59,6 +63,21 @@ test("IN-01 converts saved join columns and transformations into real operationa
   assert.ok(output.influx.metrics.some((item) => item.metric === "latitude_deg"));
   assert.ok(!output.influx.metrics.some((item) => item.metric === "vehicleNumber"));
   assert.ok(!JSON.stringify(output).includes(influx.token));
+});
+
+test("IN-01 editing one special rule preserves other runtime value-map rules", () => {
+  const output = buildOperationalInfluxConfig(existingConfig({ red: false }), configuredInflux());
+  const active = output.influx.metrics.find((item) => item.metric === "active");
+  assert.deepEqual(active.valueMap, { red: false, GREEN: true });
+});
+
+test("IN-01 as-is explicitly removes previous runtime value transformation", () => {
+  const influx = configuredInflux();
+  const activeSetting = influx.mappings.find((item) => item.systemKey === "active");
+  activeSetting.valueMode = "as-is";
+  const output = buildOperationalInfluxConfig(existingConfig({ green: true, red: false }), influx);
+  const active = output.influx.metrics.find((item) => item.metric === "active");
+  assert.equal("valueMap" in active, false);
 });
 
 test("IN-01 rejects ambiguous join columns and malformed special transformations", () => {
