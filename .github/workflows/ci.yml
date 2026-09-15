@@ -88,7 +88,7 @@ jobs:
           - shard: live-runtime-contract
             tests: test_live_runtime_contract
           - shard: runtime-service
-            tests: test_runtime_service test_runtime_history test_runtime_history_footprint
+            tests: test_runtime_service test_runtime_history test_runtime_history_footprint test_qa_service
           - shard: runtime-producer
             tests: test_runtime_producer test_position_enrichment
           - shard: operational-pipeline
@@ -161,23 +161,44 @@ jobs:
             }
           }
       - name: Build runtime image
-        run: docker build -f deploy/runtime/Dockerfile -t bluewolf-runtime:ci .
+        run: docker build --build-arg BLUEWOLF_CODE_SHA=${GITHUB_SHA} -f deploy/runtime/Dockerfile -t bluewolf-runtime:ci .
       - name: Validate non-root runtime image
         run: |
           test "$(docker image inspect bluewolf-runtime:ci --format '{{.Config.User}}')" = "10001:10001"
-      - name: Smoke runtime image
+          test "$(docker image inspect bluewolf-runtime:ci --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^BLUEWOLF_CODE_SHA=' | cut -d= -f2-)" = "${GITHUB_SHA}"
+      - name: Smoke runtime image and real Core QA endpoint
         run: |
           docker run -d --name bluewolf-runtime-ci -e BLUEWOLF_CORE_API_TOKEN=ci-token -p 18080:8080 bluewolf-runtime:ci
           cleanup() { docker rm -f bluewolf-runtime-ci >/dev/null 2>&1 || true; }
           trap cleanup EXIT
+          ready=0
           for attempt in $(seq 1 20); do
-            if curl --fail --silent --show-error http://127.0.0.1:18080/healthz; then
-              exit 0
+            if curl --fail --silent --show-error http://127.0.0.1:18080/healthz >/dev/null; then
+              ready=1
+              break
             fi
             sleep 1
           done
-          docker logs bluewolf-runtime-ci
-          exit 1
+          if [ "$ready" != "1" ]; then
+            docker logs bluewolf-runtime-ci
+            exit 1
+          fi
+          curl --fail --silent --show-error --max-time 120 \
+            -X POST \
+            -H 'Authorization: Bearer ci-token' \
+            -H 'Content-Type: application/json' \
+            -d '{"scenarioId":"ci-runtime-smoke","configVersion":"ci"}' \
+            http://127.0.0.1:18080/v1/qa/run > /tmp/bluewolf-qa.json
+          python - <<'PY'
+          import json, os
+          payload = json.load(open('/tmp/bluewolf-qa.json', encoding='utf-8'))
+          assert payload['schemaVersion'] == 'bluewolf.qa-run.v1'
+          assert payload['scenarioId'] == 'ci-runtime-smoke'
+          assert payload['codeSha'] == os.environ['GITHUB_SHA']
+          assert payload['configVersion'] == 'ci'
+          assert payload['categories']
+          assert all(item['passed'] + item['failed'] == item['scenarios'] for item in payload['categories'])
+          PY
 
   web:
     name: Web application
