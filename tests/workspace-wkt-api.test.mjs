@@ -21,6 +21,9 @@ const qaRun = {
   startedAt: '2026-09-15T06:00:00Z', durationMs: 1234, passed: true,
   categories: [{ id: 'scoring', title: 'Scoring', scenarios: 1, passed: 1, failed: 0 }],
 };
+const investigationEdits = {
+  'event-1': { note: 'validated event', templateId: 'so-a', arena: 'Arena-A' },
+};
 
 function put(state, expectedRevision) {
   return route.PUT(new Request('http://bluewolf.local/api/workspace', {
@@ -34,14 +37,14 @@ function get() {
   return route.GET(new Request('http://bluewolf.local/api/workspace'));
 }
 
-test('invalid WKT is rejected before persistence and cannot erase the last valid geometry or QA provenance', async () => {
-  const first = await put({ routes: [{ id: 'r1', geometry: validWkt }], qaRuns: [qaRun] }, 0);
+test('invalid WKT cannot erase valid geometry, QA provenance or per-event arena metadata', async () => {
+  const first = await put({ routes: [{ id: 'r1', geometry: validWkt }], qaRuns: [qaRun], investigationEdits }, 0);
   assert.equal(first.status, 200);
   const firstPayload = await first.json();
   assert.equal(firstPayload.ok, true);
   assert.equal(firstPayload.revision, 1);
 
-  const rejected = await put({ routes: [{ id: 'r1', geometry: invalidWkt }], qaRuns: [] }, 1);
+  const rejected = await put({ routes: [{ id: 'r1', geometry: invalidWkt }], qaRuns: [], investigationEdits: {} }, 1);
   assert.equal(rejected.status, 400);
 
   const read = await get();
@@ -50,5 +53,7 @@ test('invalid WKT is rejected before persistence and cannot erase the last valid
   assert.equal(saved.revision, 1);
   assert.equal(saved.state.routes[0].geometry, validWkt);
   assert.deepEqual(saved.state.qaRuns, [qaRun]);
+  assert.deepEqual(saved.state.investigationEdits, investigationEdits);
+  assert.equal(saved.state.investigationEdits['event-1'].arena, 'Arena-A');
   assert.equal(saved.logs.length, 1);
 });
