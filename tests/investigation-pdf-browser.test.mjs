@@ -14,6 +14,17 @@ function recomputePayload() {
     schemaVersion: 'bluewolf.event-recompute.v1', runId: 'run-rtl', scenarioId: 'report:event-rtl', eventId: 'event-rtl', serverId: 7, groupId: 'g1',
     templateId: 'tpl-a', templateVersion: 'tpl-v1', codeVersion: 'sha-rtl', configVersion: 'cfg-rtl',
     startAt: '2026-09-15T06:00:00Z', endAt: '2026-09-15T06:00:05Z', frameCount: 1, scoredFrameCount: 1, missingFrameCount: 0,
+    routes: [{
+      routeInstanceId: 'r1', routeId: 'route-core-1', family: 'so', subtype: 'hippodrome', topology: 'simple',
+      centerLatitude: 32, centerLongitude: 34.8, lengthM: 800, longAxisAM: 120, shortAxisBM: 40, orientationDeg: 13,
+      estimatedPeriodS: 100, direction: 'unknown', detectionQuality: 0.98,
+      centerline: [
+        { latitude: 32.0000, longitude: 34.7990 },
+        { latitude: 32.0005, longitude: 34.8000 },
+        { latitude: 32.0000, longitude: 34.8010 },
+        { latitude: 31.9995, longitude: 34.8000 },
+      ],
+    }],
     summary: { sync: 90, route: 91, total: 90 }, rootCauses: [{ reason: 'so_template_phase', occurrences: 1 }],
     points: [{
       observedAt: '2026-09-15T06:00:05Z', pendingReason: null,
@@ -39,7 +50,7 @@ test('local JPEG page wrapper creates a structurally valid multi-page PDF withou
   assert.match(latin, /startxref\n\d+\n%%EOF/);
 });
 
-test('report data contract preserves Hebrew metadata and refuses provenance mismatch', () => {
+test('report data contract preserves Hebrew metadata, detected route evidence and refuses provenance mismatch', () => {
   const envelope = reportData.normalizeInvestigationReportData({
     schemaVersion: 'bluewolf.investigation-report-data.v1',
     source: 'core-event-archive',
@@ -56,13 +67,15 @@ test('report data contract preserves Hebrew metadata and refuses provenance mism
   assert.equal(envelope.report.events[0].arena, 'זירה צפונית');
   assert.equal(envelope.report.events[0].note, 'טקסט תחקור בעברית');
   assert.equal(envelope.report.events[0].result.codeVersion, 'sha-rtl');
+  assert.equal(envelope.report.events[0].result.routes[0].routeId, 'route-core-1');
+  assert.equal(envelope.report.events[0].result.routes[0].centerline.length, 4);
   assert.throws(() => reportData.normalizeInvestigationReportData({
     ...envelope,
     codeVersion: 'different-sha',
   }), /code version mismatch/);
 });
 
-test('REP-01 renderer sends Hebrew metadata to RTL canvas and paginates long detail tables', async () => {
+test('REP-01/02 renderer sends Hebrew metadata to RTL canvas, draws summary map and paginates long detail tables', async () => {
   const originalDocument = globalThis.document;
   const rendered = [];
   const canvases = [];
@@ -102,7 +115,7 @@ test('REP-01 renderer sends Hebrew metadata to RTL canvas and paginates long det
     result.rootCauses = Array.from({ length: 18 }, (_, index) => ({ reason: `reason-${index + 1}`, occurrences: index + 1 }));
     result.points[0].members = Array.from({ length: 65 }, (_, index) => ({
       memberId: `v${index + 1}`,
-      routeInstanceId: `r${index + 1}`,
+      routeInstanceId: 'r1',
       slotId: `slot-${index + 1}`,
       expectedPhase: (index % 4) / 4,
       positionErrorCycle: 0.01,
@@ -134,9 +147,12 @@ test('REP-01 renderer sends Hebrew metadata to RTL canvas and paginates long det
     const pdf = await browserPdf.buildInvestigationPdfBrowser(report);
     const latin = Buffer.from(pdf).toString('latin1');
     const count = Number(latin.match(/\/Count (\d+)/)?.[1] || 0);
-    assert.ok(count >= 5, `expected long report to paginate to at least five pages, got ${count}`);
+    assert.ok(count >= 6, `expected long report with REP-02 summary map to paginate to at least six pages, got ${count}`);
     assert.equal(canvases.length, count);
     assert.ok(rendered.some((item) => item.text.includes('זאב כחול — דוח תחקור הנדסי') && item.direction === 'rtl'));
+    assert.ok(rendered.some((item) => item.text.includes('מפה מסכמת לכל טווח התחקור') && item.direction === 'rtl'));
+    assert.ok(rendered.some((item) => item.text.includes('העקבות נשברות בחורי ניווט ובין אירועים') && item.direction === 'rtl'));
+    assert.ok(rendered.some((item) => item.text.includes('route-core-1') && item.direction === 'rtl'));
     assert.ok(rendered.some((item) => item.text.includes('זירה צפונית') && item.direction === 'rtl'));
     assert.ok(rendered.some((item) => item.text.includes('טקסט תחקור בעברית ללא חיתוך') && item.direction === 'rtl'));
     assert.ok(rendered.some((item) => item.text.includes('רכב v65') && item.direction === 'rtl'));
@@ -146,10 +162,20 @@ test('REP-01 renderer sends Hebrew metadata to RTL canvas and paginates long det
   }
 });
 
-test('REP-01 renderer is local, RTL-first, Hebrew-bearing, paginated, and avoids the legacy ASCII replacement path', async () => {
+test('legacy event without route evidence remains renderable without invented route', async () => {
+  const source = await readFile('lib/investigation-pdf-browser.ts', 'utf8');
+  assert.match(source, /אין route geometry evidence בארכיון הישן/);
+  assert.match(source, /result\.routes\.length/);
+  assert.doesNotMatch(source, /buildSoSmileGeometry/);
+});
+
+test('REP-01/02 renderer is local, RTL-first, truth-backed, paginated, and avoids the legacy ASCII replacement path', async () => {
   const source = await readFile('lib/investigation-pdf-browser.ts', 'utf8');
   const panel = await readFile('components/bluewolf/investigation-report-panel.tsx', 'utf8');
   assert.match(source, /זאב כחול — דוח תחקור הנדסי/);
+  assert.match(source, /summaryMapPage/);
+  assert.match(source, /drawRouteEvidence/);
+  assert.match(source, /route\.centerline/);
   assert.match(source, /ctx\.direction = options\.dir \?\? "rtl"/);
   assert.match(source, /Noto Sans Hebrew/);
   assert.match(source, /document\.fonts\.ready/);
