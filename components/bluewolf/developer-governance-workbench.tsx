@@ -8,6 +8,7 @@ import { RouteBankWktWorkbench } from "./route-bank-wkt-workbench";
 import { SoTemplateGovernanceWorkbench } from "./so-template-governance-workbench";
 import { TemplateGovernanceWorkbench } from "./template-governance-workbench";
 import { VehicleRangeWorkbench } from "./vehicle-range-workbench";
+import { WorkspaceRecoveryWorkbench } from "./workspace-recovery-workbench";
 
 export function DeveloperGovernanceWorkbench() {
   const { revision } = useWorkspace();
@@ -36,6 +37,7 @@ export function DeveloperGovernanceWorkbench() {
     <RouteBankWktWorkbench key={`route-bank-${revision}`} />
     <VehicleRangeWorkbench />
     <InfluxGovernanceWorkbench />
+    <WorkspaceRecoveryWorkbench />
     <QaTruthWorkbench />
     <div className="protected-legacy-developer">
       <style>{`
