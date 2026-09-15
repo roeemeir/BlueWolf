@@ -83,15 +83,13 @@ export function localHippodromePoints(
   const samples = Math.max(6, Math.round(samplesPerTurn));
   const points: SoPoint[] = [{ x: -halfLeg, y: -radius }, { x: halfLeg, y: -radius }];
 
-  // Right outer semicircle: top -> bottom.
   for (let index = 1; index <= samples; index += 1) {
     const angle = -Math.PI / 2 + index * Math.PI / samples;
     points.push({ x: halfLeg + Math.cos(angle) * radius, y: Math.sin(angle) * radius });
   }
   points.push({ x: -halfLeg, y: radius });
 
-  // Left outer semicircle: bottom -> almost top. The path is closed by SVG Z / sampler,
-  // so the initial point is not duplicated and Double has no synthetic center seam.
+  // Closing is left to SVG Z / the sampler, so the initial point is not duplicated.
   for (let index = 1; index < samples; index += 1) {
     const angle = Math.PI / 2 + index * Math.PI / samples;
     points.push({ x: -halfLeg + Math.cos(angle) * radius, y: Math.sin(angle) * radius });
@@ -104,12 +102,32 @@ export function pointsToClosedPath(points: readonly SoPoint[]) {
   return points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(3)},${point.y.toFixed(3)}`).join(" ") + " Z";
 }
 
+function fittedShapeOptions(options: SoGeometryOptions, spacing: number) {
+  const radius = options.radius ?? 22;
+  const singleHalfLeg = options.singleHalfLeg ?? 54;
+  const doubleHalfLeg = options.doubleHalfLeg ?? 104;
+  // Keep a visible gap of roughly half a single half-leg. If a caller requests a
+  // compact layout, scale all routes uniformly instead of allowing overlap.
+  const desiredGap = Math.max(8, singleHalfLeg * 0.5);
+  const nominalExtent = Math.hypot(doubleHalfLeg + radius, radius);
+  const availableExtent = Math.max(8, (spacing - desiredGap) / 2);
+  const scale = Math.min(1, availableExtent / nominalExtent);
+  return {
+    radius: radius * scale,
+    singleHalfLeg: singleHalfLeg * scale,
+    doubleHalfLeg: doubleHalfLeg * scale,
+    samplesPerTurn: options.samplesPerTurn,
+  };
+}
+
 export function buildSoSmileGeometry(chain: readonly SoRouteKind[], options: SoGeometryOptions = {}): SoRouteGeometry[] {
   const center = { x: options.centerX ?? 0, y: options.centerY ?? 0 };
-  const poses = soSmilePoses(chain.length, options.spacing ?? 245, options.risePerStep ?? 22);
+  const spacing = options.spacing ?? 245;
+  const poses = soSmilePoses(chain.length, spacing, options.risePerStep ?? 22);
+  const shapeOptions = fittedShapeOptions(options, spacing);
   return chain.map((kind, routeIndex) => {
     const pose = poses[routeIndex];
-    const local = localHippodromePoints(kind, options);
+    const local = localHippodromePoints(kind, shapeOptions);
     const points = local.map((point) => transform(point, pose, center));
     return {
       routeIndex,
