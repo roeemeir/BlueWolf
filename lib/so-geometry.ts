@@ -148,15 +148,17 @@ function normalizedPhase(value: number) {
   return ((value % 1) + 1) % 1;
 }
 
-/** Sample the same physical route used for rendering and return its tangent heading. */
+/**
+ * Sample the same physical route used for rendering and return its tangent heading.
+ * Reversing direction MUST NOT change the physical placement: reverse only negates
+ * the tangent vector at the same phase point.
+ */
 export function pointAtSoPhase(points: readonly SoPoint[], phase: number, reverse = false): SoPointWithHeading {
   if (points.length < 2) throw new Error("SO geometry requires at least two points");
   const closed = [...points, points[0]];
   const lengths = closed.slice(1).map((point, index) => distance(closed[index], point));
   const perimeter = lengths.reduce((sum, value) => sum + value, 0);
-  const basePhase = normalizedPhase(phase);
-  const directedPhase = reverse ? normalizedPhase(1 - basePhase) : basePhase;
-  let remaining = directedPhase * perimeter;
+  let remaining = normalizedPhase(phase) * perimeter;
 
   for (let index = 0; index < lengths.length; index += 1) {
     const segment = lengths[index];
@@ -175,7 +177,9 @@ export function pointAtSoPhase(points: readonly SoPoint[], phase: number, revers
 
   const first = closed[0];
   const next = closed[1];
-  return { x: first.x, y: first.y, heading: Math.atan2(next.y - first.y, next.x - first.x) * 180 / Math.PI + 90 };
+  const tangentX = reverse ? first.x - next.x : next.x - first.x;
+  const tangentY = reverse ? first.y - next.y : next.y - first.y;
+  return { x: first.x, y: first.y, heading: Math.atan2(tangentY, tangentX) * 180 / Math.PI + 90 };
 }
 
 export function soPhasesForRoute(kind: SoRouteKind) {
