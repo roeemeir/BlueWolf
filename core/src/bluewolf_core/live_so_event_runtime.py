@@ -143,10 +143,12 @@ class LiveSOEventRuntime:
     the key invariant that prevents recommendation evaluation from advancing
     movement/curvature temporal state multiple times at one timestamp.
 
-    ``observation_sink`` receives only complete immutable observation frames,
-    after the event engine has assigned the authoritative event id.  The sink is
-    application infrastructure (for example SQLite); it never participates in
-    scoring or template selection.
+    ``observation_sink`` receives every event timestamp after the event engine
+    assigns the authoritative event id. Complete frames carry immutable Core
+    observations; timestamps where the Core is not score-ready are persisted as
+    pending frames with an explicit reason so investigation never shortens the
+    event range silently. The sink is application infrastructure (for example
+    SQLite); it never participates in scoring or template selection.
     """
 
     def __init__(
@@ -252,7 +254,14 @@ class LiveSOEventRuntime:
                 template_scores=comparison_scores,
             )
         )
-        if self.observation_sink is not None and len(observations) == len(members):
+        if self.observation_sink is not None:
+            pending_reason: str | None = None
+            if len(observations) != len(members):
+                pending_reason = "core_observations_incomplete"
+            elif selection.template_id is None:
+                pending_reason = "active_template_unavailable"
+            elif live.scoring is None:
+                pending_reason = "core_scoring_not_ready"
             self.observation_sink(
                 SOEventObservationFrame(
                     event_id=event.snapshot.event_id,
@@ -260,6 +269,7 @@ class LiveSOEventRuntime:
                     group_id=group_id,
                     sample_time_utc=now,
                     observations=observations,
+                    pending_reason=pending_reason,
                 )
             )
 
