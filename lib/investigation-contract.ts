@@ -46,6 +46,24 @@ export type RecomputedNavigation = {
   reliability: number;
 };
 
+export type RecomputedRoute = {
+  routeInstanceId: string;
+  routeId: string;
+  family: string;
+  subtype: string;
+  topology: string;
+  centerLatitude: number;
+  centerLongitude: number;
+  lengthM: number;
+  longAxisAM: number;
+  shortAxisBM: number;
+  orientationDeg: number;
+  estimatedPeriodS: number;
+  direction: string;
+  detectionQuality: number;
+  centerline: { latitude: number; longitude: number }[];
+};
+
 export type EventRecomputePoint = {
   observedAt: string;
   pendingReason: string | null;
@@ -70,6 +88,7 @@ export type EventRecomputeResult = {
   frameCount: number;
   scoredFrameCount: number;
   missingFrameCount: number;
+  routes: RecomputedRoute[];
   summary: { sync: number | null; route: number | null; total: number | null };
   rootCauses: { reason: string; occurrences: number }[];
   points: EventRecomputePoint[];
@@ -112,9 +131,23 @@ function finite(value: unknown, name: string): number {
   return value;
 }
 
+function positive(value: unknown, name: string): number {
+  const result = finite(value, name);
+  if (result <= 0) throw new Error(`${name} must be positive`);
+  return result;
+}
+
 function finiteOrNull(value: unknown, name: string): number | null {
   if (value === null || value === undefined) return null;
   return finite(value, name);
+}
+
+function wgs84(latitudeValue: unknown, longitudeValue: unknown, name: string) {
+  const latitude = finite(latitudeValue, `${name} latitude`);
+  const longitude = finite(longitudeValue, `${name} longitude`);
+  if (latitude < -90 || latitude > 90) throw new Error(`${name} latitude is outside WGS84 range`);
+  if (longitude < -180 || longitude > 180) throw new Error(`${name} longitude is outside WGS84 range`);
+  return { latitude, longitude };
 }
 
 export function normalizeInvestigationEvents(value: unknown): InvestigationEventList {
@@ -151,6 +184,8 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
   const summary = object(row.summary, "summary");
   if (!Array.isArray(row.rootCauses)) throw new Error("rootCauses must be an array");
   if (!Array.isArray(row.points)) throw new Error("points must be an array");
+  const routeRows = row.routes === undefined ? [] : row.routes;
+  if (!Array.isArray(routeRows)) throw new Error("routes must be an array");
   const frameCount = integer(row.frameCount, "frameCount");
   const scoredFrameCount = integer(row.scoredFrameCount, "scoredFrameCount");
   const missingFrameCount = integer(row.missingFrameCount, "missingFrameCount");
@@ -160,6 +195,35 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
     const cause = object(item, `rootCause ${index + 1}`);
     return { reason: text(cause.reason, "root cause reason"), occurrences: integer(cause.occurrences, "root cause occurrences") };
   });
+  const routes = routeRows.map((raw, routeIndex) => {
+    const route = object(raw, `route ${routeIndex + 1}`);
+    if (!Array.isArray(route.centerline) || route.centerline.length < 3) throw new Error("route centerline must contain at least three points");
+    const center = wgs84(route.centerLatitude, route.centerLongitude, "route center");
+    const centerline = route.centerline.map((pointRaw, pointIndex) => {
+      const point = object(pointRaw, `route centerline point ${pointIndex + 1}`);
+      return wgs84(point.latitude, point.longitude, "route centerline point");
+    });
+    const detectionQuality = finite(route.detectionQuality, "route detectionQuality");
+    if (detectionQuality < 0 || detectionQuality > 1) throw new Error("route detectionQuality must be in [0,1]");
+    return {
+      routeInstanceId: text(route.routeInstanceId, "routeInstanceId"),
+      routeId: text(route.routeId, "routeId"),
+      family: text(route.family, "route family"),
+      subtype: text(route.subtype, "route subtype"),
+      topology: text(route.topology, "route topology"),
+      centerLatitude: center.latitude,
+      centerLongitude: center.longitude,
+      lengthM: positive(route.lengthM, "route lengthM"),
+      longAxisAM: positive(route.longAxisAM, "route longAxisAM"),
+      shortAxisBM: positive(route.shortAxisBM, "route shortAxisBM"),
+      orientationDeg: finite(route.orientationDeg, "route orientationDeg"),
+      estimatedPeriodS: positive(route.estimatedPeriodS, "route estimatedPeriodS"),
+      direction: text(route.direction, "route direction"),
+      detectionQuality,
+      centerline,
+    };
+  });
+  if (new Set(routes.map((route) => route.routeInstanceId)).size !== routes.length) throw new Error("route instance ids must be unique");
   const points = row.points.map((item, pointIndex) => {
     const point = object(item, `point ${pointIndex + 1}`);
     const group = object(point.group, "group score");
@@ -247,6 +311,7 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
     frameCount,
     scoredFrameCount,
     missingFrameCount,
+    routes,
     summary: {
       sync: score(summary.sync, "summary sync"),
       route: score(summary.route, "summary route"),
