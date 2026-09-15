@@ -59,6 +59,21 @@ def _pipeline_for_server(server_id: int):
     return None
 
 
+def _resolved_lifecycle_archive(archive: SOEventObservationArchive | None) -> SOEventLifecycleArchive | None:
+    """Return lifecycle storage for the same SQLite file as observation evidence.
+
+    Existing tests/integration hooks historically injected only ``event_archive``.
+    The fallback keeps those callers compatible while still using the exact same
+    durable SQLite path; production normally supplies both archives explicitly.
+    """
+
+    if event_lifecycle_archive is not None:
+        return event_lifecycle_archive
+    if archive is None:
+        return None
+    return SOEventLifecycleArchive(archive.path)
+
+
 def _optional_query_time(query: Mapping[str, list[str]], name: str) -> datetime | None:
     values = query.get(name, [])
     if not values:
@@ -150,7 +165,7 @@ class QaEnabledASGI:
             await self._send_json(send, 405, {"error": "method not allowed"})
             return
         archive = event_archive
-        lifecycle_archive = event_lifecycle_archive
+        lifecycle_archive = _resolved_lifecycle_archive(archive)
         if archive is None or lifecycle_archive is None:
             await self._send_json(send, 503, {"status": "unavailable", "error": "SO event evidence archive is not configured"}, surface=b"core-event-archive")
             return
@@ -193,7 +208,7 @@ class QaEnabledASGI:
             await self._send_json(send, 405, {"error": "method not allowed"})
             return
         archive = event_archive
-        lifecycle_archive = event_lifecycle_archive
+        lifecycle_archive = _resolved_lifecycle_archive(archive)
         if archive is None or lifecycle_archive is None:
             await self._send_json(send, 503, {"status": "unavailable", "error": "SO event evidence archive is not configured"}, surface=b"core-event-archive")
             return
