@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from bluewolf_core.event_recompute import (
+    SOEventNavigationPoint,
     SOEventObservationFrame,
     recompute_so_event,
     template_fingerprint,
@@ -52,6 +53,33 @@ def _observations(phase_a: float, phase_b: float) -> tuple[SOScoringObservation,
     return one("v1", phase_a), one("v2", phase_b)
 
 
+def _navigation(offset: float = 0.0) -> tuple[SOEventNavigationPoint, ...]:
+    return (
+        SOEventNavigationPoint(
+            member_id="v1",
+            vehicle_identifier=101,
+            latitude_deg=32.0 + offset,
+            longitude_deg=34.8 + offset,
+            altitude_m=12.0,
+            velocity_north_mps=4.0,
+            velocity_east_mps=3.0,
+            active=True,
+            reliability=0.95,
+        ),
+        SOEventNavigationPoint(
+            member_id="v2",
+            vehicle_identifier=102,
+            latitude_deg=32.0005 + offset,
+            longitude_deg=34.8005 + offset,
+            altitude_m=13.0,
+            velocity_north_mps=0.0,
+            velocity_east_mps=5.0,
+            active=True,
+            reliability=0.9,
+        ),
+    )
+
+
 def _frame(at: datetime, phase_a: float = 0.0, phase_b: float = 0.5) -> SOEventObservationFrame:
     return SOEventObservationFrame(
         event_id="g-1@2026-09-15T06:00:00Z",
@@ -59,6 +87,7 @@ def _frame(at: datetime, phase_a: float = 0.0, phase_b: float = 0.5) -> SOEventO
         group_id="g-1",
         sample_time_utc=at,
         observations=_observations(phase_a, phase_b),
+        navigation=_navigation((at.second % 10) * 0.00001),
     )
 
 
@@ -70,6 +99,7 @@ def _pending_frame(at: datetime) -> SOEventObservationFrame:
         sample_time_utc=at,
         observations=(),
         pending_reason="core_observations_incomplete",
+        navigation=_navigation(),
     )
 
 
@@ -80,6 +110,7 @@ def _other_event_frame(at: datetime) -> SOEventObservationFrame:
         group_id="g-2",
         sample_time_utc=at,
         observations=_observations(0.25, 0.75),
+        navigation=_navigation(0.01),
     )
 
 
@@ -116,6 +147,8 @@ class EventRecomputeTests(unittest.TestCase):
         self.assertEqual(baseline["groupId"], "g-1")
         self.assertEqual(baseline["scenarioId"], "investigation-17")
         self.assertEqual(baseline["templateVersion"], template_fingerprint(opposite))
+        self.assertEqual(baseline["points"][0]["navigation"][0]["vehicleIdentifier"], 101)
+        self.assertAlmostEqual(baseline["points"][0]["navigation"][0]["headingDeg"], 36.86989764584402)
         self.assertNotEqual(baseline["summary"]["sync"], changed["summary"]["sync"])
         self.assertNotEqual(
             baseline["points"][0]["members"][1]["positionErrorCycle"],
@@ -124,7 +157,7 @@ class EventRecomputeTests(unittest.TestCase):
         self.assertTrue(changed["rootCauses"])
         self.assertGreater(changed["rootCauses"][0]["occurrences"], 0)
 
-    def test_pending_frame_preserves_full_event_range_without_fabricating_score(self) -> None:
+    def test_pending_frame_preserves_full_event_range_and_navigation_without_fabricating_score(self) -> None:
         start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
         pending = _pending_frame(start)
         scored = _frame(start + timedelta(seconds=5))
@@ -147,6 +180,8 @@ class EventRecomputeTests(unittest.TestCase):
         self.assertFalse(result["points"][0]["group"]["valid"])
         self.assertIsNone(result["points"][0]["group"]["total"])
         self.assertEqual(result["points"][0]["members"], [])
+        self.assertEqual(len(result["points"][0]["navigation"]), 2)
+        self.assertEqual(result["points"][0]["navigation"][1]["vehicleIdentifier"], 102)
         self.assertIsNone(result["points"][1]["pendingReason"])
         self.assertEqual(len(result["points"][1]["members"]), 2)
 
@@ -159,6 +194,7 @@ class EventRecomputeTests(unittest.TestCase):
             group_id="other",
             sample_time_utc=start + timedelta(seconds=1),
             observations=_observations(0.0, 0.5),
+            navigation=_navigation(),
         )
         with self.assertRaisesRegex(ValueError, "one server and one group"):
             recompute_so_event(
@@ -171,7 +207,7 @@ class EventRecomputeTests(unittest.TestCase):
 
 
 class EventObservationArchiveTests(unittest.TestCase):
-    def test_event_evidence_is_immutable_round_trips_and_recompute_provenance_persists(self) -> None:
+    def test_event_evidence_is_immutable_round_trips_navigation_and_recompute_provenance_persists(self) -> None:
         start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
         pending = _pending_frame(start)
         frame = _frame(start + timedelta(seconds=5))
@@ -189,6 +225,8 @@ class EventObservationArchiveTests(unittest.TestCase):
 
             restored = archive.read_event(frame.event_id)
             self.assertEqual(restored, (pending, frame))
+            self.assertEqual(restored[0].navigation, pending.navigation)
+            self.assertEqual(restored[1].navigation, frame.navigation)
             listed = archive.list_events(7)
             self.assertEqual(listed[0]["eventId"], frame.event_id)
             self.assertEqual(listed[0]["frameCount"], 2)
@@ -205,6 +243,7 @@ class EventObservationArchiveTests(unittest.TestCase):
                 run_id="recompute-fixed",
             )
             self.assertEqual(result["missingFrameCount"], 1)
+            self.assertEqual(result["points"][0]["navigation"][0]["latitude"], 32.0)
             archive.record_recompute(result, created_at_utc=start + timedelta(minutes=1))
             saved = archive.recomputations(frame.event_id)
             self.assertEqual(len(saved), 1)
@@ -213,6 +252,7 @@ class EventObservationArchiveTests(unittest.TestCase):
             self.assertEqual(saved[0]["configVersion"], "cfg-archive")
             self.assertEqual(saved[0]["templateVersion"], template_fingerprint(template))
             self.assertEqual(saved[0]["missingFrameCount"], 1)
+            self.assertEqual(saved[0]["points"][0]["navigation"][1]["vehicleIdentifier"], 102)
 
     def test_time_range_selects_intersecting_events_without_clipping_event_bounds(self) -> None:
         start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
