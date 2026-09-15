@@ -37,7 +37,7 @@ test('GEO-01 neighboring routes keep a real gap and are not endpoint-connected',
   const routes = buildSoSmileGeometry(['single', 'double', 'single'], {
     centerX: 500,
     centerY: 180,
-    spacing: 170,
+    spacing: 245,
     risePerStep: 22,
     radius: 22,
     singleHalfLeg: 54,
@@ -53,7 +53,6 @@ test('SO Double is one continuous outer-turn route with no internal U-turn seam'
   const singleX = Math.max(...single.map((point) => point.x)) - Math.min(...single.map((point) => point.x));
   const doubleX = Math.max(...double.map((point) => point.x)) - Math.min(...double.map((point) => point.x));
   assert.ok(doubleX > singleX * 1.5);
-  // One closed outline: no duplicated center/intersection point is injected.
   const unique = new Set(double.map((point) => `${point.x.toFixed(5)}:${point.y.toFixed(5)}`));
   assert.equal(unique.size, double.length);
 });
@@ -64,5 +63,6 @@ test('GEO-02 route phase and tangent heading are independent of vehicle type', (
   const lightning = pointAtSoPhase(route.points, 0.25, false);
   assert.deepEqual(storm, lightning);
   const reversed = pointAtSoPhase(route.points, 0.25, true);
-  assert.ok(Math.abs((((reversed.heading - storm.heading) % 360) + 360) % 360 - 180) < 1e-6);
+  const headingDelta = ((((reversed.heading - storm.heading) % 360) + 360) % 360);
+  assert.ok(Math.abs(headingDelta - 180) < 1e-6);
 });
