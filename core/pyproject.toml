@@ -33,7 +33,7 @@ operational = [
 ]
 
 [project.scripts]
-bluewolf-runtime = "bluewolf_runtime_adapter.service:main"
+bluewolf-runtime = "bluewolf_runtime_adapter.qa_service:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
