@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { getServerScenario, type DataMode, type DemoGroup, type SyncTemplate, type VehicleType } from "@/lib/bluewolf";
 import { getLiveRuntimeHistory } from "@/lib/live-runtime-history";
 import { getRuntimeGroups } from "@/lib/live-runtime";
-import { useWorkspace } from "./app-context";
+import { useWorkspace, type TimeWindowMinutes } from "./app-context";
 import { OperationalLiveMap } from "./operational-live-map";
 import { OperationalTimeline } from "./operational-timeline";
 import { LiveMap, ScoreRing, TemplatePreview, TimelineChart, VehicleIconGlyph, type GroupKey, type ScoreLayer } from "./visuals";
@@ -19,14 +19,43 @@ import { LiveMap, ScoreRing, TemplatePreview, TimelineChart, VehicleIconGlyph, t
 const scoreTone = (score: number) => score >= 80 ? "good" : score < 50 ? "low" : "medium";
 const scoreLabel = (score: number) => score >= 80 ? "טוב" : score < 50 ? "נמוך" : "בינוני";
 
+type OperatorGroup = DemoGroup & {
+  subtype?: string;
+  periodSeconds?: number;
+  direction?: string;
+  routeNames?: string[];
+};
+
+function directionLabel(direction?: string) {
+  if (direction === "clockwise") return "CW";
+  if (direction === "counterclockwise") return "CCW";
+  if (direction === "mixed") return "מעורב";
+  return "—";
+}
+
+function subtypeLabel(subtype?: string) {
+  if (!subtype) return "—";
+  return subtype.replaceAll("_", " ");
+}
+
 function TypeGlyph({ type, color }: { type?: VehicleType; color: string }) {
   return <svg className="member-type-icon" viewBox="-15 -15 30 30" aria-hidden="true"><VehicleIconGlyph icon={type?.icon ?? "rover"} color={color} /></svg>;
 }
 
-function GroupCard({ group, selected, vehicleTypes, templateName, onSelect, onSelectVehicle, onTemplate }: { group: DemoGroup; selected: boolean; vehicleTypes: VehicleType[]; templateName: string; onSelect: () => void; onSelectVehicle: (id: number) => void; onTemplate: () => void }) {
+function GroupCard({ group, selected, vehicleTypes, templateName, onSelect, onSelectVehicle, onTemplate }: { group: OperatorGroup; selected: boolean; vehicleTypes: VehicleType[]; templateName: string; onSelect: () => void; onSelectVehicle: (id: number) => void; onTemplate: () => void }) {
   const groupColor = group.color;
+  const routeContext = group.routeNames?.length ? group.routeNames.join(" · ") : group.subtitle;
   return <article className={`group-card v04-group-card glass-panel ${selected ? "active" : ""} tone-${scoreTone(group.total)}`}>
-    <button type="button" className="group-card-select" onClick={onSelect}><div className="group-card-head"><div><span className="v04-group-dot" style={{ background: groupColor }} /><strong>{group.name}</strong><p>{group.subtitle}</p></div><ScoreRing value={group.total} color={groupColor} /></div><div className="score-trio"><span>סנכרון<b>{group.sync}</b></span><span>נתיב<b>{group.route}</b></span><span>אמינות<b>{group.confidence}%</b></span></div></button>
+    <button type="button" className="group-card-select" onClick={onSelect}>
+      <div className="group-card-head"><div><span className="v04-group-dot" style={{ background: groupColor }} /><strong>{group.name}</strong><p>{routeContext}</p></div><ScoreRing value={group.total} color={groupColor} /></div>
+      <div className="group-structure-grid">
+        <span>משפחה / סוג<b>{group.family} · {subtypeLabel(group.subtype)}</b></span>
+        <span>רכבים<b>{group.members.length}</b></span>
+        <span>מחזור<b>{Number.isFinite(group.periodSeconds) ? `${group.periodSeconds?.toFixed(1)}s` : "—"}</b></span>
+        <span>כיוון<b>{directionLabel(group.direction)}</b></span>
+      </div>
+      <div className="score-trio"><span>סנכרון<b>{group.sync}</b></span><span>נתיב<b>{group.route}</b></span><span>אמינות<b>{group.confidence}%</b></span></div>
+    </button>
     <div className={`reason-line ${scoreTone(group.total)}`}><span>{scoreLabel(group.total)}</span><div><strong>גורם מוביל</strong>{group.reason}</div></div>
     <div className="active-template-row"><div><Layers3 /><span>תבנית</span><b>{templateName}</b></div><Button variant="outline" size="sm" onClick={onTemplate}><Settings2 />החלפה</Button></div>
     <div className="member-score-list">{group.members.map((member) => { const type = vehicleTypes.find((item) => item.id === member.typeId); return <button type="button" key={member.id} onClick={() => onSelectVehicle(member.id)}><TypeGlyph type={type} color={groupColor} /><span><strong>רכב {member.id}</strong><small>{type?.name ?? "לא מוגדר"}</small></span><b className={`score-number ${scoreTone(member.score)}`}>{member.score}</b></button>; })}</div>
@@ -76,7 +105,7 @@ function structuralEvents(serverId: string): StructuralEventRow[] {
 }
 
 export function OperatorView({ serverId, serverName, dataMode, onDataModeChange, onInvestigate }: { serverId: string; serverName: string; dataMode: DataMode; onDataModeChange: (mode: DataMode) => void; onInvestigate: () => void }) {
-  const { state, save } = useWorkspace();
+  const { state, save, timeCursor, setTimeCursor, timeWindowMinutes, setTimeWindowMinutes } = useWorkspace();
   const scenario = getServerScenario(serverId);
   const groups = getRuntimeGroups(serverId);
   const preferredGroup = groups.find((group) => group.key === "so") ?? groups[0] ?? scenario.groups.so;
@@ -88,10 +117,8 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
   const [countdown, setCountdown] = useState(5);
   const [showTrace, setShowTrace] = useState(true);
   const [showScoreTrace, setShowScoreTrace] = useState(true);
-  const [trailMinutes, setTrailMinutes] = useState(30);
   const [showRelations, setShowRelations] = useState(true);
   const [layers, setLayers] = useState<ScoreLayer[]>(["sync"]);
-  const [cursor, setCursor] = useState(92);
   const [templateDialog, setTemplateDialog] = useState(false);
   const [muteUntil, setMuteUntil] = useState<number | "restart" | null>(null);
   const [nowMs, setNowMs] = useState(0);
@@ -123,18 +150,18 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
   return <div className="operator-workspace v04-operator">
     <section className="live-map-panel glass-panel" ref={mapRef}>
       <div className="section-toolbar"><div><p className="eyebrow">מפה חיה · {arena}</p><h2>{serverName}</h2><div className="live-context"><span className={`source-badge ${dataMode}`}><Radio />{dataMode === "simulation" ? "SIMULATION" : influxConfigured ? "INFLUXDB 2" : "INFLUX חסר"}</span><span><Clock3 />טיק בעוד {running ? countdown : "—"} שנ׳</span><span>{scenario.status}</span></div></div><div className="toolbar-actions"><Select value={arena} onValueChange={setArena}><SelectTrigger className="v04-arena-select"><SelectValue /></SelectTrigger><SelectContent>{state.arenas.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select><Select value={mapProfile} onValueChange={setMapProfile}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.mapServers.filter((item) => item.enabled).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select><Button variant="outline" size="icon" onClick={() => setRunning((value) => !value)}>{running ? <Pause /> : <Play />}</Button><Button variant="outline" size="icon" onClick={enterFullscreen}><Expand /></Button></div></div>
-      <div className="v04-map-toolbar"><div><Button size="sm" variant={showTrace ? "default" : "outline"} onClick={() => setShowTrace((value) => !value)}>עקבה</Button><Button size="sm" variant={showScoreTrace ? "default" : "outline"} onClick={() => setShowScoreTrace((value) => !value)}>עקבה לפי ציון סנכרון</Button>{dataMode === "simulation" && <Button size="sm" variant={showRelations ? "default" : "outline"} onClick={() => setShowRelations((value) => !value)}><Focus />יחסים</Button>}<Select value={String(trailMinutes)} onValueChange={(value) => setTrailMinutes(Number(value))}><SelectTrigger className="trail-window-select"><SelectValue /></SelectTrigger><SelectContent>{[15,30,60,90,120].map((value) => <SelectItem key={value} value={String(value)}>{value} דק׳</SelectItem>)}</SelectContent></Select></div><span>צבע הסמן והמסגרת = קבוצה · צבע הנתיב = סוג רכב · צבע העקבה = ציון סנכרון</span></div>
-      <div className="map-stage">{dataMode === "influx" ? <OperationalLiveMap serverId={serverId} selectedGroupId={selected.id} selectedVehicle={selectedVehicle} vehicleTypes={state.vehicleTypes} showGrid showTrace={showTrace} showScoreTrace={showScoreTrace} trailMinutes={trailMinutes} onSelectGroup={(groupId) => { setSelectedGroupId(groupId); setSelectedVehicle(null); }} onSelectVehicle={(id, groupId) => { setSelectedGroupId(groupId); setSelectedVehicle(id); }} /> : <LiveMap serverId={serverId} tick={tick} selectedGroup={selected.key} selectedVehicle={selectedVehicle} showTrace={showTrace} showRoutes showRelations={showRelations} showGrid vehicleTypes={state.vehicleTypes} templateValues={templateValues} mapProfile={mapProfile} onSelectGroup={(key) => { const group = chooseFamilyGroup(key); setSelectedGroupId(group.id); setSelectedVehicle(null); }} onSelectVehicle={(id, key) => { const group = chooseVehicleGroup(id, key); setSelectedGroupId(group.id); setSelectedVehicle(id); }} />}</div>
+      <div className="v04-map-toolbar"><div><Button size="sm" variant={showTrace ? "default" : "outline"} onClick={() => setShowTrace((value) => !value)}>עקבה</Button><Button size="sm" variant={showScoreTrace ? "default" : "outline"} onClick={() => setShowScoreTrace((value) => !value)}>עקבה לפי ציון סנכרון</Button>{dataMode === "simulation" && <Button size="sm" variant={showRelations ? "default" : "outline"} onClick={() => setShowRelations((value) => !value)}><Focus />יחסים</Button>}<Select value={String(timeWindowMinutes)} onValueChange={(value) => setTimeWindowMinutes(Number(value) as TimeWindowMinutes)}><SelectTrigger className="trail-window-select"><SelectValue /></SelectTrigger><SelectContent>{([30,60,90,120] as TimeWindowMinutes[]).map((value) => <SelectItem key={value} value={String(value)}>{value} דק׳</SelectItem>)}</SelectContent></Select></div><span>צבע הסמן והמסגרת = קבוצה · צבע הנתיב = סוג רכב · צבע העקבה = ציון סנכרון</span></div>
+      <div className="map-stage">{dataMode === "influx" ? <OperationalLiveMap serverId={serverId} selectedGroupId={selected.id} selectedVehicle={selectedVehicle} vehicleTypes={state.vehicleTypes} showGrid showTrace={showTrace} showScoreTrace={showScoreTrace} trailMinutes={timeWindowMinutes} onSelectGroup={(groupId) => { setSelectedGroupId(groupId); setSelectedVehicle(null); }} onSelectVehicle={(id, groupId) => { setSelectedGroupId(groupId); setSelectedVehicle(id); }} /> : <LiveMap serverId={serverId} tick={tick} selectedGroup={selected.key} selectedVehicle={selectedVehicle} showTrace={showTrace} showRoutes showRelations={showRelations} showGrid vehicleTypes={state.vehicleTypes} templateValues={templateValues} mapProfile={mapProfile} onSelectGroup={(key) => { const group = chooseFamilyGroup(key); setSelectedGroupId(group.id); setSelectedVehicle(null); }} onSelectVehicle={(id, key) => { const group = chooseVehicleGroup(id, key); setSelectedGroupId(group.id); setSelectedVehicle(id); }} />}</div>
     </section>
 
     <aside className="live-summary">
       <div className="summary-heading"><div><p className="eyebrow">קבוצות פעילות</p><h2>מצב נוכחי</h2></div><Badge variant="outline">{groups.length} קבוצות</Badge></div>
       {groups.map((group) => <GroupCard key={group.id} group={group} selected={selected.id === group.id} vehicleTypes={state.vehicleTypes} templateName={templateFor(group)?.name ?? "ללא תבנית"} onSelect={() => { setSelectedGroupId(group.id); setSelectedVehicle(null); }} onSelectVehicle={(id) => { setSelectedGroupId(group.id); setSelectedVehicle(id); }} onTemplate={() => { setSelectedGroupId(group.id); setTemplateDialog(true); }} />)}
       {selectedVehicle && <VehicleDetail group={selected} id={selectedVehicle} vehicleTypes={state.vehicleTypes} onClose={() => setSelectedVehicle(null)} />}
-      <section className="operator-events glass-panel"><div className="panel-title"><div><p className="eyebrow">אירועי מבנה</p><h3>אירועים אחרונים</h3></div><Badge variant="outline">נפרד מהתראות</Badge></div>{events.length === 0 ? <div className="operator-events-empty">אין כרגע היסטוריית אירועים מבצעית זמינה.</div> : <div className="operator-event-list">{events.map((event) => <button type="button" key={event.id} onClick={() => { setSelectedGroupId(event.groupId); setSelectedVehicle(null); setCursor(event.cursor); }}><span className="event-state-dot" data-active={event.active} /><div><strong>{event.groupName}</strong><small>{event.id}</small></div><time>{new Intl.DateTimeFormat("he-IL", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(event.observedAt))}</time></button>)}</div>}</section>
+      <section className="operator-events glass-panel"><div className="panel-title"><div><p className="eyebrow">אירועי מבנה</p><h3>אירועים אחרונים</h3></div><Badge variant="outline">נפרד מהתראות</Badge></div>{events.length === 0 ? <div className="operator-events-empty">אין כרגע היסטוריית אירועים מבצעית זמינה.</div> : <div className="operator-event-list">{events.map((event) => <button type="button" key={event.id} onClick={() => { setSelectedGroupId(event.groupId); setSelectedVehicle(null); setTimeCursor(event.cursor); }}><span className="event-state-dot" data-active={event.active} /><div><strong>{event.groupName}</strong><small>{event.id}</small></div><time>{new Intl.DateTimeFormat("he-IL", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(event.observedAt))}</time></button>)}</div>}</section>
     </aside>
 
-    <section className="timeline-panel glass-panel"><div className="section-toolbar"><div><p className="eyebrow">ציונים רציפים</p><h2>קבוצות לאורך זמן</h2></div><div className="toolbar-actions"><div className="segmented-control">{(["sync", "route", "total"] as ScoreLayer[]).map((layer) => <button type="button" key={layer} className={layers.includes(layer) ? "active" : ""} onClick={() => toggleLayer(layer)}>{layer === "sync" ? "סנכרון" : layer === "route" ? "נתיב" : "כולל"}</button>)}</div><Button variant="outline" size="sm" onClick={onInvestigate}><History />תחקור</Button></div></div>{dataMode === "influx" ? <OperationalTimeline serverId={serverId} selectedGroupId={selected.id} layers={layers} cursor={cursor} onCursor={setCursor} selectedVehicle={selectedVehicle} /> : <TimelineChart serverId={serverId} selected={selected.key} layers={layers} cursor={cursor} onCursor={setCursor} selectedVehicle={selectedVehicle} />}<div className="timeline-footer"><span>אירוע = קבוצתיות רציפה; התראה = מצב תפעולי נפרד.</span><span>{dataMode === "influx" ? "דגימות אמת מהליבה" : "סימולציה"}</span></div></section>
+    <section className="timeline-panel glass-panel"><div className="section-toolbar"><div><p className="eyebrow">ציונים רציפים</p><h2>קבוצות לאורך זמן</h2></div><div className="toolbar-actions"><div className="segmented-control">{([30,60,90,120] as TimeWindowMinutes[]).map((minutes) => <button type="button" key={minutes} className={timeWindowMinutes === minutes ? "active" : ""} onClick={() => setTimeWindowMinutes(minutes)}>{minutes} דק׳</button>)}</div><div className="segmented-control">{(["sync", "route", "total"] as ScoreLayer[]).map((layer) => <button type="button" key={layer} className={layers.includes(layer) ? "active" : ""} onClick={() => toggleLayer(layer)}>{layer === "sync" ? "סנכרון" : layer === "route" ? "נתיב" : "כולל"}</button>)}</div><Button variant="outline" size="sm" onClick={onInvestigate}><History />תחקור</Button></div></div>{dataMode === "influx" ? <OperationalTimeline serverId={serverId} selectedGroupId={selected.id} layers={layers} cursor={timeCursor} onCursor={setTimeCursor} selectedVehicle={selectedVehicle} /> : <TimelineChart serverId={serverId} selected={selected.key} layers={layers} cursor={timeCursor} onCursor={setTimeCursor} selectedVehicle={selectedVehicle} />}<div className="timeline-footer"><span>חלון משותף: {timeWindowMinutes} דק׳ · cursor {Math.round(timeCursor)}%</span><span>אירוע = קבוצתיות רציפה; התראה = מצב תפעולי נפרד.</span><span>{dataMode === "influx" ? "דגימות אמת מהליבה" : "סימולציה"}</span></div></section>
 
     {activeAlert && <section className={`active-alert v04-live-alert glass-panel ${activeAlert.severity}`}><TriangleAlert /><div><span>התראה חיה · {activeAlertGroup?.id}</span><strong>{activeAlert.title}</strong><p>{activeAlert.detail}</p></div><div className="alert-actions"><Select value={muted ? "muted" : "choose"} onValueChange={(value) => value !== "choose" && value !== "muted" && muteFor(value as "restart" | "5" | "15" | "30")}><SelectTrigger className="mute-select">{muted ? <VolumeX /> : <Volume2 />}<SelectValue placeholder="השתק" /></SelectTrigger><SelectContent><SelectItem value="choose">בחר השתקה</SelectItem>{muted && <SelectItem value="muted">מושתק</SelectItem>}<SelectItem value="restart">עד הפעלה מחדש</SelectItem><SelectItem value="5">5 דקות</SelectItem><SelectItem value="15">15 דקות</SelectItem><SelectItem value="30">30 דקות</SelectItem></SelectContent></Select>{muted && <Button variant="outline" size="sm" onClick={() => setMuteUntil(null)}><Volume2 />בטל השתקה</Button>}<Button size="sm" onClick={() => toast.success("ההתראה סומנה כטופלה; היא לא הופכת לאירוע") }><BellRing />טופל</Button></div></section>}
 
