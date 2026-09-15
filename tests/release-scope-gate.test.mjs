@@ -28,9 +28,22 @@ test('release gate accepts only fully implemented, frozen, approved and evidence
   assert.deepEqual(await verifyEvidencePaths(value), []);
 });
 
-test('release gate blocks pending frozen requirement', () => {
-  const errors = validateReleaseScope(manifest([requirement({ implementation: 'pending' })]));
-  assert.ok(errors.some((item) => item.includes('blocks release: implementation=pending')));
+test('release gate accepts an approved late requirement id when it is fully implemented', () => {
+  const errors = validateReleaseScope(manifest([requirement({ id: 'GEO-01' })]));
+  assert.deepEqual(errors, []);
+});
+
+test('release gate blocks pending frozen requirement, including late requirements', () => {
+  const bwErrors = validateReleaseScope(manifest([requirement({ implementation: 'pending' })]));
+  assert.ok(bwErrors.some((item) => item.includes('blocks release: implementation=pending')));
+
+  const lateErrors = validateReleaseScope(manifest([requirement({ id: 'REP-01', implementation: 'pending' })]));
+  assert.ok(lateErrors.some((item) => item.includes('REP-01 blocks release: implementation=pending')));
+});
+
+test('release gate rejects unknown late requirement prefixes instead of accepting arbitrary ids', () => {
+  const errors = validateReleaseScope(manifest([requirement({ id: 'FAKE-01' })]));
+  assert.ok(errors.some((item) => item.includes('id is invalid')));
 });
 
 test('release gate blocks duplicate ids, missing approval and missing evidence', () => {
