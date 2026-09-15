@@ -74,6 +74,49 @@ test('report endpoint recomputes archived events and returns a real PDF with pro
   assert.match(body, /sha-1/);
 });
 
+test('report data mode preserves Hebrew investigation metadata and exact recompute provenance for browser PDF rendering', async () => {
+  const response = await route.POST(new Request('http://app.test/api/investigation/report', {
+    method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({
+      serverId: 7,
+      format: 'data',
+      from: '2026-09-15T06:00:00Z',
+      to: '2026-09-15T07:00:00Z',
+      overrides: [{ eventId: 'event-1', arena: 'זירה צפונית', note: 'הערת תחקור בעברית' }],
+    }),
+  }));
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type') || '', /^application\/json/);
+  assert.equal(response.headers.get('x-bluewolf-report-source'), 'core-event-archive');
+  assert.equal(response.headers.get('x-bluewolf-code-version'), 'sha-1');
+  assert.equal(response.headers.get('x-bluewolf-config-version'), 'cfg-1');
+  assert.equal(recomputeCalls, 1);
+  const body = await response.json();
+  assert.equal(body.schemaVersion, 'bluewolf.investigation-report-data.v1');
+  assert.equal(body.source, 'core-event-archive');
+  assert.equal(body.codeVersion, 'sha-1');
+  assert.equal(body.configVersion, 'cfg-1');
+  assert.equal(body.report.serverId, 7);
+  assert.equal(body.report.events.length, 1);
+  assert.equal(body.report.events[0].arena, 'זירה צפונית');
+  assert.equal(body.report.events[0].note, 'הערת תחקור בעברית');
+  assert.equal(body.report.events[0].result.eventId, 'event-1');
+  assert.equal(body.report.events[0].result.templateId, 'tpl-a');
+  assert.equal(body.report.events[0].result.codeVersion, 'sha-1');
+  assert.equal(body.report.events[0].result.configVersion, 'cfg-1');
+});
+
+test('report endpoint rejects unsupported render formats rather than silently falling back', async () => {
+  const response = await route.POST(new Request('http://app.test/api/investigation/report', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ serverId: 7, format: 'demo' }),
+  }));
+  assert.equal(response.status, 400);
+  const body = await response.json();
+  assert.match(body.error, /format must be pdf or data/);
+  assert.equal(recomputeCalls, 0);
+});
+
 test('report endpoint fails closed when an event has no original or explicit template provenance', async () => {
   activeTemplateId = null;
   const response = await route.POST(new Request('http://app.test/api/investigation/report', {
