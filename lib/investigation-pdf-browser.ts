@@ -19,6 +19,7 @@ const SERIES = ["#126b87", "#6d4fc2", "#ad5f16", "#2e7c56", "#a63e74", "#4f6670"
 type BrowserPdfPage = { jpeg: Uint8Array; width: number; height: number };
 type TextOptions = { size?: number; weight?: 400 | 600 | 700; color?: string; dir?: "rtl" | "ltr"; align?: CanvasTextAlign };
 type GeoPoint = { latitude: number; longitude: number };
+type FramePredicate = (observedAt: string) => boolean;
 
 function makeCanvas() {
   if (typeof document === "undefined") throw new Error("REP-01 browser PDF renderer requires a browser document");
@@ -106,8 +107,10 @@ function scoreColor(value: number | null) {
   return LOW;
 }
 
-function eventColor(index: number) {
-  return SERIES[index % SERIES.length];
+export function investigationEventColor(index: number) {
+  if (!Number.isInteger(index) || index < 0) throw new Error("event color index must be a non-negative integer");
+  const hue = Math.round((index * 137.508) % 360);
+  return `hsl(${hue} 68% 42%)`;
 }
 
 function drawHeader(ctx: CanvasRenderingContext2D, title: string, subtitle?: string) {
@@ -200,8 +203,24 @@ function projector(bounds: NonNullable<ReturnType<typeof geoBounds>>, left: numb
   });
 }
 
-function eventGeoPoints(event: InvestigationPdfEvent) {
-  const navigation = event.result.points.flatMap((point) => point.navigation)
+function reportFramePredicate(report: InvestigationPdfReport): FramePredicate {
+  const fromMs = report.from ? Date.parse(report.from) : Number.NEGATIVE_INFINITY;
+  const toMs = report.to ? Date.parse(report.to) : Number.POSITIVE_INFINITY;
+  return (observedAt: string) => {
+    const observedMs = Date.parse(observedAt);
+    return Number.isFinite(observedMs) && observedMs >= fromMs && observedMs <= toMs;
+  };
+}
+
+export function investigationSummaryFrameTimes(event: InvestigationPdfEvent, report: InvestigationPdfReport) {
+  const includeFrame = reportFramePredicate(report);
+  return event.result.points.filter((point) => includeFrame(point.observedAt)).map((point) => point.observedAt);
+}
+
+function eventGeoPoints(event: InvestigationPdfEvent, includeFrame: FramePredicate = () => true) {
+  const navigation = event.result.points
+    .filter((point) => includeFrame(point.observedAt))
+    .flatMap((point) => point.navigation)
     .filter((item) => item.latitude !== null && item.longitude !== null)
     .map((item) => ({ latitude: item.latitude as number, longitude: item.longitude as number }));
   const routes = event.result.routes.flatMap((route) => route.centerline);
@@ -243,8 +262,12 @@ function drawNavigationEvidence(
   project: ReturnType<typeof projector>,
   colorForMember: (index: number) => string,
   lineWidth = 4,
+  includeFrame: FramePredicate = () => true,
 ) {
-  const nav = event.result.points.flatMap((point) => point.navigation).filter((item) => item.latitude !== null && item.longitude !== null);
+  const nav = event.result.points
+    .filter((point) => includeFrame(point.observedAt))
+    .flatMap((point) => point.navigation)
+    .filter((item) => item.latitude !== null && item.longitude !== null);
   const memberIds = Array.from(new Set(nav.map((item) => item.memberId)));
   ctx.save();
   memberIds.forEach((memberId, memberIndex) => {
@@ -253,6 +276,10 @@ function drawNavigationEvidence(
     let drawing = false;
     ctx.beginPath();
     for (const frame of event.result.points) {
+      if (!includeFrame(frame.observedAt)) {
+        if (drawing) { ctx.stroke(); ctx.beginPath(); drawing = false; }
+        continue;
+      }
       const row = frame.navigation.find((item) => item.memberId === memberId);
       if (!row || row.latitude === null || row.longitude === null) {
         if (drawing) { ctx.stroke(); ctx.beginPath(); drawing = false; }
@@ -302,7 +329,7 @@ function coverPage(report: InvestigationPdfReport) {
   let y = 648;
   for (const [index, item] of report.events.slice(0, 18).entries()) {
     const result = item.result;
-    drawText(ctx, `${index + 1}. ${result.eventId} · קבוצה ${result.groupId} · תבנית ${result.templateId} · ציון ${scoreLabel(result.summary.total)}`, PAGE_WIDTH_PX - MARGIN, y, { size: 18, color: eventColor(index) });
+    drawText(ctx, `${index + 1}. ${result.eventId} · קבוצה ${result.groupId} · תבנית ${result.templateId} · ציון ${scoreLabel(result.summary.total)}`, PAGE_WIDTH_PX - MARGIN, y, { size: 18, color: investigationEventColor(index) });
     y += 43;
   }
   if (report.events.length > 18) drawText(ctx, `ועוד ${report.events.length - 18} אירועים — לכל אירוע מוקדש פרק נפרד`, PAGE_WIDTH_PX - MARGIN, y + 12, { size: 18, color: MUTED });
@@ -318,7 +345,8 @@ function summaryMapPage(report: InvestigationPdfReport) {
   const mapWidth = PAGE_WIDTH_PX - MARGIN * 2;
   const mapHeight = 1040;
   panel(ctx, mapX, mapY, mapWidth, mapHeight);
-  const allPoints = report.events.flatMap(eventGeoPoints);
+  const includeFrame = reportFramePredicate(report);
+  const allPoints = report.events.flatMap((event) => eventGeoPoints(event, includeFrame));
   const bounds = geoBounds(allPoints);
   if (!bounds) {
     drawText(ctx, "אין עדות WGS84 או route geometry בטווח שנבחר", PAGE_WIDTH_PX / 2, 700, { size: 22, color: MUTED, align: "center" });
@@ -326,11 +354,14 @@ function summaryMapPage(report: InvestigationPdfReport) {
     const left = mapX + 28; const right = mapX + mapWidth - 28; const top = mapY + 40; const bottom = mapY + mapHeight - 50;
     const project = projector(bounds, left, right, top, bottom);
     report.events.forEach((event, eventIndex) => {
-      const color = eventColor(eventIndex);
+      const color = investigationEventColor(eventIndex);
       drawRouteEvidence(ctx, event, project, color, 2);
-      drawNavigationEvidence(ctx, event, project, () => color, 4);
+      drawNavigationEvidence(ctx, event, project, () => color, 4, includeFrame);
       const anchor = event.result.routes[0]?.centerline[0]
-        ?? event.result.points.flatMap((point) => point.navigation).find((row) => row.latitude !== null && row.longitude !== null);
+        ?? event.result.points
+          .filter((point) => includeFrame(point.observedAt))
+          .flatMap((point) => point.navigation)
+          .find((row) => row.latitude !== null && row.longitude !== null);
       if (anchor && anchor.latitude !== null && anchor.longitude !== null) {
         const point = project(anchor.latitude, anchor.longitude);
         drawText(ctx, `${eventIndex + 1} · ${event.result.groupId}`, point.x + 8, point.y - 8, { size: 16, weight: 700, color, dir: "ltr", align: "left" });
@@ -342,13 +373,46 @@ function summaryMapPage(report: InvestigationPdfReport) {
   drawText(ctx, "מקרא אירועים", PAGE_WIDTH_PX - MARGIN, 1305, { size: 24, weight: 700 });
   let legendY = 1345;
   for (const [index, event] of report.events.slice(0, 8).entries()) {
-    drawText(ctx, `${index + 1}. ${event.result.eventId} · קבוצה ${event.result.groupId} · ${event.result.routes.length ? `נתיב ${event.result.routes.map((route) => route.subtype).join("/")}` : "ללא route evidence"}`, PAGE_WIDTH_PX - MARGIN, legendY, { size: 17, color: eventColor(index) });
+    drawText(ctx, `${index + 1}. ${event.result.eventId} · קבוצה ${event.result.groupId} · ${event.result.routes.length ? `נתיב ${event.result.routes.map((route) => route.subtype).join("/")}` : "ללא route evidence"}`, PAGE_WIDTH_PX - MARGIN, legendY, { size: 17, color: investigationEventColor(index) });
     legendY += 34;
   }
-  if (report.events.length > 8) drawText(ctx, `ועוד ${report.events.length - 8} אירועים; הצבע נשמר גם בפרקי האירועים`, PAGE_WIDTH_PX - MARGIN, legendY, { size: 16, color: MUTED });
-  drawText(ctx, "העקבות נשברות בחורי ניווט ובין אירועים; אין קו מלאכותי המחבר evidence חסר.", PAGE_WIDTH_PX - MARGIN, 1590, { size: 16, color: MUTED });
+  if (report.events.length > 8) drawText(ctx, `המקרא המלא לכל ${report.events.length} האירועים ממשיך בעמודי המקרא הבאים`, PAGE_WIDTH_PX - MARGIN, legendY, { size: 16, color: MUTED });
+  drawText(ctx, "העקבות נחתכות לטווח שנבחר ונשברות בחורי ניווט ובין אירועים; אין קו מלאכותי המחבר evidence חסר.", PAGE_WIDTH_PX - MARGIN, 1590, { size: 16, color: MUTED });
   drawFooter(ctx, "מפה מסכמת · REP-02");
   return canvas;
+}
+
+function summaryLegendPages(report: InvestigationPdfReport) {
+  if (report.events.length <= 8) return [] as HTMLCanvasElement[];
+  const rowsPerPage = 28;
+  const pages: HTMLCanvasElement[] = [];
+  for (let offset = 0; offset < report.events.length; offset += rowsPerPage) {
+    const { canvas, ctx } = makeCanvas();
+    const pageNumber = Math.floor(offset / rowsPerPage) + 1;
+    drawHeader(ctx, "מקרא מלא — אירועים וקבוצות", `REP-02 · עמוד ${pageNumber}`);
+    let y = 220;
+    report.events.slice(offset, offset + rowsPerPage).forEach((event, localIndex) => {
+      const eventIndex = offset + localIndex;
+      const color = investigationEventColor(eventIndex);
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 10;
+      ctx.beginPath();
+      ctx.moveTo(MARGIN + 8, y - 6);
+      ctx.lineTo(MARGIN + 82, y - 6);
+      ctx.stroke();
+      ctx.restore();
+      const routeLabel = event.result.routes.length
+        ? event.result.routes.map((route) => `${route.routeInstanceId}/${route.subtype}`).join(" · ")
+        : "ללא route evidence";
+      drawText(ctx, `${eventIndex + 1}. ${event.result.eventId} · קבוצה ${event.result.groupId} · ${routeLabel}`, PAGE_WIDTH_PX - MARGIN, y, { size: 18, color });
+      y += 48;
+    });
+    drawText(ctx, "כל צבע בעמודי המפה והאירוע מתייחס לאותו מספר אירוע ולשייכות הקבוצה המופיעה כאן.", PAGE_WIDTH_PX - MARGIN, 1575, { size: 16, color: MUTED });
+    drawFooter(ctx, `מקרא REP-02 · ${pageNumber}`);
+    pages.push(canvas);
+  }
+  return pages;
 }
 
 function eventMainPage(event: InvestigationPdfEvent, index: number, total: number) {
@@ -505,6 +569,7 @@ export async function buildInvestigationPdfBrowser(report: InvestigationPdfRepor
   if (!report.events.length) throw new Error("REP-01 PDF cannot be generated without report events");
   if (typeof document !== "undefined" && "fonts" in document) await document.fonts.ready;
   const pages: BrowserPdfPage[] = [canvasJpeg(coverPage(report)), canvasJpeg(summaryMapPage(report))];
+  for (const canvas of summaryLegendPages(report)) pages.push(canvasJpeg(canvas));
   report.events.forEach((event, index) => {
     pages.push(canvasJpeg(eventMainPage(event, index, report.events.length)));
     for (const canvas of eventDetailPages(event, index, report.events.length)) pages.push(canvasJpeg(canvas));
