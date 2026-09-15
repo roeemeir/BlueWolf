@@ -28,7 +28,7 @@ class EventLifecycleArchiveTests(unittest.TestCase):
         self.assertEqual(lifecycle["status"], "unknown")
         self.assertEqual(lifecycle["changes"], [])
 
-    def test_open_ending_closed_roundtrip_is_immutable_and_idempotent(self) -> None:
+    def test_open_ending_closed_roundtrip_is_immutable_idempotent_and_semantically_ordered(self) -> None:
         with TemporaryDirectory() as directory:
             archive = SOEventLifecycleArchive(Path(directory) / "events.sqlite")
             opened = StateChange(
@@ -66,9 +66,9 @@ class EventLifecycleArchiveTests(unittest.TestCase):
             self.assertTrue(archive.record_change(closed))
             lifecycle = archive.event_lifecycle("e1")
         self.assertEqual(lifecycle["status"], "closed")
-        self.assertEqual(lifecycle["closedAt"], "2026-09-16T10:00:20Z")
+        self.assertEqual(lifecycle["closedAt"], "2026-09-16T10:02:20Z")
         self.assertEqual([item["kind"] for item in lifecycle["changes"]], [
-            "event_opened", "event_closed", "event_ending"
+            "event_opened", "event_ending", "event_closed"
         ])
 
     def test_live_runtime_emits_open_and_immediate_finalizing_reason(self) -> None:
