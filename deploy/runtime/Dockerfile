@@ -1,6 +1,8 @@
 FROM python:3.12-slim
 
 ARG BLUEWOLF_CODE_SHA=unknown
+LABEL org.opencontainers.image.revision=${BLUEWOLF_CODE_SHA} \
+      io.bluewolf.provenance.code-sha=${BLUEWOLF_CODE_SHA}
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
