@@ -162,9 +162,7 @@ class LiveRuntimeProducer:
     def export_state(self) -> dict[str, object]:
         """Serialize the minimum publication lifecycle state needed across restart."""
 
-        return {
-            "structurally_active_group_ids": sorted(self._structurally_active_groups),
-        }
+        return {"structurally_active_group_ids": sorted(self._structurally_active_groups)}
 
     def restore_state(self, state: Mapping[str, object]) -> None:
         raw = state.get("structurally_active_group_ids", [])
@@ -180,10 +178,7 @@ class LiveRuntimeProducer:
         self._structurally_active_groups = set(values)
 
     @staticmethod
-    def _sample_index(
-        samples: tuple[VehicleSample, ...],
-        server_id: int,
-    ) -> dict[tuple[datetime, int], VehicleSample]:
+    def _sample_index(samples: tuple[VehicleSample, ...], server_id: int) -> dict[tuple[datetime, int], VehicleSample]:
         output: dict[tuple[datetime, int], VehicleSample] = {}
         for sample in samples:
             if sample.server_id != server_id:
@@ -196,10 +191,7 @@ class LiveRuntimeProducer:
         return output
 
     @staticmethod
-    def _frames_for_group(
-        frames: tuple[VehicleFrameResult, ...],
-        group: RouteGroup,
-    ) -> tuple[datetime, Mapping[int, VehicleFrameResult]] | None:
+    def _frames_for_group(frames: tuple[VehicleFrameResult, ...], group: RouteGroup) -> tuple[datetime, Mapping[int, VehicleFrameResult]] | None:
         expected = {key[1] for key in group.member_keys}
         by_time: dict[datetime, dict[int, VehicleFrameResult]] = {}
         for frame in frames:
@@ -208,12 +200,7 @@ class LiveRuntimeProducer:
             if frame.vehicle_identifier not in expected:
                 continue
             by_time.setdefault(frame.sample_time_utc, {})[frame.vehicle_identifier] = frame
-
-        complete = [
-            (timestamp, values)
-            for timestamp, values in by_time.items()
-            if expected.issubset(values)
-        ]
+        complete = [(timestamp, values) for timestamp, values in by_time.items() if expected.issubset(values)]
         if not complete:
             return None
         timestamp, values = max(complete, key=lambda item: item[0])
@@ -249,8 +236,6 @@ class LiveRuntimeProducer:
             if route.family is not RouteFamily.SO:
                 return None
             if frame.route_id is None or frame.route_id != route.route_id:
-                # Never apply the final route geometry to an older frame from a
-                # different route state inside the same poll window.
                 return None
             output.append(
                 LiveSOMemberInput(
@@ -267,25 +252,24 @@ class LiveRuntimeProducer:
         return tuple(output)
 
     def publish_poll(self, poll: IngestPollResult) -> RuntimePublicationResult:
-        """Advance live SO runtime from one already-committed ingest poll.
-
-        Publication is downstream of the transactional ingestion watermark. A
-        publication failure therefore does not roll back or replay CoreSession.
-        """
+        """Advance live SO runtime from one already-committed ingest poll."""
 
         if any(sample.server_id != self.server_id for sample in poll.samples):
             raise ValueError("poll contains samples from a different server")
 
         grouping = self.session.grouping_snapshot()
         active_so_groups = tuple(
-            group
-            for group in grouping.groups
+            group for group in grouping.groups
             if group.server_id == self.server_id and group.family is RouteFamily.SO
         )
         active_ids = {group.group_id for group in active_so_groups}
         for ended in sorted(self._structurally_active_groups - active_ids):
             self.runtime.end_group(ended, poll.window.end_time_utc, reason="structural_group_ended")
         self._structurally_active_groups = active_ids
+        # A poll is also the runtime's trusted forward clock.  Advancing here is
+        # essential when there are no active SO groups: pending-ended events must
+        # still emit EVENT_CLOSED after their late-data finalization window.
+        self.runtime.advance_events(poll.window.end_time_utc)
 
         sample_index = self._sample_index(poll.samples, self.server_id)
         group_payloads: list[tuple[str, datetime, str, dict[str, object]]] = []
@@ -300,19 +284,12 @@ class LiveRuntimeProducer:
             if binding_error is not None:
                 skipped[group.group_id] = binding_error
                 continue
-
             selected = self._frames_for_group(poll.core_result.frames, group)
             if selected is None:
                 skipped[group.group_id] = "no_complete_common_timestamp"
                 continue
             observed_at, frames = selected
-            members = self._member_inputs(
-                group,
-                binding,
-                observed_at,
-                frames,
-                sample_index,
-            )
+            members = self._member_inputs(group, binding, observed_at, frames, sample_index)
             if members is None:
                 skipped[group.group_id] = "runtime_member_evidence_incomplete_or_route_mismatch"
                 continue
@@ -326,12 +303,8 @@ class LiveRuntimeProducer:
                 displayed_group_score=displayed.score,
                 displayed_score_valid=displayed.valid,
             )
-            vehicle_ids = {
-                item.resolved_member_id: item.vehicle_identifier for item in binding.members
-            }
-            vehicle_types = {
-                item.resolved_member_id: item.vehicle_type for item in binding.members
-            }
+            vehicle_ids = {item.resolved_member_id: item.vehicle_identifier for item in binding.members}
+            vehicle_types = {item.resolved_member_id: item.vehicle_type for item in binding.members}
             one = build_so_live_runtime_snapshot(
                 runtime_result,
                 server_id=self.server_id,
@@ -339,9 +312,7 @@ class LiveRuntimeProducer:
                 arena=binding.arena,
                 displayed_group_score=displayed.score,
                 displayed_score_valid=displayed.valid,
-                comparison_dimension=TemplateComparisonDimension(
-                    self.runtime.comparison_dimension
-                ),
+                comparison_dimension=TemplateComparisonDimension(self.runtime.comparison_dimension),
                 vehicle_ids=vehicle_ids,
                 vehicle_type_by_member=vehicle_types,
                 group_name=binding.group_name,
@@ -373,22 +344,13 @@ class LiveRuntimeProducer:
             "source": {
                 "kind": "python-core",
                 "health": "healthy",
-                "detail": (
-                    f"LiveRuntimeProducer · {len(all_groups)} SO groups · "
-                    f"comparison={self.runtime.comparison_dimension.value}"
-                ),
+                "detail": f"LiveRuntimeProducer · {len(all_groups)} SO groups · comparison={self.runtime.comparison_dimension.value}",
             },
-            # Legacy family slot retained until the Operator UI migrates to
-            # groupList. Deterministic first group avoids order-dependent output.
             "groups": {"so": legacy_so},
             "groupList": all_groups,
         }
         self.store.publish(snapshot)
-        return RuntimePublicationResult(
-            MappingProxyType(snapshot),
-            tuple(item[0] for item in group_payloads),
-            skipped,
-        )
+        return RuntimePublicationResult(MappingProxyType(snapshot), tuple(item[0] for item in group_payloads), skipped)
 
 
 __all__ = [
