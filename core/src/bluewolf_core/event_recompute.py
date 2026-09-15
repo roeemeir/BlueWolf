@@ -10,6 +10,12 @@ Navigation evidence is carried beside scoring evidence from the *same source
 sample and timestamp*. It is never reconstructed from semantic phase or route
 geometry. This lets investigation maps use real WGS84 observations without
 changing or influencing the scoring path.
+
+The original active template id is also captured beside every frame. It is
+metadata only: recomputation still receives an explicit template object. This
+lets a later report reproduce the event using the template the Core actually
+used, instead of selecting an arbitrary template when no investigation override
+exists.
 """
 from __future__ import annotations
 
@@ -120,6 +126,7 @@ class SOEventObservationFrame:
     group_id: str
     sample_time_utc: datetime
     observations: tuple[SOScoringObservation, ...]
+    active_template_id: str | None = None
     pending_reason: str | None = None
     navigation: tuple[SOEventNavigationPoint, ...] = ()
 
@@ -131,6 +138,8 @@ class SOEventObservationFrame:
         if not self.group_id:
             raise ValueError("group_id is required")
         object.__setattr__(self, "sample_time_utc", _utc(self.sample_time_utc))
+        if self.active_template_id == "":
+            raise ValueError("active_template_id must be non-empty when supplied")
         if self.pending_reason == "":
             raise ValueError("pending_reason must be non-empty when supplied")
         if len(self.observations) < 2 and self.pending_reason is None:
