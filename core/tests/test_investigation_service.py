@@ -21,6 +21,7 @@ from bluewolf_runtime_adapter.qa_service import QaEnabledASGI
 
 NOW = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
 EVENT_ID = "g1@2026-09-15T06:00:00Z"
+LATER_EVENT_ID = "g2@2026-09-15T07:00:00Z"
 
 
 def _template() -> SOTemplate:
@@ -75,6 +76,16 @@ def _frame() -> SOEventObservationFrame:
         group_id="g1",
         sample_time_utc=NOW + timedelta(seconds=5),
         observations=(_observation("v1", 0.0), _observation("v2", 0.5)),
+    )
+
+
+def _later_frame() -> SOEventObservationFrame:
+    return SOEventObservationFrame(
+        event_id=LATER_EVENT_ID,
+        server_id=1,
+        group_id="g2",
+        sample_time_utc=NOW + timedelta(hours=1),
+        observations=(_observation("v1", 0.25), _observation("v2", 0.75)),
     )
 
 
@@ -198,6 +209,63 @@ class InvestigationServiceTests(unittest.TestCase):
                 self.assertEqual(len(saved), 1)
                 self.assertEqual(saved[0]["runId"], result["runId"])
                 self.assertEqual(saved[0]["missingFrameCount"], 1)
+
+    def test_event_list_range_is_applied_in_archive_and_does_not_clip_event(self) -> None:
+        with TemporaryDirectory() as directory:
+            archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
+            archive.record_frame(_pending_frame())
+            archive.record_frame(_frame())
+            archive.record_frame(_later_frame())
+            app = QaEnabledASGI(_base, token="secret")
+            with patch.object(qa_service, "event_archive", archive):
+                status, listing = asyncio.run(
+                    _request(
+                        app,
+                        "/v1/investigation/events",
+                        method="GET",
+                        query="serverId=1&from=2026-09-15T06:00:02Z&to=2026-09-15T06:00:03Z",
+                        token="secret",
+                    )
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual([item["eventId"] for item in listing["events"]], [EVENT_ID])
+                self.assertEqual(listing["events"][0]["startAt"], "2026-09-15T06:00:00Z")
+                self.assertEqual(listing["events"][0]["endAt"], "2026-09-15T06:00:05Z")
+                self.assertEqual(listing["events"][0]["frameCount"], 2)
+
+                status, later = asyncio.run(
+                    _request(
+                        app,
+                        "/v1/investigation/events",
+                        method="GET",
+                        query="serverId=1&from=2026-09-15T06:30:00Z&to=2026-09-15T08:00:00Z",
+                        token="secret",
+                    )
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual([item["eventId"] for item in later["events"]], [LATER_EVENT_ID])
+
+    def test_event_list_rejects_invalid_or_reversed_time_range(self) -> None:
+        with TemporaryDirectory() as directory:
+            archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
+            archive.record_frame(_frame())
+            app = QaEnabledASGI(_base, token="secret")
+            with patch.object(qa_service, "event_archive", archive):
+                for query in (
+                    "serverId=1&from=2026-09-15T08:00:00Z&to=2026-09-15T06:00:00Z",
+                    "serverId=1&from=2026-09-15T06:00:00&to=2026-09-15T07:00:00Z",
+                ):
+                    status, payload = asyncio.run(
+                        _request(
+                            app,
+                            "/v1/investigation/events",
+                            method="GET",
+                            query=query,
+                            token="secret",
+                        )
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertIn("error", payload)
 
     def test_investigation_fails_closed_when_archive_or_event_is_missing(self) -> None:
         app = QaEnabledASGI(_base, token="secret")
