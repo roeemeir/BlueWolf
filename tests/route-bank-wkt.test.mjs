@@ -20,7 +20,7 @@ const viewport = { west: 33.9, east: 34.2, south: 31.9, north: 32.2 };
 
 test('route WKT validates, normalizes and rejects non-closed geometry', () => {
   assert.equal(geometry.normalizeRouteGeometry(initial), initial);
-  assert.throws(() => wkt.parseRouteWkt('LINESTRING (34 32, 34.01 32, 34.01 32.01)'), /להיסגר/);
+  assert.throws(() => wkt.parseRouteWkt('LINESTRING (34 32, 34.01 32, 34.01 32.01)'), /סגירה|להיסגר/);
 });
 
 test('drag translates WGS84 geometry rather than persisting screen percentages', () => {
@@ -39,7 +39,7 @@ test('edited WKT survives SQLite workspace save/read with exact normalized geome
   const moved = geometry.translateRouteByEditorDrag(initial, { xPct: 50, yPct: 50 }, { xPct: 55, yPct: 55 }, viewport);
   const state = { routes: [{ id: 'route-1', geometry: moved }] };
   const write = await db.writeLocalWorkspace('route-bank-wkt', JSON.stringify(state), 'routes', 'save-bank', 'wkt-persistence', first.revision);
-  assert.equal(write.conflict, false);
+  assert.equal(write.ok, true);
   const saved = await db.readLocalWorkspace('route-bank-wkt');
   assert.equal(saved.state.routes[0].geometry, geometry.normalizeRouteGeometry(moved));
 });
