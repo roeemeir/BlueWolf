@@ -1,0 +1,88 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test, { after } from "node:test";
+import { createServer } from "vite";
+
+const root = process.cwd();
+const vite = await createServer({ appType: "custom", configFile: false, root, resolve: { alias: { "@": root } }, server: { middlewareMode: true } });
+after(async () => { await vite.close(); });
+
+const { DEFAULT_WORKSPACE } = await vite.ssrLoadModule("/lib/bluewolf.ts");
+const { buildOperationalInfluxConfig, validateInfluxSettings } = await vite.ssrLoadModule("/lib/influx-runtime-config.ts");
+
+function configuredInflux() {
+  const influx = structuredClone(DEFAULT_WORKSPACE.influx);
+  influx.url = "http://influx.real:8086";
+  influx.organization = "ops-org";
+  influx.token = "workspace-secret-must-not-leak";
+  influx.stream = { serverColumn: "srv_join", timeColumn: "when_utc", vehicleNumberColumn: "vehicle_join" };
+  const active = influx.mappings.find((item) => item.systemKey === "active");
+  active.valueMode = "special";
+  active.sourceValue = "GREEN";
+  active.mappedValue = "true";
+  return influx;
+}
+
+test("IN-01 converts saved join columns and transformations into real operational runtime config", () => {
+  const influx = configuredInflux();
+  const existing = {
+    unrelated: { preserve: true },
+    influx: {
+      url: "old",
+      organization: "old",
+      tokenEnv: "BLUEWOLF_INFLUX_TOKEN",
+      timeoutMs: 9000,
+      stream: { serverColumn: "old-server", timeColumn: "_time", vehicleNumberColumn: "old-vehicle" },
+      metrics: [],
+    },
+    join: { logicalGridSeconds: 1, toleranceSeconds: 99 },
+    polling: { logicalGridSeconds: 1, activePollSeconds: 99, idleProbeSeconds: 99, joinToleranceSeconds: 99 },
+  };
+
+  const output = buildOperationalInfluxConfig(existing, influx);
+  assert.deepEqual(output.unrelated, { preserve: true });
+  assert.equal(output.influx.tokenEnv, "BLUEWOLF_INFLUX_TOKEN");
+  assert.equal(output.influx.timeoutMs, 9000);
+  assert.deepEqual(output.influx.stream, {
+    serverColumn: "srv_join",
+    timeColumn: "when_utc",
+    vehicleNumberColumn: "vehicle_join",
+  });
+  assert.equal(output.join.toleranceSeconds, influx.joinToleranceSeconds);
+  assert.equal(output.polling.activePollSeconds, influx.activePollSeconds);
+  assert.equal(output.polling.idleProbeSeconds, influx.idleProbeMinutes * 60);
+  assert.equal(output.polling.joinToleranceSeconds, influx.joinToleranceSeconds);
+
+  const active = output.influx.metrics.find((item) => item.metric === "active");
+  assert.deepEqual(active.valueMap, { GREEN: true });
+  assert.ok(output.influx.metrics.some((item) => item.metric === "vehicle_identifier"));
+  assert.ok(output.influx.metrics.some((item) => item.metric === "latitude_deg"));
+  assert.ok(!output.influx.metrics.some((item) => item.metric === "vehicleNumber"));
+  assert.ok(!JSON.stringify(output).includes(influx.token));
+});
+
+test("IN-01 rejects ambiguous join columns and malformed special transformations", () => {
+  const duplicate = configuredInflux();
+  duplicate.stream.timeColumn = duplicate.stream.serverColumn;
+  assert.throws(() => validateInfluxSettings(duplicate), /must be distinct/);
+
+  const invalidTransform = configuredInflux();
+  const active = invalidTransform.mappings.find((item) => item.systemKey === "active");
+  active.sourceValue = "";
+  assert.throws(() => validateInfluxSettings(invalidTransform), /sourceValue/);
+});
+
+test("IN-01 active developer surface exposes all three join names and special value mapping", async () => {
+  const ui = await readFile(new URL("../components/bluewolf/influx-governance-workbench.tsx", import.meta.url), "utf8");
+  const governance = await readFile(new URL("../components/bluewolf/developer-governance-workbench.tsx", import.meta.url), "utf8");
+  assert.match(ui, /data-requirements="IN-01"/);
+  assert.match(ui, /serverColumn/);
+  assert.match(ui, /timeColumn/);
+  assert.match(ui, /vehicleNumberColumn/);
+  assert.match(ui, /valueMode/);
+  assert.match(ui, /sourceValue/);
+  assert.match(ui, /mappedValue/);
+  assert.match(ui, /special map/);
+  assert.match(governance, /<InfluxGovernanceWorkbench \/>/);
+  assert.match(governance, /button:nth-child\(4\)/);
+});
