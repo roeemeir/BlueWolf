@@ -40,6 +40,7 @@ class EventObservationSinkTests(unittest.TestCase):
         pending = captured[0]
         self.assertEqual(pending.event_id, warmup.event.snapshot.event_id)
         self.assertEqual(pending.sample_time_utc, warmup_members[0].sample.sample_time_utc)
+        self.assertEqual(pending.active_template_id, "default")
         self.assertEqual(pending.pending_reason, "core_observations_incomplete")
         self.assertLess(len(pending.observations), len(warmup_members))
 
@@ -59,6 +60,7 @@ class EventObservationSinkTests(unittest.TestCase):
         self.assertEqual(frame.group_id, "g1")
         self.assertEqual(frame.server_id, 1)
         self.assertEqual(frame.sample_time_utc, scored_members[0].sample.sample_time_utc)
+        self.assertEqual(frame.active_template_id, "default")
         self.assertIsNone(frame.pending_reason)
         self.assertEqual({item.member_id for item in frame.observations}, {"m1", "m2"})
         self.assertTrue(all(item.diagnostics for item in frame.observations))
