@@ -27,6 +27,10 @@ function object(value: unknown, name: string): JsonObject {
   return value as JsonObject;
 }
 
+function optionalObject(value: unknown): JsonObject | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : null;
+}
+
 function text(value: unknown, name: string) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${name} must be a non-empty string`);
   return value.trim();
@@ -91,16 +95,23 @@ export function validateInfluxSettings(influx: InfluxSettings) {
   if (missing.length) throw new Error(`Influx mappings are missing required runtime metrics: ${missing.join(", ")}`);
 }
 
-function operationalMetric(mapping: InfluxFieldMapping, index: number) {
+function operationalMetric(mapping: InfluxFieldMapping, index: number, existingMetrics: JsonObject[]) {
   const metric = runtimeMetric(mapping, index);
   if (!metric) return null;
+  const previous = existingMetrics.find((row) => row.metric === metric) ?? {};
   const row: JsonObject = {
+    ...previous,
     metric,
     bucket: mapping.bucket.trim(),
     measurement: mapping.measurement.trim(),
     field: mapping.key.trim(),
   };
-  if (mapping.valueMode === "special") row.valueMap = { [mapping.sourceValue.trim()]: mappedScalar(mapping.mappedValue) };
+  if (mapping.valueMode === "special") {
+    const previousMap = optionalObject(previous.valueMap) ?? {};
+    row.valueMap = { ...previousMap, [mapping.sourceValue.trim()]: mappedScalar(mapping.mappedValue) };
+  } else {
+    delete row.valueMap;
+  }
   return row;
 }
 
@@ -108,12 +119,13 @@ export function buildOperationalInfluxConfig(existingConfig: unknown, influx: In
   validateInfluxSettings(influx);
   const root = structuredClone(object(existingConfig, "operational config"));
   const existingInflux = object(root.influx, "operational config.influx");
-  const existingStream = existingInflux.stream && typeof existingInflux.stream === "object" && !Array.isArray(existingInflux.stream)
-    ? existingInflux.stream as JsonObject
-    : {};
-  const existingJoin = root.join && typeof root.join === "object" && !Array.isArray(root.join) ? root.join as JsonObject : {};
-  const existingPolling = root.polling && typeof root.polling === "object" && !Array.isArray(root.polling) ? root.polling as JsonObject : {};
-  const metrics = influx.mappings.map(operationalMetric).filter((row): row is JsonObject => row !== null);
+  const existingStream = optionalObject(existingInflux.stream) ?? {};
+  const existingJoin = optionalObject(root.join) ?? {};
+  const existingPolling = optionalObject(root.polling) ?? {};
+  const existingMetrics = Array.isArray(existingInflux.metrics)
+    ? existingInflux.metrics.map((row, index) => object(row, `operational config.influx.metrics[${index}]`))
+    : [];
+  const metrics = influx.mappings.map((mapping, index) => operationalMetric(mapping, index, existingMetrics)).filter((row): row is JsonObject => row !== null);
 
   root.influx = {
     ...existingInflux,
