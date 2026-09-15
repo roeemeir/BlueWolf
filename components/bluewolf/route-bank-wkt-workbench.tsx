@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { MapPinned, Move, Save } from "lucide-react";
 import { toast } from "sonner";
 
@@ -73,7 +73,6 @@ export function RouteBankWktWorkbench() {
   const [drag, setDrag] = useState<DragState | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
-  useEffect(() => { setRoutes(structuredClone(state.routes)); }, [state.routes]);
   const selected = routes.find((route) => route.id === selectedId) ?? null;
   const viewport = useMemo(() => viewportFor(routes), [routes]);
 
