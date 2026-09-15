@@ -58,7 +58,7 @@ export async function PUT(request: Request) {
       let runtimeSync = null;
       if ((body.category ?? "") === "influx") {
         try {
-          const { syncInfluxToOperationalConfig } = await import("@/lib/influx-runtime-config");
+          const { syncInfluxToOperationalConfig } = await import("@/lib/influx-runtime-sync");
           runtimeSync = await syncInfluxToOperationalConfig(influxFromState(normalizedState));
         } catch (error) {
           return Response.json({ error: `Influx runtime config sync failed: ${errorMessage(error)}` }, { status: 502 });
