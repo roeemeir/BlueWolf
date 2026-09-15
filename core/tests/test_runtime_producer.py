@@ -6,7 +6,7 @@ from datetime import timedelta
 from bluewolf_core.grouping import GroupingSnapshot, RouteGroup
 from bluewolf_core.live_so_event_runtime import LiveSOEventRuntime, TemplateComparisonDimension
 from bluewolf_core.live_so_scoring import LiveSOGroupScorer
-from bluewolf_core.models import CoreBatchResult, RouteFamily, VehicleFrameResult
+from bluewolf_core.models import ChangeKind, CoreBatchResult, RouteFamily, VehicleFrameResult
 from bluewolf_core.semantic_session import CoreSession
 from bluewolf_core.so_template_bank import SOTemplateBank, SOTemplateBankEntry
 from bluewolf_core.so_template_selection import SOTemplateSelectionRegistry
@@ -42,7 +42,7 @@ class _Session:
         return self._routes.get((server_id, vehicle_identifier))
 
 
-def _runtime():
+def _runtime(*, lifecycle_sink=None):
     template = _template("default")
     bank = SOTemplateBank((SOTemplateBankEntry(template, is_default=True),))
     registry = SOTemplateSelectionRegistry(bank)
@@ -50,6 +50,7 @@ def _runtime():
     return LiveSOEventRuntime(
         scorer,
         comparison_dimension=TemplateComparisonDimension.SYNC,
+        lifecycle_sink=lifecycle_sink,
     )
 
 
@@ -105,11 +106,7 @@ def _poll(groups, route, seconds: int, *, wrong_route_for: int | None = None):
                     longitude_deg=sample.longitude_deg,
                     reliability=sample.reliability,
                     group_id=group.group_id,
-                    route_id=(
-                        "wrong-route"
-                        if wrong_route_for == vehicle_identifier
-                        else route.route_id
-                    ),
+                    route_id=("wrong-route" if wrong_route_for == vehicle_identifier else route.route_id),
                     semantic_phase=phase,
                 )
             )
@@ -132,14 +129,8 @@ class LiveRuntimeProducerTests(unittest.TestCase):
     def test_two_so_groups_are_preserved_without_family_key_overwrite(self) -> None:
         route = _route(period_s=100.0)
         groups = (_group("g1", 1, 2, route), _group("g2", 3, 4, route))
-        session = _Session(
-            groups,
-            {(1, identifier): route for identifier in (1, 2, 3, 4)},
-        )
-        bindings = {
-            "g1": _binding("g1", 1, 2, route),
-            "g2": _binding("g2", 3, 4, route),
-        }
+        session = _Session(groups, {(1, identifier): route for identifier in (1, 2, 3, 4)})
+        bindings = {"g1": _binding("g1", 1, 2, route), "g2": _binding("g2", 3, 4, route)}
         store = RuntimeSnapshotStore()
         producer = LiveRuntimeProducer(
             server_id=1,
@@ -149,10 +140,8 @@ class LiveRuntimeProducerTests(unittest.TestCase):
             binding_resolver=lambda group: bindings.get(group.group_id),
             displayed_score_resolver=lambda _group_id, _when: DisplayedScoreValue(88.0, True),
         )
-
         producer.publish_poll(_poll(groups, route, 0))
         result = producer.publish_poll(_poll(groups, route, 5))
-
         self.assertEqual(result.published_group_ids, ("g1", "g2"))
         assert result.snapshot is not None
         group_list = result.snapshot["groupList"]
@@ -166,26 +155,17 @@ class LiveRuntimeProducerTests(unittest.TestCase):
     def test_missing_binding_is_explicitly_skipped_not_inferred(self) -> None:
         route = _route(period_s=100.0)
         groups = (_group("g1", 1, 2, route), _group("g2", 3, 4, route))
-        session = _Session(
-            groups,
-            {(1, identifier): route for identifier in (1, 2, 3, 4)},
-        )
+        session = _Session(groups, {(1, identifier): route for identifier in (1, 2, 3, 4)})
         store = RuntimeSnapshotStore()
         producer = LiveRuntimeProducer(
             server_id=1,
             session=session,  # type: ignore[arg-type]
             runtime=_runtime(),
             store=store,
-            binding_resolver=(
-                lambda group: _binding("g1", 1, 2, route)
-                if group.group_id == "g1"
-                else None
-            ),
+            binding_resolver=(lambda group: _binding("g1", 1, 2, route) if group.group_id == "g1" else None),
             displayed_score_resolver=lambda _group_id, _when: DisplayedScoreValue(90.0, True),
         )
-
         result = producer.publish_poll(_poll(groups, route, 0))
-
         self.assertEqual(result.published_group_ids, ("g1",))
         self.assertEqual(result.skipped_groups["g2"], "operational_binding_unavailable")
         assert result.snapshot is not None
@@ -204,17 +184,39 @@ class LiveRuntimeProducerTests(unittest.TestCase):
             binding_resolver=lambda _group: _binding("g1", 1, 2, route),
             displayed_score_resolver=lambda _group_id, _when: DisplayedScoreValue(90.0, True),
         )
-
-        result = producer.publish_poll(
-            _poll((group,), route, 0, wrong_route_for=1)
-        )
-
+        result = producer.publish_poll(_poll((group,), route, 0, wrong_route_for=1))
         self.assertIsNone(result.snapshot)
-        self.assertEqual(
-            result.skipped_groups["g1"],
-            "runtime_member_evidence_incomplete_or_route_mismatch",
-        )
+        self.assertEqual(result.skipped_groups["g1"], "runtime_member_evidence_incomplete_or_route_mismatch")
         self.assertIsNone(store.get("1"))
+
+    def test_empty_polls_advance_pending_event_to_closed_after_finalization_window(self) -> None:
+        route = _route(period_s=100.0)
+        group = _group("g1", 1, 2, route)
+        session = _Session((group,), {(1, 1): route, (1, 2): route})
+        lifecycle = []
+        producer = LiveRuntimeProducer(
+            server_id=1,
+            session=session,  # type: ignore[arg-type]
+            runtime=_runtime(lifecycle_sink=lifecycle.append),
+            store=RuntimeSnapshotStore(),
+            binding_resolver=lambda _group: _binding("g1", 1, 2, route),
+            displayed_score_resolver=lambda _group_id, _when: DisplayedScoreValue(90.0, True),
+        )
+
+        producer.publish_poll(_poll((group,), route, 0))
+        event_open = next(item for item in lifecycle if item.kind is ChangeKind.EVENT_OPENED)
+        session._groups = ()
+        producer.publish_poll(_poll((), route, 20))
+        self.assertTrue(any(item.kind is ChangeKind.EVENT_ENDING and item.event_id == event_open.event_id for item in lifecycle))
+        self.assertFalse(any(item.kind is ChangeKind.EVENT_CLOSED and item.event_id == event_open.event_id for item in lifecycle))
+
+        # No groups are active and no new frame is produced, but poll time still
+        # advances lifecycle finalization beyond end+120 s.
+        producer.publish_poll(_poll((), route, 141))
+        closed = [item for item in lifecycle if item.kind is ChangeKind.EVENT_CLOSED and item.event_id == event_open.event_id]
+        self.assertEqual(len(closed), 1)
+        self.assertEqual(closed[0].change_time_utc, START + timedelta(seconds=20))
+        self.assertEqual(closed[0].details["reason"], "structural_group_ended")
 
     def test_semantic_session_confirmed_route_accessor_is_fail_closed(self) -> None:
         session = CoreSession()
