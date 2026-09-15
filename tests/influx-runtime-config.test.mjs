@@ -105,3 +105,14 @@ test("IN-01 active developer surface exposes all three join names and special va
   assert.match(governance, /<InfluxGovernanceWorkbench \/>/);
   assert.match(governance, /button:nth-child\(4\)/);
 });
+
+test("IN-01 workspace persistence is wired to server-only runtime sync and reports application truthfully", async () => {
+  const route = await readFile(new URL("../app/api/workspace/route.ts", import.meta.url), "utf8");
+  const context = await readFile(new URL("../components/bluewolf/app-context.tsx", import.meta.url), "utf8");
+  assert.match(route, /import\("@\/lib\/influx-runtime-sync"\)/);
+  assert.match(route, /syncInfluxToOperationalConfig\(influxFromState\(normalizedState\)\)/);
+  assert.match(route, /runtimeSync/);
+  assert.match(context, /category === "influx"/);
+  assert.match(context, /לא הוחל על ה־Core/);
+  assert.match(context, /נדרשת הפעלה מחדש של שירות הליבה/);
+});
