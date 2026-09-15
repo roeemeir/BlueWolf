@@ -5,6 +5,10 @@ scoring evidence was not yet sufficient. Investigation recomputation therefore
 reuses Core observations and preserves the complete observed event range rather
 than reconstructing phases or silently dropping missing points.
 
+Navigation samples captured from the same live inputs are stored inside each
+immutable frame payload. Older rows without navigation remain readable as an
+empty navigation tuple; no position is reconstructed from phase or geometry.
+
 A frame is immutable by ``(event_id, sample_time_utc)``. Re-recording the exact
 same frame is idempotent; conflicting evidence at the same key is rejected.
 Recomputation results are stored separately with code/config/template provenance.
@@ -19,7 +23,7 @@ from pathlib import Path
 import sqlite3
 from typing import Any, Mapping
 
-from bluewolf_core.event_recompute import SOEventObservationFrame
+from bluewolf_core.event_recompute import SOEventNavigationPoint, SOEventObservationFrame
 from bluewolf_core.so_scoring import SOScoringObservation
 
 
@@ -81,6 +85,42 @@ def _observation_from_payload(value: Mapping[str, Any]) -> SOScoringObservation:
     )
 
 
+def _navigation_payload(item: SOEventNavigationPoint) -> dict[str, Any]:
+    return {
+        "member_id": item.member_id,
+        "vehicle_identifier": item.vehicle_identifier,
+        "latitude_deg": item.latitude_deg,
+        "longitude_deg": item.longitude_deg,
+        "altitude_m": item.altitude_m,
+        "velocity_north_mps": item.velocity_north_mps,
+        "velocity_east_mps": item.velocity_east_mps,
+        "active": item.active,
+        "reliability": item.reliability,
+    }
+
+
+def _navigation_from_payload(value: Mapping[str, Any]) -> SOEventNavigationPoint:
+    latitude = value.get("latitude_deg")
+    longitude = value.get("longitude_deg")
+    altitude = value.get("altitude_m")
+    north = value.get("velocity_north_mps")
+    east = value.get("velocity_east_mps")
+    active = value.get("active")
+    if active is not None and not isinstance(active, bool):
+        raise ValueError("archived navigation active must be boolean or null")
+    return SOEventNavigationPoint(
+        member_id=str(value["member_id"]),
+        vehicle_identifier=int(value["vehicle_identifier"]),
+        latitude_deg=None if latitude is None else float(latitude),
+        longitude_deg=None if longitude is None else float(longitude),
+        altitude_m=None if altitude is None else float(altitude),
+        velocity_north_mps=None if north is None else float(north),
+        velocity_east_mps=None if east is None else float(east),
+        active=active,
+        reliability=float(value.get("reliability", 1.0)),
+    )
+
+
 def _frame_payload(frame: SOEventObservationFrame) -> str:
     return json.dumps(
         {
@@ -88,6 +128,7 @@ def _frame_payload(frame: SOEventObservationFrame) -> str:
             "group_id": frame.group_id,
             "pending_reason": frame.pending_reason,
             "observations": [_observation_payload(item) for item in frame.observations],
+            "navigation": [_navigation_payload(item) for item in frame.navigation],
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -224,6 +265,16 @@ class SOEventObservationArchive:
             )
             if len(observations) != len(observations_raw):
                 raise ValueError("archived SO event observation row is malformed")
+            navigation_raw = payload.get("navigation", [])
+            if not isinstance(navigation_raw, list):
+                raise ValueError("archived SO event navigation is malformed")
+            navigation = tuple(
+                _navigation_from_payload(item)
+                for item in navigation_raw
+                if isinstance(item, Mapping)
+            )
+            if len(navigation) != len(navigation_raw):
+                raise ValueError("archived SO event navigation row is malformed")
             pending_raw = payload.get("pending_reason")
             pending_reason = None if pending_raw is None else str(pending_raw)
             frames.append(
@@ -234,6 +285,7 @@ class SOEventObservationArchive:
                     sample_time_utc=_parse_time(str(row["sample_time_utc"])),
                     observations=observations,
                     pending_reason=pending_reason,
+                    navigation=navigation,
                 )
             )
         return tuple(frames)
