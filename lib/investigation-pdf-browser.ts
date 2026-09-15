@@ -194,7 +194,7 @@ function drawMap(ctx: CanvasRenderingContext2D, event: InvestigationPdfEvent, x:
     x: left + ((lon - minLon) / (maxLon - minLon)) * (right - left),
     y: bottom - ((lat - minLat) / (maxLat - minLat)) * (bottom - top),
   });
-  const memberIds = Array.from(new Set(nav.map((item) => item.memberId));
+  const memberIds = Array.from(new Set(nav.map((item) => item.memberId)));
   ctx.save();
   memberIds.forEach((memberId, memberIndex) => {
     ctx.strokeStyle = SERIES[memberIndex % SERIES.length];
