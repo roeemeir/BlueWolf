@@ -13,7 +13,7 @@ from test_live_so_scoring import _constellation, _route, _template
 
 
 class EventObservationSinkTests(unittest.TestCase):
-    def test_complete_scored_snapshot_emits_event_id_and_core_observations(self) -> None:
+    def test_pending_and_scored_snapshots_keep_one_authoritative_event_range(self) -> None:
         bank = SOTemplateBank((SOTemplateBankEntry(_template("default"), is_default=True),))
         registry = SOTemplateSelectionRegistry(bank)
         scorer = LiveSOGroupScorer(registry)
@@ -28,7 +28,7 @@ class EventObservationSinkTests(unittest.TestCase):
         constellation = _constellation()
 
         warmup_members = _members(route, 0)
-        runtime.process_snapshot(
+        warmup = runtime.process_snapshot(
             "g1",
             constellation,
             warmup_members,
@@ -36,7 +36,12 @@ class EventObservationSinkTests(unittest.TestCase):
             displayed_group_score=90.0,
             displayed_score_valid=True,
         )
-        self.assertEqual(captured, [])
+        self.assertEqual(len(captured), 1)
+        pending = captured[0]
+        self.assertEqual(pending.event_id, warmup.event.snapshot.event_id)
+        self.assertEqual(pending.sample_time_utc, warmup_members[0].sample.sample_time_utc)
+        self.assertEqual(pending.pending_reason, "core_observations_incomplete")
+        self.assertLess(len(pending.observations), len(warmup_members))
 
         scored_members = _members(route, 5)
         scored = runtime.process_snapshot(
@@ -47,12 +52,14 @@ class EventObservationSinkTests(unittest.TestCase):
             displayed_group_score=90.0,
             displayed_score_valid=True,
         )
-        self.assertEqual(len(captured), 1)
-        frame = captured[0]
+        self.assertEqual(len(captured), 2)
+        frame = captured[1]
         self.assertEqual(frame.event_id, scored.event.snapshot.event_id)
+        self.assertEqual(frame.event_id, pending.event_id)
         self.assertEqual(frame.group_id, "g1")
         self.assertEqual(frame.server_id, 1)
         self.assertEqual(frame.sample_time_utc, scored_members[0].sample.sample_time_utc)
+        self.assertIsNone(frame.pending_reason)
         self.assertEqual({item.member_id for item in frame.observations}, {"m1", "m2"})
         self.assertTrue(all(item.diagnostics for item in frame.observations))
 
