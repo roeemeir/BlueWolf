@@ -1,8 +1,10 @@
-"""ASGI wrapper adding truth-backed QA and investigation execution.
+"""ASGI wrapper adding truth-backed QA, provenance and investigation execution.
 
 The wrapper delegates live-runtime paths unchanged. QA executes the real Core
-self-test. Investigation reads immutable SO event observations and lifecycle
-evidence captured by the Core; no demo fallback is allowed.
+self-test. Code/config provenance is owned by the runtime/deployment boundary,
+never by the browser request. Investigation reads immutable SO event
+observations and lifecycle evidence captured by the Core; no demo fallback is
+allowed.
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ from .event_observation_archive import SOEventObservationArchive
 from .qa_runner import run_deterministic_qa
 
 _MAX_BODY_BYTES = 64 * 1024
+_PROVENANCE_SCHEMA_VERSION = "bluewolf.runtime-provenance.v1"
 
 event_archive: SOEventObservationArchive | None = None
 event_lifecycle_archive: SOEventLifecycleArchive | None = None
@@ -32,21 +35,44 @@ def _json_bytes(payload: Mapping[str, Any]) -> bytes:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
+def _nonempty_provenance(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized or normalized.lower() == "unknown":
+        return None
+    return normalized
+
+
 def _code_version() -> str | None:
-    value = os.environ.get("BLUEWOLF_CODE_SHA", "").strip() or os.environ.get("GITHUB_SHA", "").strip()
-    return value or None
+    return _nonempty_provenance(
+        os.environ.get("BLUEWOLF_CODE_SHA", "").strip()
+        or os.environ.get("GITHUB_SHA", "").strip()
+    )
 
 
 def _config_version() -> str | None:
     host = service.operational_host
     if host is not None:
-        value = getattr(host.loop, "config_fingerprint", None)
-        if isinstance(value, str) and value:
+        value = _nonempty_provenance(getattr(host.loop, "config_fingerprint", None))
+        if value is not None:
             return value
     config_path = os.environ.get("BLUEWOLF_OPERATIONAL_CONFIG", "").strip()
-    if not config_path:
+    if config_path:
+        return _nonempty_provenance(operational_config_fingerprint(config_path))
+    return _nonempty_provenance(os.environ.get("BLUEWOLF_CONFIG_VERSION", ""))
+
+
+def _runtime_provenance() -> dict[str, str] | None:
+    code_version = _code_version()
+    config_version = _config_version()
+    if code_version is None or config_version is None:
         return None
-    return operational_config_fingerprint(config_path)
+    return {
+        "schemaVersion": _PROVENANCE_SCHEMA_VERSION,
+        "codeSha": code_version,
+        "configVersion": config_version,
+    }
 
 
 def _pipeline_for_server(server_id: int):
@@ -60,12 +86,7 @@ def _pipeline_for_server(server_id: int):
 
 
 def _resolved_lifecycle_archive(archive: SOEventObservationArchive | None) -> SOEventLifecycleArchive | None:
-    """Return lifecycle storage for the same SQLite file as observation evidence.
-
-    Existing tests/integration hooks historically injected only ``event_archive``.
-    The fallback keeps those callers compatible while still using the exact same
-    durable SQLite path; production normally supplies both archives explicitly.
-    """
+    """Return lifecycle storage for the same SQLite file as observation evidence."""
 
     if event_lifecycle_archive is not None:
         return event_lifecycle_archive
@@ -90,7 +111,7 @@ def _optional_query_time(query: Mapping[str, list[str]], name: str) -> datetime 
 
 
 class QaEnabledASGI:
-    """Handle QA/investigation endpoints and delegate every other path unchanged."""
+    """Handle QA/provenance/investigation endpoints and delegate all other paths."""
 
     def __init__(self, base_app, *, token: str | None = None) -> None:
         self.base_app = base_app
@@ -143,20 +164,53 @@ class QaEnabledASGI:
     def _query(scope) -> dict[str, list[str]]:
         return parse_qs(bytes(scope.get("query_string", b"")).decode("utf-8", errors="strict"), keep_blank_values=True)
 
+    async def _handle_provenance(self, scope, send) -> None:
+        if str(scope.get("method", "GET")).upper() != "GET":
+            await self._send_json(send, 405, {"error": "method not allowed"})
+            return
+        provenance = _runtime_provenance()
+        if provenance is None:
+            await self._send_json(
+                send,
+                503,
+                {"status": "unavailable", "error": "code/config provenance is unavailable"},
+                surface=b"runtime-provenance",
+            )
+            return
+        await self._send_json(send, 200, provenance, surface=b"runtime-provenance")
+
     async def _handle_qa(self, scope, receive, send) -> None:
         method = str(scope.get("method", "GET")).upper()
         if method != "POST":
             await self._send_json(send, 405, {"error": "method not allowed"})
+            return
+        provenance = _runtime_provenance()
+        if provenance is None:
+            await self._send_json(
+                send,
+                503,
+                {"status": "unavailable", "error": "code/config provenance is unavailable"},
+                surface=b"runtime-provenance",
+            )
             return
         try:
             request = await self._read_json(receive)
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
             await self._send_json(send, 400, {"error": str(error)})
             return
+        runtime_request = {**request, "configVersion": provenance["configVersion"]}
         try:
-            result = await asyncio.to_thread(run_deterministic_qa, request)
+            result = await asyncio.to_thread(run_deterministic_qa, runtime_request)
         except Exception as error:
             await self._send_json(send, 500, {"status": "error", "error": f"QA execution failed: {type(error).__name__}: {error}"})
+            return
+        if result.get("codeSha") != provenance["codeSha"] or result.get("configVersion") != provenance["configVersion"]:
+            await self._send_json(
+                send,
+                500,
+                {"status": "error", "error": "QA provenance does not match runtime provenance"},
+                surface=b"runtime-provenance",
+            )
             return
         await self._send_json(send, 200, result)
 
@@ -240,9 +294,8 @@ class QaEnabledASGI:
         if template is None:
             await self._send_json(send, 404, {"error": "template is not present in the active Core template bank"})
             return
-        code_version = _code_version()
-        config_version = _config_version()
-        if code_version is None or config_version is None:
+        provenance = _runtime_provenance()
+        if provenance is None:
             await self._send_json(send, 503, {"status": "unavailable", "error": "code/config provenance is unavailable"})
             return
         try:
@@ -251,8 +304,8 @@ class QaEnabledASGI:
                 event_id=event_id,
                 template=template,
                 frames=frames,
-                code_version=code_version,
-                config_version=config_version,
+                code_version=provenance["codeSha"],
+                config_version=provenance["configVersion"],
                 scenario_id=scenario_id,
                 config=pipeline.producer.runtime.scorer.scoring_config,
                 minimum_valid_vehicles=pipeline.producer.runtime.scorer.minimum_valid_vehicles,
@@ -266,14 +319,22 @@ class QaEnabledASGI:
 
     async def __call__(self, scope, receive, send) -> None:
         path = str(scope.get("path", ""))
-        if scope.get("type") != "http" or path not in {"/v1/qa/run", "/v1/investigation/events", "/v1/investigation/recompute"}:
+        handled = {
+            "/v1/provenance",
+            "/v1/qa/run",
+            "/v1/investigation/events",
+            "/v1/investigation/recompute",
+        }
+        if scope.get("type") != "http" or path not in handled:
             await self.base_app(scope, receive, send)
             return
         headers = {key.lower(): value for key, value in scope.get("headers", [])}
         if not self._authorized(headers):
             await self._send_json(send, 401, {"error": "unauthorized"})
             return
-        if path == "/v1/qa/run":
+        if path == "/v1/provenance":
+            await self._handle_provenance(scope, send)
+        elif path == "/v1/qa/run":
             await self._handle_qa(scope, receive, send)
         elif path == "/v1/investigation/events":
             await self._handle_events(scope, send)
@@ -321,4 +382,10 @@ def main() -> None:
         event_lifecycle_archive = None
 
 
-__all__ = ["QaEnabledASGI", "app", "event_archive", "event_lifecycle_archive", "main"]
+__all__ = [
+    "QaEnabledASGI",
+    "app",
+    "event_archive",
+    "event_lifecycle_archive",
+    "main",
+]
