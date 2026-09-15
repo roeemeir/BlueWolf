@@ -57,12 +57,15 @@ test('SO Double is one continuous outer-turn route with no internal U-turn seam'
   assert.equal(unique.size, double.length);
 });
 
-test('GEO-02 route phase and tangent heading are independent of vehicle type', () => {
+test('GEO-02 route phase and tangent heading are independent of vehicle type and reverse does not move the vehicle', () => {
   const [route] = buildSoSmileGeometry(['double'], { centerX: 200, centerY: 120 });
   const storm = pointAtSoPhase(route.points, 0.25, false);
   const lightning = pointAtSoPhase(route.points, 0.25, false);
   assert.deepEqual(storm, lightning);
+
   const reversed = pointAtSoPhase(route.points, 0.25, true);
+  assert.ok(Math.abs(reversed.x - storm.x) < 1e-9);
+  assert.ok(Math.abs(reversed.y - storm.y) < 1e-9);
   const headingDelta = ((((reversed.heading - storm.heading) % 360) + 360) % 360);
   assert.ok(Math.abs(headingDelta - 180) < 1e-6);
 });
