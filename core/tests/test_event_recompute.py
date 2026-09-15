@@ -94,10 +94,12 @@ class EventRecomputeTests(unittest.TestCase):
         self.assertEqual(baseline["scenarioId"], "investigation-17")
         self.assertEqual(baseline["templateVersion"], template_fingerprint(opposite))
         self.assertNotEqual(baseline["summary"]["sync"], changed["summary"]["sync"])
-        self.assertEqual(
-            baseline["points"][0]["members"][0]["primaryReason"],
-            baseline["points"][0]["members"][0]["primaryReason"],
+        self.assertNotEqual(
+            baseline["points"][0]["members"][1]["positionErrorCycle"],
+            changed["points"][0]["members"][1]["positionErrorCycle"],
         )
+        self.assertTrue(changed["rootCauses"])
+        self.assertGreater(changed["rootCauses"][0]["occurrences"], 0)
 
     def test_frames_from_multiple_groups_are_rejected(self) -> None:
         start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
