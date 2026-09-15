@@ -30,6 +30,7 @@ from typing import Any, Callable, Mapping
 
 from .event_alert import EventAlertEngine, EventAlertResult, EventObservation
 from .event_recompute import SOEventNavigationPoint, SOEventObservationFrame
+from .event_route_evidence import SOEventRouteEvidence, snapshot_closed_route
 from .live_so_scoring import LiveSOGroupScorer, LiveSOGroupScoringResult, LiveSOMemberInput
 from .models import GroupScores
 from .so_scoring import SOGroupScoringResult, score_so_template
@@ -139,6 +140,19 @@ def _navigation_evidence(members: tuple[LiveSOMemberInput, ...]) -> tuple[SOEven
     )
 
 
+def _route_evidence(members: tuple[LiveSOMemberInput, ...]) -> tuple[SOEventRouteEvidence, ...]:
+    """Snapshot one immutable detected route per route instance from Core truth."""
+
+    by_instance: dict[str, SOEventRouteEvidence] = {}
+    for item in members:
+        snapshot = snapshot_closed_route(item.route_instance_id, item.route)
+        existing = by_instance.get(item.route_instance_id)
+        if existing is not None and existing != snapshot:
+            raise ValueError("members sharing a route instance have conflicting detected-route geometry")
+        by_instance[item.route_instance_id] = snapshot
+    return tuple(by_instance[key] for key in sorted(by_instance))
+
+
 class LiveSOEventRuntime:
     """One checkpointable SO live-scoring/event runtime.
 
@@ -152,9 +166,10 @@ class LiveSOEventRuntime:
     observations; timestamps where the Core is not score-ready are persisted as
     pending frames with an explicit reason so investigation never shortens the
     event range silently. The same frame also carries detached navigation data
-    from the exact member samples used at that timestamp and the original Core
-    template id active for that event. Neither metadata path participates in
-    scoring or template selection.
+    from the exact member samples, the original Core template id, and immutable
+    detected-route geometry captured from the exact ``ClosedRoute`` objects used
+    by the live pipeline. None of those metadata paths participates in scoring
+    or template selection.
     """
 
     def __init__(
@@ -275,6 +290,7 @@ class LiveSOEventRuntime:
                     active_template_id=selection.template_id,
                     pending_reason=pending_reason,
                     navigation=_navigation_evidence(members),
+                    routes=_route_evidence(members),
                 )
             )
 
