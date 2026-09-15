@@ -152,8 +152,9 @@ class LiveSOEventRuntime:
     observations; timestamps where the Core is not score-ready are persisted as
     pending frames with an explicit reason so investigation never shortens the
     event range silently. The same frame also carries detached navigation data
-    from the exact member samples used at that timestamp. Navigation never
-    participates in scoring or template selection.
+    from the exact member samples used at that timestamp and the original Core
+    template id active for that event. Neither metadata path participates in
+    scoring or template selection.
     """
 
     def __init__(
@@ -271,6 +272,7 @@ class LiveSOEventRuntime:
                     group_id=group_id,
                     sample_time_utc=now,
                     observations=observations,
+                    active_template_id=selection.template_id,
                     pending_reason=pending_reason,
                     navigation=_navigation_evidence(members),
                 )
