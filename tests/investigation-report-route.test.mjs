@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test, { after, beforeEach } from 'node:test';
+import test, { after, afterEach, beforeEach } from 'node:test';
 import { createServer } from 'vite';
 
 const root = process.cwd();
@@ -54,7 +54,7 @@ beforeEach(() => {
   };
 });
 
-after(() => { if (originalFetch) globalThis.fetch = originalFetch; });
+afterEach(() => { globalThis.fetch = originalFetch; });
 
 test('report endpoint recomputes archived events and returns a real PDF with provenance headers', async () => {
   const response = await route.POST(new Request('http://app.test/api/investigation/report', {
