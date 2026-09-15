@@ -2,6 +2,7 @@ param(
     [string]$PythonCommand = "py",
     [string]$VenvPath = ".bluewolf-runtime-venv",
     [string]$Wheelhouse = "",
+    [string]$CodeSha = "",
     [switch]$Online
 )
 
@@ -10,6 +11,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot = Resolve-Path (Join-Path $ScriptDir "..\..")
 $CorePath = Join-Path $RepoRoot "core"
 $ResolvedVenv = Join-Path $RepoRoot $VenvPath
+$BuildProvenancePath = Join-Path $ResolvedVenv "bluewolf-build-provenance.json"
 
 if ($Online -and -not [string]::IsNullOrWhiteSpace($Wheelhouse)) {
     throw "Choose either -Online or -Wheelhouse, not both."
@@ -25,6 +27,22 @@ if (-not $Online) {
     if (@(Get-ChildItem $ResolvedWheelhouse -Filter '*.whl' -File).Count -eq 0) {
         throw "Wheelhouse contains no wheels. Prepare Python 3.12 wheels for the target Windows architecture."
     }
+}
+
+$ResolvedCodeSha = $CodeSha.Trim()
+if ([string]::IsNullOrWhiteSpace($ResolvedCodeSha)) {
+    try {
+        $GitSha = (& git -C $RepoRoot rev-parse HEAD 2>$null | Select-Object -First 1)
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($GitSha)) {
+            $ResolvedCodeSha = ([string]$GitSha).Trim()
+        }
+    }
+    catch {
+        $ResolvedCodeSha = ""
+    }
+}
+if ([string]::IsNullOrWhiteSpace($ResolvedCodeSha) -or $ResolvedCodeSha -eq "unknown" -or $ResolvedCodeSha -notmatch '^[0-9a-fA-F]{7,64}$') {
+    throw "A real code SHA is required. Run from the Git checkout or pass -CodeSha explicitly."
 }
 
 Write-Host "Creating Blue Wolf runtime environment at $ResolvedVenv"
@@ -53,6 +71,14 @@ finally {
     Pop-Location
 }
 
+$BuildProvenance = [ordered]@{
+    schemaVersion = "bluewolf.runtime-build-provenance.v1"
+    codeSha = $ResolvedCodeSha.ToLowerInvariant()
+    installedAtUtc = [DateTime]::UtcNow.ToString("o")
+}
+$BuildProvenance | ConvertTo-Json -Compress | Set-Content -Path $BuildProvenancePath -Encoding UTF8
+
 Write-Host "Blue Wolf runtime installed successfully."
+Write-Host "Build provenance saved to $BuildProvenancePath (code $($ResolvedCodeSha.Substring(0, [Math]::Min(12, $ResolvedCodeSha.Length))))."
 Write-Host "This installs the Python runtime only, not the full offline UI, maps or PDF package."
 Write-Host "Set BLUEWOLF_CORE_API_TOKEN and run deploy\windows\run-runtime.ps1"
