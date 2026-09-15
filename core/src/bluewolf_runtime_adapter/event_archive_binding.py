@@ -1,12 +1,13 @@
 """Attach durable SO event evidence storage to an already-built runtime loop.
 
 The operational checkpoint deliberately serializes deterministic Core state, not
-infrastructure callbacks.  This binding therefore runs *after* the factory (and
+infrastructure callbacks. This binding therefore runs *after* the factory (and
 any checkpoint restoration) and reattaches the observation sink from the same
 ``archive.path`` already approved for canonical source-sample retention.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,15 +23,34 @@ def _mapping(value: object, name: str) -> Mapping[str, Any]:
     return value
 
 
-def event_archive_path_from_config(path: str | os.PathLike[str]) -> Path | None:
+def _read_config(path: str | os.PathLike[str]) -> Mapping[str, Any]:
     config_path = Path(path).expanduser().resolve(strict=False)
     try:
         raw = json.loads(config_path.read_text(encoding="utf-8"))
     except OSError as exc:
-        raise ValueError(f"cannot read operational config for event archive: {config_path}") from exc
+        raise ValueError(f"cannot read operational config: {config_path}") from exc
     except json.JSONDecodeError as exc:
         raise ValueError(f"operational config is not valid JSON: {config_path}") from exc
-    config = _mapping(raw, "operational config")
+    return _mapping(raw, "operational config")
+
+
+def operational_config_fingerprint(path: str | os.PathLike[str]) -> str:
+    config = _read_config(path)
+    try:
+        canonical = json.dumps(
+            config,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("operational config must be finite JSON data") from exc
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def event_archive_path_from_config(path: str | os.PathLike[str]) -> Path | None:
+    config = _read_config(path)
     archive_raw = config.get("archive")
     if archive_raw is None:
         return None
@@ -57,4 +77,8 @@ def attach_event_observation_archive(
     return archive
 
 
-__all__ = ["attach_event_observation_archive", "event_archive_path_from_config"]
+__all__ = [
+    "attach_event_observation_archive",
+    "event_archive_path_from_config",
+    "operational_config_fingerprint",
+]
