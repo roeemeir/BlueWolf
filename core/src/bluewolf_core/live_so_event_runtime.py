@@ -26,9 +26,10 @@ import hashlib
 import json
 import math
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from .event_alert import EventAlertEngine, EventAlertResult, EventObservation
+from .event_recompute import SOEventObservationFrame
 from .live_so_scoring import LiveSOGroupScorer, LiveSOGroupScoringResult, LiveSOMemberInput
 from .models import GroupScores
 from .so_scoring import SOGroupScoringResult, score_so_template
@@ -40,6 +41,9 @@ from .so_template_selection import InvalidatedManualSelection
 class TemplateComparisonDimension(StrEnum):
     SYNC = "sync"
     TOTAL = "total"
+
+
+ObservationSink = Callable[[SOEventObservationFrame], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +142,11 @@ class LiveSOEventRuntime:
     ``SOScoringObservation`` objects in the active live-scoring result.  This is
     the key invariant that prevents recommendation evaluation from advancing
     movement/curvature temporal state multiple times at one timestamp.
+
+    ``observation_sink`` receives only complete immutable observation frames,
+    after the event engine has assigned the authoritative event id.  The sink is
+    application infrastructure (for example SQLite); it never participates in
+    scoring or template selection.
     """
 
     def __init__(
@@ -146,10 +155,12 @@ class LiveSOEventRuntime:
         *,
         comparison_dimension: TemplateComparisonDimension,
         event_engine: EventAlertEngine | None = None,
+        observation_sink: ObservationSink | None = None,
     ) -> None:
         self.scorer = scorer
         self.comparison_dimension = TemplateComparisonDimension(comparison_dimension)
         self.event_engine = event_engine or EventAlertEngine()
+        self.observation_sink = observation_sink
 
     @property
     def bank(self) -> SOTemplateBank:
@@ -196,14 +207,14 @@ class LiveSOEventRuntime:
 
         scoring_by_template: dict[str, SOGroupScoringResult] = {}
         comparison_scores: dict[str, float] = {}
+        observations = tuple(
+            item.observation
+            for item in live.member_metrics
+            if item.observation is not None
+        )
         if live.scoring is not None and selection.template_id is not None:
             scoring_by_template[selection.template_id] = live.scoring
 
-            observations = tuple(
-                item.observation
-                for item in live.member_metrics
-                if item.observation is not None
-            )
             if len(observations) == len(members):
                 for template in self.bank.relevant_templates(constellation):
                     if template.template_id in scoring_by_template:
@@ -241,6 +252,16 @@ class LiveSOEventRuntime:
                 template_scores=comparison_scores,
             )
         )
+        if self.observation_sink is not None and len(observations) == len(members):
+            self.observation_sink(
+                SOEventObservationFrame(
+                    event_id=event.snapshot.event_id,
+                    server_id=server_id,
+                    group_id=group_id,
+                    sample_time_utc=now,
+                    observations=observations,
+                )
+            )
 
         return LiveSOEventRuntimeResult(
             group_id=group_id,
@@ -272,6 +293,7 @@ class LiveSOEventRuntime:
         *,
         scoring_config=None,
         event_config=None,
+        observation_sink: ObservationSink | None = None,
     ) -> tuple["LiveSOEventRuntime", tuple[InvalidatedManualSelection, ...]]:
         raw_scorer = state.get("live_so_scorer", {})
         raw_event = state.get("event_alert", {})
@@ -292,6 +314,7 @@ class LiveSOEventRuntime:
                 scorer,
                 comparison_dimension=dimension,
                 event_engine=event_engine,
+                observation_sink=observation_sink,
             ),
             invalidated,
         )
