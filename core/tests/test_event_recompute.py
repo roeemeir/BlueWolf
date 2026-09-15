@@ -87,6 +87,7 @@ def _frame(at: datetime, phase_a: float = 0.0, phase_b: float = 0.5) -> SOEventO
         group_id="g-1",
         sample_time_utc=at,
         observations=_observations(phase_a, phase_b),
+        active_template_id="opposite",
         navigation=_navigation((at.second % 10) * 0.00001),
     )
 
@@ -98,6 +99,7 @@ def _pending_frame(at: datetime) -> SOEventObservationFrame:
         group_id="g-1",
         sample_time_utc=at,
         observations=(),
+        active_template_id="opposite",
         pending_reason="core_observations_incomplete",
         navigation=_navigation(),
     )
@@ -110,6 +112,7 @@ def _other_event_frame(at: datetime) -> SOEventObservationFrame:
         group_id="g-2",
         sample_time_utc=at,
         observations=_observations(0.25, 0.75),
+        active_template_id="opposite",
         navigation=_navigation(0.01),
     )
 
@@ -194,6 +197,7 @@ class EventRecomputeTests(unittest.TestCase):
             group_id="other",
             sample_time_utc=start + timedelta(seconds=1),
             observations=_observations(0.0, 0.5),
+            active_template_id="opposite",
             navigation=_navigation(),
         )
         with self.assertRaisesRegex(ValueError, "one server and one group"):
@@ -227,11 +231,14 @@ class EventObservationArchiveTests(unittest.TestCase):
             self.assertEqual(restored, (pending, frame))
             self.assertEqual(restored[0].navigation, pending.navigation)
             self.assertEqual(restored[1].navigation, frame.navigation)
+            self.assertEqual(restored[0].active_template_id, "opposite")
+            self.assertEqual(restored[1].active_template_id, "opposite")
             listed = archive.list_events(7)
             self.assertEqual(listed[0]["eventId"], frame.event_id)
             self.assertEqual(listed[0]["frameCount"], 2)
             self.assertEqual(listed[0]["startAt"], "2026-09-15T06:00:00Z")
             self.assertEqual(listed[0]["endAt"], "2026-09-15T06:00:05Z")
+            self.assertEqual(listed[0]["activeTemplateId"], "opposite")
 
             result = recompute_so_event(
                 event_id=frame.event_id,
@@ -272,6 +279,7 @@ class EventObservationArchiveTests(unittest.TestCase):
             self.assertEqual(inside_first[0]["startAt"], "2026-09-15T06:00:00Z")
             self.assertEqual(inside_first[0]["endAt"], "2026-09-15T06:00:05Z")
             self.assertEqual(inside_first[0]["frameCount"], 2)
+            self.assertEqual(inside_first[0]["activeTemplateId"], "opposite")
 
             later_only = archive.list_events(
                 7,
@@ -279,6 +287,7 @@ class EventObservationArchiveTests(unittest.TestCase):
                 to_utc=start + timedelta(hours=2),
             )
             self.assertEqual([item["eventId"] for item in later_only], ["g-2@2026-09-15T07:00:00Z"])
+            self.assertEqual(later_only[0]["activeTemplateId"], "opposite")
 
             with self.assertRaisesRegex(ValueError, "start must not be after end"):
                 archive.list_events(
