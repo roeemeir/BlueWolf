@@ -63,6 +63,21 @@ def _pipeline_for_server(server_id: int):
     return None
 
 
+def _optional_query_time(query: Mapping[str, list[str]], name: str) -> datetime | None:
+    values = query.get(name, [])
+    if not values:
+        return None
+    if len(values) != 1 or not values[0].strip():
+        raise ValueError(f"{name} must appear once as an ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(values[0].strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{name} must include a timezone")
+    return parsed.astimezone(UTC)
+
+
 class QaEnabledASGI:
     """Handle QA/investigation endpoints and delegate every other path unchanged."""
 
@@ -162,19 +177,31 @@ class QaEnabledASGI:
                 surface=b"core-event-archive",
             )
             return
-        query = self._query(scope)
-        raw_server = query.get("serverId", [])
-        if len(raw_server) != 1:
-            await self._send_json(send, 400, {"error": "one serverId is required"})
-            return
         try:
+            query = self._query(scope)
+            raw_server = query.get("serverId", [])
+            if len(raw_server) != 1:
+                raise ValueError("one serverId is required")
             server_id = int(raw_server[0])
             if server_id < 0:
-                raise ValueError
-        except ValueError:
-            await self._send_json(send, 400, {"error": "serverId must be a non-negative integer"})
+                raise ValueError("serverId must be a non-negative integer")
+            from_utc = _optional_query_time(query, "from")
+            to_utc = _optional_query_time(query, "to")
+            if from_utc is not None and to_utc is not None and from_utc > to_utc:
+                raise ValueError("from must not be after to")
+        except (UnicodeDecodeError, ValueError) as error:
+            await self._send_json(send, 400, {"error": str(error)})
             return
-        events = await asyncio.to_thread(archive.list_events, server_id)
+        try:
+            events = await asyncio.to_thread(
+                archive.list_events,
+                server_id,
+                from_utc=from_utc,
+                to_utc=to_utc,
+            )
+        except ValueError as error:
+            await self._send_json(send, 400, {"error": str(error)})
+            return
         pipeline = _pipeline_for_server(server_id)
         templates = []
         if pipeline is not None:
