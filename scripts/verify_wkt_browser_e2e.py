@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import tempfile
 import time
@@ -161,7 +160,7 @@ def run_browser_regression():
                     page.mouse.up()
                     page.wait_for_function(
                         "([selector, before]) => document.querySelector(selector)?.value !== before",
-                        ["[data-testid='route-wkt-input']", text_saved],
+                        arg=["[data-testid='route-wkt-input']", text_saved],
                     )
                     dragged_wkt = input_box.input_value()
                     assert dragged_wkt != text_saved, "browser drag did not change WGS84 WKT"
