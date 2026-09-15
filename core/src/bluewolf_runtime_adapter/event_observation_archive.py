@@ -8,6 +8,8 @@ than reconstructing phases or silently dropping missing points.
 Navigation samples captured from the same live inputs are stored inside each
 immutable frame payload. Older rows without navigation remain readable as an
 empty navigation tuple; no position is reconstructed from phase or geometry.
+The original active Core template id is stored in the same immutable payload so
+reports can reproduce the event without selecting an arbitrary template.
 
 A frame is immutable by ``(event_id, sample_time_utc)``. Re-recording the exact
 same frame is idempotent; conflicting evidence at the same key is rejected.
@@ -126,6 +128,7 @@ def _frame_payload(frame: SOEventObservationFrame) -> str:
         {
             "server_id": frame.server_id,
             "group_id": frame.group_id,
+            "active_template_id": frame.active_template_id,
             "pending_reason": frame.pending_reason,
             "observations": [_observation_payload(item) for item in frame.observations],
             "navigation": [_navigation_payload(item) for item in frame.navigation],
@@ -277,6 +280,8 @@ class SOEventObservationArchive:
                 raise ValueError("archived SO event navigation row is malformed")
             pending_raw = payload.get("pending_reason")
             pending_reason = None if pending_raw is None else str(pending_raw)
+            active_template_raw = payload.get("active_template_id")
+            active_template_id = None if active_template_raw is None else str(active_template_raw)
             frames.append(
                 SOEventObservationFrame(
                     event_id=event_id,
@@ -284,6 +289,7 @@ class SOEventObservationArchive:
                     group_id=str(row["group_id"]),
                     sample_time_utc=_parse_time(str(row["sample_time_utc"])),
                     observations=observations,
+                    active_template_id=active_template_id,
                     pending_reason=pending_reason,
                     navigation=navigation,
                 )
@@ -303,6 +309,9 @@ class SOEventObservationArchive:
         The range filters event selection only. Returned start/end/frameCount are
         the event's full archived bounds so selecting a range never clips event
         identity or silently turns one event into a shorter synthetic event.
+        ``activeTemplateId`` is returned only when all archived frames that know
+        the original active template agree. Older events may return ``None`` and
+        must not receive an invented report template.
         """
 
         if isinstance(server_id, bool) or not isinstance(server_id, int) or server_id < 0:
@@ -331,17 +340,29 @@ class SOEventObservationArchive:
                 """,
                 (server_id, from_iso, from_iso, to_iso, to_iso, limit),
             ).fetchall()
-        return tuple(
-            {
-                "eventId": str(row["event_id"]),
-                "serverId": server_id,
-                "groupId": str(row["group_id"]),
-                "startAt": str(row["start_at"]),
-                "endAt": str(row["end_at"]),
-                "frameCount": int(row["frame_count"]),
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            event_id = str(row["event_id"])
+            frames = self.read_event(event_id)
+            known_templates = {
+                frame.active_template_id
+                for frame in frames
+                if frame.active_template_id is not None
             }
-            for row in rows
-        )
+            if len(known_templates) > 1:
+                raise ValueError("archived event contains multiple active templates")
+            results.append(
+                {
+                    "eventId": event_id,
+                    "serverId": server_id,
+                    "groupId": str(row["group_id"]),
+                    "startAt": str(row["start_at"]),
+                    "endAt": str(row["end_at"]),
+                    "frameCount": int(row["frame_count"]),
+                    "activeTemplateId": (next(iter(known_templates)) if known_templates else None),
+                }
+            )
+        return tuple(results)
 
     def record_recompute(self, result: Mapping[str, Any], *, created_at_utc: datetime) -> None:
         required = (
