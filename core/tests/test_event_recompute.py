@@ -73,6 +73,16 @@ def _pending_frame(at: datetime) -> SOEventObservationFrame:
     )
 
 
+def _other_event_frame(at: datetime) -> SOEventObservationFrame:
+    return SOEventObservationFrame(
+        event_id="g-2@2026-09-15T07:00:00Z",
+        server_id=7,
+        group_id="g-2",
+        sample_time_utc=at,
+        observations=_observations(0.25, 0.75),
+    )
+
+
 class EventRecomputeTests(unittest.TestCase):
     def test_template_change_recomputes_real_scores_from_same_core_observations(self) -> None:
         start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
@@ -203,6 +213,39 @@ class EventObservationArchiveTests(unittest.TestCase):
             self.assertEqual(saved[0]["configVersion"], "cfg-archive")
             self.assertEqual(saved[0]["templateVersion"], template_fingerprint(template))
             self.assertEqual(saved[0]["missingFrameCount"], 1)
+
+    def test_time_range_selects_intersecting_events_without_clipping_event_bounds(self) -> None:
+        start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
+        with TemporaryDirectory() as directory:
+            archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
+            archive.record_frame(_pending_frame(start))
+            archive.record_frame(_frame(start + timedelta(seconds=5)))
+            archive.record_frame(_other_event_frame(start + timedelta(hours=1)))
+
+            inside_first = archive.list_events(
+                7,
+                from_utc=start + timedelta(seconds=2),
+                to_utc=start + timedelta(seconds=3),
+            )
+            self.assertEqual(len(inside_first), 1)
+            self.assertEqual(inside_first[0]["eventId"], "g-1@2026-09-15T06:00:00Z")
+            self.assertEqual(inside_first[0]["startAt"], "2026-09-15T06:00:00Z")
+            self.assertEqual(inside_first[0]["endAt"], "2026-09-15T06:00:05Z")
+            self.assertEqual(inside_first[0]["frameCount"], 2)
+
+            later_only = archive.list_events(
+                7,
+                from_utc=start + timedelta(minutes=30),
+                to_utc=start + timedelta(hours=2),
+            )
+            self.assertEqual([item["eventId"] for item in later_only], ["g-2@2026-09-15T07:00:00Z"])
+
+            with self.assertRaisesRegex(ValueError, "start must not be after end"):
+                archive.list_events(
+                    7,
+                    from_utc=start + timedelta(hours=2),
+                    to_utc=start,
+                )
 
 
 if __name__ == "__main__":
