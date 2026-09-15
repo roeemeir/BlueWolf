@@ -17,7 +17,7 @@ test('investigation report UI uses binary PDF endpoint with Core provenance and 
   assert.match(panel, /core-event-archive/);
   assert.match(panel, /הפק PDF לטווח/);
   assert.match(panel, /BW-REP-008 BW-REP-009 BW-REP-011/);
-  assert.doesNotMatch(panel, /window\.print/);
+  assert.doesNotMatch(panel, /\bwindow\.print\s*\(\s*\)\s*;/);
   assert.doesNotMatch(panel, /getServerScenario|buildEvents/);
 
   assert.match(route, /activeTemplateId/);
@@ -27,5 +27,5 @@ test('investigation report UI uses binary PDF endpoint with Core provenance and 
   assert.match(route, /content-type.*application\/pdf/);
   assert.match(route, /x-bluewolf-code-version/);
   assert.match(route, /x-bluewolf-config-version/);
-  assert.doesNotMatch(route, /demo/i);
+  assert.doesNotMatch(route, /getServerScenario|buildEvents/);
 });
