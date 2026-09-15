@@ -22,3 +22,13 @@ test('SI editor is direct three-ring placement and the legacy counter editor is 
   assert.match(governance, /TemplateGovernanceWorkbench/);
   assert.match(governance, /button:nth-child\(2\)/);
 });
+
+test('SI-01 hover ghost is visual-only and restricted to legal empty slots', async () => {
+  const governance = await readFile(path.join(root, 'components/bluewolf/developer-governance-workbench.tsx'), 'utf8');
+  assert.match(governance, /SI-01: desktop hover previews a legal empty placement without changing state/);
+  assert.match(governance, /si-direct-ring-board/);
+  assert.match(governance, /circle\[fill="transparent"\]\[opacity="0\.65"\]/);
+  assert.match(governance, /:hover/);
+  assert.match(governance, /:focus-visible/);
+  assert.doesNotMatch(governance, /onMouseEnter|onPointerEnter|setSiPositions/);
+});
