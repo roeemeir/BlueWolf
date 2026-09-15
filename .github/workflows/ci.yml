@@ -84,7 +84,7 @@ jobs:
           - shard: event-alert
             tests: test_event_alert
           - shard: live-so-event-runtime
-            tests: test_live_so_event_runtime
+            tests: test_live_so_event_runtime test_event_recompute
           - shard: live-runtime-contract
             tests: test_live_runtime_contract
           - shard: runtime-service
@@ -187,7 +187,7 @@ jobs:
             -X POST \
             -H 'Authorization: Bearer ci-token' \
             -H 'Content-Type: application/json' \
-            -d '{"scenarioId":"ci-runtime-smoke","configVersion":"ci"}' \
+            -d '{"scenarioId":"ci-runtime-smoke","configVersion":"ci","scope":"smoke"}' \
             http://127.0.0.1:18080/v1/qa/run > /tmp/bluewolf-qa.json
           python - <<'PY'
           import json, os
@@ -196,7 +196,9 @@ jobs:
           assert payload['scenarioId'] == 'ci-runtime-smoke'
           assert payload['codeSha'] == os.environ['GITHUB_SHA']
           assert payload['configVersion'] == 'ci'
+          assert payload['scope'] == 'smoke'
           assert payload['categories']
+          assert {item['id'] for item in payload['categories']} == {'scoring', 'determinism'}
           assert all(item['passed'] + item['failed'] == item['scenarios'] for item in payload['categories'])
           PY
 
