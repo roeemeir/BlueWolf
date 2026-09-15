@@ -27,7 +27,7 @@ jobs:
           - case: geometry-replacement
             test: test_route_change.AdaptiveRouteChangeTests.test_session_replaces_confirmed_route_without_fixed_change_timer
           - case: period-replacement
-            test: test_adaptive_acquisition.AdaptiveAcquisitionSimulationTests.test_period_only_change_is_detected_and_attributed_retroactively
+            test: test_route_change.AdaptiveRouteChangeTests.test_period_only_change_is_detected_and_attributed_retroactively
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
