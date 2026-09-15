@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import json
 import os
 from pathlib import Path
@@ -57,12 +57,23 @@ def _observation(member: str, phase: float) -> SOScoringObservation:
     )
 
 
-def _frame() -> SOEventObservationFrame:
+def _pending_frame() -> SOEventObservationFrame:
     return SOEventObservationFrame(
         event_id=EVENT_ID,
         server_id=1,
         group_id="g1",
         sample_time_utc=NOW,
+        observations=(),
+        pending_reason="core_observations_incomplete",
+    )
+
+
+def _frame() -> SOEventObservationFrame:
+    return SOEventObservationFrame(
+        event_id=EVENT_ID,
+        server_id=1,
+        group_id="g1",
+        sample_time_utc=NOW + timedelta(seconds=5),
         observations=(_observation("v1", 0.0), _observation("v2", 0.5)),
     )
 
@@ -133,6 +144,7 @@ class InvestigationServiceTests(unittest.TestCase):
 
         with TemporaryDirectory() as directory:
             archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
+            archive.record_frame(_pending_frame())
             archive.record_frame(_frame())
             app = QaEnabledASGI(_base, token="secret")
             with (
@@ -151,8 +163,11 @@ class InvestigationServiceTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(listing["schemaVersion"], "bluewolf.investigation-events.v1")
+                self.assertEqual(listing["templates"], [{"id": template.template_id, "name": template.name}])
                 self.assertEqual(listing["events"][0]["eventId"], EVENT_ID)
-                self.assertEqual(listing["events"][0]["frameCount"], 1)
+                self.assertEqual(listing["events"][0]["frameCount"], 2)
+                self.assertEqual(listing["events"][0]["startAt"], "2026-09-15T06:00:00Z")
+                self.assertEqual(listing["events"][0]["endAt"], "2026-09-15T06:00:05Z")
 
                 status, result = asyncio.run(
                     _request(
@@ -174,10 +189,15 @@ class InvestigationServiceTests(unittest.TestCase):
                 self.assertEqual(result["codeVersion"], "sha-real")
                 self.assertEqual(result["configVersion"], "cfg-real")
                 self.assertEqual(result["templateId"], template.template_id)
-                self.assertEqual(result["frameCount"], 1)
+                self.assertEqual(result["frameCount"], 2)
+                self.assertEqual(result["scoredFrameCount"], 1)
+                self.assertEqual(result["missingFrameCount"], 1)
+                self.assertEqual(result["points"][0]["pendingReason"], "core_observations_incomplete")
+                self.assertIsNone(result["points"][0]["group"]["total"])
                 saved = archive.recomputations(EVENT_ID)
                 self.assertEqual(len(saved), 1)
                 self.assertEqual(saved[0]["runId"], result["runId"])
+                self.assertEqual(saved[0]["missingFrameCount"], 1)
 
     def test_investigation_fails_closed_when_archive_or_event_is_missing(self) -> None:
         app = QaEnabledASGI(_base, token="secret")
