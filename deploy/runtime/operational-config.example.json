@@ -6,7 +6,8 @@
     "timeoutMs": 10000,
     "stream": {
       "vehicleNumberColumn": "vehicle_number",
-      "serverColumn": "server"
+      "serverColumn": "server",
+      "timeColumn": "_time"
     },
     "metrics": [
       {
