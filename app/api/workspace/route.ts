@@ -2,6 +2,7 @@ import { desc, eq, sql } from "drizzle-orm";
 
 import { auditEntries, workspaces } from "@/db/schema";
 import { readLocalWorkspace, writeLocalWorkspace } from "@/lib/sqlite-workspace";
+import { normalizeAndValidateWorkspaceState } from "@/lib/workspace-validation";
 
 const localStorage = () => process.env.BLUEWOLF_STORAGE === "sqlite";
 
@@ -43,7 +44,8 @@ export async function PUT(request: Request) {
 
   try {
     const body = await request.json() as { state?: unknown; category?: string; action?: string; detail?: string; expectedRevision?: number };
-    const state = JSON.stringify(body.state ?? {});
+    const normalizedState = normalizeAndValidateWorkspaceState(body.state ?? {});
+    const state = JSON.stringify(normalizedState);
     if (state.length > 750_000) return Response.json({ error: "workspace state is too large" }, { status: 413 });
 
     if (localStorage()) {
@@ -68,6 +70,6 @@ export async function PUT(request: Request) {
     ]);
     return Response.json({ ok: true, revision: nextRevision });
   } catch (error) {
-    return Response.json({ error: errorMessage(error) }, { status: 500 });
+    return Response.json({ error: errorMessage(error) }, { status: 400 });
   }
 }
