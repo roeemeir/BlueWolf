@@ -1,0 +1,33 @@
+name: Blue Wolf IN-01 Influx Mapping
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: bluewolf-in01-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  in01:
+    name: IN-01 — persisted join fields and transformations reach runtime adapter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install web dependencies
+        run: npm ci
+      - name: Verify Workspace to operational runtime config translation
+        run: node --test tests/influx-runtime-config.test.mjs
+      - name: Install Python core
+        working-directory: core
+        run: python -m pip install -e .
+      - name: Verify custom join columns and special mapping against a real adapter sample
+        working-directory: core/tests
+        run: python -m unittest -v test_influx_custom_mapping
