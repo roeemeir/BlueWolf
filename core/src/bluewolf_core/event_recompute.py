@@ -11,6 +11,11 @@ sample and timestamp*. It is never reconstructed from semantic phase or route
 geometry. This lets investigation maps use real WGS84 observations without
 changing or influencing the scoring path.
 
+Detected-route evidence is likewise captured from the exact ``ClosedRoute``
+objects owned by the Core at the event timestamp.  It is reporting metadata
+only: recomputation never derives a route from the navigation trace and never
+feeds report geometry back into scoring.
+
 The original active template id is also captured beside every frame. It is
 metadata only: recomputation still receives an explicit template object. This
 lets a later report reproduce the event using the template the Core actually
@@ -28,6 +33,7 @@ from typing import Any
 from uuid import uuid4
 
 from .config import ScoringConfig
+from .event_route_evidence import SOEventRouteEvidence
 from .so_scoring import SOScoringObservation, score_so_template
 from .so_templates import SOTemplate
 
@@ -129,6 +135,7 @@ class SOEventObservationFrame:
     active_template_id: str | None = None
     pending_reason: str | None = None
     navigation: tuple[SOEventNavigationPoint, ...] = ()
+    routes: tuple[SOEventRouteEvidence, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.event_id:
@@ -153,6 +160,9 @@ class SOEventObservationFrame:
             raise ValueError("navigation frame member ids must be unique")
         if len(navigation_vehicles) != len(set(navigation_vehicles)):
             raise ValueError("navigation frame vehicle identifiers must be unique")
+        route_instances = [item.route_instance_id for item in self.routes]
+        if len(route_instances) != len(set(route_instances)):
+            raise ValueError("route evidence instance ids must be unique per frame")
 
 
 def _finite_score(value: float | None) -> float | None:
@@ -176,6 +186,29 @@ def _navigation_payload(item: SOEventNavigationPoint) -> dict[str, Any]:
         "headingDeg": item.heading_deg,
         "active": item.active,
         "reliability": item.reliability,
+    }
+
+
+def _route_payload(item: SOEventRouteEvidence) -> dict[str, Any]:
+    return {
+        "routeInstanceId": item.route_instance_id,
+        "routeId": item.route_id,
+        "family": item.family,
+        "subtype": item.subtype,
+        "topology": item.topology,
+        "centerLatitude": item.center_latitude_deg,
+        "centerLongitude": item.center_longitude_deg,
+        "lengthM": item.length_m,
+        "longAxisAM": item.long_axis_a_m,
+        "shortAxisBM": item.short_axis_b_m,
+        "orientationDeg": item.orientation_deg,
+        "estimatedPeriodS": item.estimated_period_s,
+        "direction": item.direction,
+        "detectionQuality": item.detection_quality,
+        "centerline": [
+            {"latitude": point.latitude_deg, "longitude": point.longitude_deg}
+            for point in item.centerline_wgs84
+        ],
     }
 
 
@@ -220,6 +253,15 @@ def recompute_so_event(
     timestamps = [frame.sample_time_utc for frame in ordered]
     if len(timestamps) != len(set(timestamps)):
         raise ValueError("recompute frames must have unique timestamps")
+
+    known_route_sets = [frame.routes for frame in ordered if frame.routes]
+    route_evidence: tuple[SOEventRouteEvidence, ...] = ()
+    if known_route_sets:
+        route_evidence = tuple(sorted(known_route_sets[0], key=lambda item: item.route_instance_id))
+        for routes in known_route_sets[1:]:
+            normalized = tuple(sorted(routes, key=lambda item: item.route_instance_id))
+            if normalized != route_evidence:
+                raise ValueError("archived event contains changing detected-route evidence")
 
     points: list[dict[str, Any]] = []
     reason_counts: dict[str, int] = {}
@@ -312,6 +354,7 @@ def recompute_so_event(
         "frameCount": len(ordered),
         "scoredFrameCount": scored_frame_count,
         "missingFrameCount": len(ordered) - scored_frame_count,
+        "routes": [_route_payload(item) for item in route_evidence],
         "summary": {
             "sync": average(group_sync),
             "route": average(group_route),
