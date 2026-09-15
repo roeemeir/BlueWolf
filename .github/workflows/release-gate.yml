@@ -1,0 +1,19 @@
+name: Blue Wolf Release Gate
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  frozen-requirements:
+    name: BW-QA-007 — frozen requirements gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Verify frozen release scope
+        run: node scripts/verify-release-scope.mjs docs/release-scope-2026-09-15.json
