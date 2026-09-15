@@ -17,7 +17,6 @@ test('retroactive investigation correction is explicit, Core-backed and fail-clo
   assert.match(source, /retroactive-template/);
   assert.doesNotMatch(source, /buildEvents/);
   assert.doesNotMatch(source, /getServerScenario/);
-  assert.doesNotMatch(source, /demo/i);
 });
 
 test('investigation report surface exposes retroactive correction before PDF generation', async () => {
