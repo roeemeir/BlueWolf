@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { DEFAULT_INFLUX_MAPPINGS, DEFAULT_WORKSPACE, type InfluxFieldMapping, type WorkspaceState } from "@/lib/bluewolf";
 
 type StorageMode = "cloud" | "local";
+type RuntimeSyncStatus = { synced: boolean; restartRequired: boolean; reason?: string } | null;
 
 type WorkspaceContextValue = {
   state: WorkspaceState;
@@ -117,7 +118,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       });
       if (response.status === 409) { toast.error("הפריט השתנה במקביל. רענן לפני שמירה נוספת; השינויים לא הופעלו.", { id: saveToast }); return false; }
       if (!response.ok) throw new Error("save failed");
-      const payload = await response.json() as { revision?: number };
+      const payload = await response.json() as { revision?: number; runtimeSync?: RuntimeSyncStatus };
       setState(next);
       // The server has committed. A disabled/full browser cache must not turn
       // a successful save into a reported failure or leave the revision stale.
@@ -129,7 +130,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setRevision(payload.revision ?? revision + 1);
       setLastSavedAt(new Date().toISOString());
       setStorageMode("cloud");
-      toast.success("נשמר והפך לפעיל", { id: saveToast });
+      if (category === "influx") {
+        if (payload.runtimeSync?.synced) {
+          toast.success(payload.runtimeSync.restartRequired ? "מיפוי Influx נשמר לקונפיגורציית ה־Core; נדרשת הפעלה מחדש של שירות הליבה" : "מיפוי Influx נשמר והוחל", { id: saveToast });
+        } else {
+          toast.warning(`מיפוי Influx נשמר ב־Workspace אך לא הוחל על ה־Core${payload.runtimeSync?.reason ? `: ${payload.runtimeSync.reason}` : " בפריסה זו"}`, { id: saveToast });
+        }
+      } else {
+        toast.success("נשמר והפך לפעיל", { id: saveToast });
+      }
       return true;
     } catch {
       setStorageMode("local");
