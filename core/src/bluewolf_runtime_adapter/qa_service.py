@@ -1,6 +1,6 @@
 """ASGI wrapper adding truth-backed QA and investigation execution.
 
-The wrapper delegates live-runtime paths unchanged.  QA executes the real Core
+The wrapper delegates live-runtime paths unchanged. QA executes the real Core
 self-test. Investigation reads immutable SO event evidence captured by the Core
 and recomputes through ``score_so_template``; no demo fallback is allowed.
 """
@@ -175,12 +175,20 @@ class QaEnabledASGI:
             await self._send_json(send, 400, {"error": "serverId must be a non-negative integer"})
             return
         events = await asyncio.to_thread(archive.list_events, server_id)
+        pipeline = _pipeline_for_server(server_id)
+        templates = []
+        if pipeline is not None:
+            templates = [
+                {"id": entry.template.template_id, "name": entry.template.name}
+                for entry in pipeline.producer.runtime.bank.entries
+            ]
         await self._send_json(
             send,
             200,
             {
                 "schemaVersion": "bluewolf.investigation-events.v1",
                 "serverId": server_id,
+                "templates": templates,
                 "events": list(events),
             },
             surface=b"core-event-archive",
