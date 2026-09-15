@@ -62,6 +62,90 @@ test('report data contract preserves Hebrew metadata and refuses provenance mism
   }), /code version mismatch/);
 });
 
+test('REP-01 renderer sends Hebrew metadata to RTL canvas and paginates long detail tables', async () => {
+  const originalDocument = globalThis.document;
+  const rendered = [];
+  const canvases = [];
+  class FakeContext {
+    constructor() {
+      this.direction = 'ltr';
+      this.textAlign = 'left';
+      this.font = '';
+      this.fillStyle = '#000';
+      this.strokeStyle = '#000';
+      this.lineWidth = 1;
+      this.textBaseline = 'alphabetic';
+    }
+    save() {}
+    restore() {}
+    fillRect() {}
+    beginPath() {}
+    moveTo() {}
+    lineTo() {}
+    stroke() {}
+    roundRect() {}
+    fill() {}
+    measureText(value) { return { width: String(value).length * 10 }; }
+    fillText(value) { rendered.push({ text: String(value), direction: this.direction, align: this.textAlign, font: this.font }); }
+  }
+  class FakeCanvas {
+    constructor() { this.width = 0; this.height = 0; this.context = new FakeContext(); canvases.push(this); }
+    getContext(kind) { return kind === '2d' ? this.context : null; }
+    toDataURL() { return `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64')}`; }
+  }
+  globalThis.document = {
+    fonts: { ready: Promise.resolve() },
+    createElement(name) { if (name !== 'canvas') throw new Error(`unexpected element ${name}`); return new FakeCanvas(); },
+  };
+  try {
+    const result = recomputePayload();
+    result.rootCauses = Array.from({ length: 18 }, (_, index) => ({ reason: `reason-${index + 1}`, occurrences: index + 1 }));
+    result.points[0].members = Array.from({ length: 65 }, (_, index) => ({
+      memberId: `v${index + 1}`,
+      routeInstanceId: `r${index + 1}`,
+      slotId: `slot-${index + 1}`,
+      expectedPhase: (index % 4) / 4,
+      positionErrorCycle: 0.01,
+      valid: true,
+      sync: 88,
+      route: 91,
+      total: 89,
+      primaryReason: 'so_template_phase',
+    }));
+    result.points[0].navigation = Array.from({ length: 65 }, (_, index) => ({
+      memberId: `v${index + 1}`,
+      vehicleIdentifier: 1000 + index,
+      latitude: 32 + index * 0.00001,
+      longitude: 34.8 + index * 0.00001,
+      altitudeM: 10,
+      velocityNorthMps: 1,
+      velocityEastMps: 0,
+      headingDeg: 0,
+      active: true,
+      reliability: 1,
+    }));
+    const report = {
+      serverId: 7,
+      from: '2026-09-15T06:00:00Z',
+      to: '2026-09-15T07:00:00Z',
+      generatedAt: '2026-09-15T07:01:00Z',
+      events: [{ result, arena: 'זירה צפונית', note: 'טקסט תחקור בעברית ללא חיתוך' }],
+    };
+    const pdf = await browserPdf.buildInvestigationPdfBrowser(report);
+    const latin = Buffer.from(pdf).toString('latin1');
+    const count = Number(latin.match(/\/Count (\d+)/)?.[1] || 0);
+    assert.ok(count >= 5, `expected long report to paginate to at least five pages, got ${count}`);
+    assert.equal(canvases.length, count);
+    assert.ok(rendered.some((item) => item.text.includes('זאב כחול — דוח תחקור הנדסי') && item.direction === 'rtl'));
+    assert.ok(rendered.some((item) => item.text.includes('זירה צפונית') && item.direction === 'rtl'));
+    assert.ok(rendered.some((item) => item.text.includes('טקסט תחקור בעברית ללא חיתוך') && item.direction === 'rtl'));
+    assert.ok(rendered.some((item) => item.text.includes('רכב v65') && item.direction === 'rtl'));
+  } finally {
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+  }
+});
+
 test('REP-01 renderer is local, RTL-first, Hebrew-bearing, paginated, and avoids the legacy ASCII replacement path', async () => {
   const source = await readFile('lib/investigation-pdf-browser.ts', 'utf8');
   const panel = await readFile('components/bluewolf/investigation-report-panel.tsx', 'utf8');
