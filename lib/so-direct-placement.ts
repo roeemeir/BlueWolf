@@ -1,4 +1,7 @@
 import type { SoRelation, SoRouteKind } from "@/lib/bluewolf";
+import { SO_DIRECT_PHASES } from "@/lib/so-geometry";
+
+export { soPhasesForRoute, soSmilePoses, type SoSmilePose } from "@/lib/so-geometry";
 
 export type SoDirection = "forward" | "reverse";
 
@@ -7,18 +10,6 @@ export type SoDirectPlacement = {
   phase: number;
   typeId: string;
   direction: SoDirection;
-};
-
-export type SoSmilePose = {
-  routeIndex: number;
-  rotationDeg: number;
-  offsetX: number;
-  offsetY: number;
-};
-
-export const SO_DIRECT_PHASES: Record<SoRouteKind, readonly number[]> = {
-  single: [0, 0.5],
-  double: [0, 0.25, 0.5, 0.75],
 };
 
 function key(chain: readonly SoRouteKind[]) {
@@ -61,27 +52,9 @@ export function generateUniqueSoOrders(singleCount: number, doubleCount: number)
   return [...results.values()].sort((a, b) => key(a).localeCompare(key(b)));
 }
 
-export function soSmilePoses(count: number, spacing = 150): SoSmilePose[] {
-  if (!Number.isInteger(count) || count < 1) return [];
-  const center = (count - 1) / 2;
-  return Array.from({ length: count }, (_, routeIndex) => {
-    const relative = routeIndex - center;
-    return {
-      routeIndex,
-      rotationDeg: relative * 30,
-      offsetX: relative * spacing,
-      offsetY: Math.abs(relative) * Math.abs(relative) * 18,
-    };
-  });
-}
-
 function normalizePhase(value: number) {
   const normalized = ((value % 1) + 1) % 1;
   return Math.round(normalized * 1000) / 1000;
-}
-
-export function soPhasesForRoute(kind: SoRouteKind) {
-  return SO_DIRECT_PHASES[kind];
 }
 
 export function placeSoVehicle(
