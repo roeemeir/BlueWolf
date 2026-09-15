@@ -95,19 +95,22 @@ test("late history bootstrap cannot overwrite a newer live snapshot", () => {
   assert.equal(rows.at(-1).groups[0].total, 90);
 });
 
-test("Web history retention is based on 30 minutes rather than point count", () => {
+test("Web history retention covers the full 120 minute operator window", () => {
   history.applyLiveRuntimeHistory("1", [
-    point("2026-09-09T11:59:59.000Z", 60),
-    point("2026-09-09T12:00:00.000Z", 70),
-    point("2026-09-09T12:15:00.000Z", 80),
-    point("2026-09-09T12:30:00.000Z", 90),
+    point("2026-09-09T09:59:59.000Z", 55),
+    point("2026-09-09T10:00:00.000Z", 60),
+    point("2026-09-09T10:30:00.000Z", 70),
+    point("2026-09-09T11:00:00.000Z", 80),
+    point("2026-09-09T12:00:00.000Z", 90),
   ]);
   const rows = history.getLiveRuntimeHistory("1");
   assert.deepEqual(rows.map((item) => item.observedAt), [
+    "2026-09-09T10:00:00.000Z",
+    "2026-09-09T10:30:00.000Z",
+    "2026-09-09T11:00:00.000Z",
     "2026-09-09T12:00:00.000Z",
-    "2026-09-09T12:15:00.000Z",
-    "2026-09-09T12:30:00.000Z",
   ]);
+  assert.equal(history.LIVE_RUNTIME_HISTORY_WINDOW_MS, 120 * 60 * 1000);
 });
 
 test("unavailable fallback snapshots are not appended to operational history", () => {
