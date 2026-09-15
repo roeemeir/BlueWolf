@@ -2,6 +2,24 @@ export const INVESTIGATION_EVENTS_SCHEMA = "bluewolf.investigation-events.v1" as
 export const EVENT_RECOMPUTE_SCHEMA = "bluewolf.event-recompute.v1" as const;
 
 export type InvestigationTemplate = { id: string; name: string };
+export type EventLifecycleStatus = "unknown" | "active" | "finalizing" | "closed";
+export type EventLifecycleChange = {
+  occurredAt: string;
+  kind: string;
+  serverId: number;
+  groupId: string;
+  details: Record<string, unknown>;
+};
+export type EventLifecycle = {
+  status: EventLifecycleStatus;
+  openedAt: string | null;
+  openingReason: string | null;
+  endedAt: string | null;
+  endingReason: string | null;
+  finalizeAt: string | null;
+  closedAt: string | null;
+  changes: EventLifecycleChange[];
+};
 
 export type InvestigationEventIndex = {
   eventId: string;
@@ -11,6 +29,7 @@ export type InvestigationEventIndex = {
   endAt: string;
   frameCount: number;
   activeTemplateId: string | null;
+  lifecycle: EventLifecycle;
 };
 
 export type InvestigationEventList = {
@@ -89,6 +108,7 @@ export type EventRecomputeResult = {
   scoredFrameCount: number;
   missingFrameCount: number;
   routes: RecomputedRoute[];
+  lifecycle: EventLifecycle;
   summary: { sync: number | null; route: number | null; total: number | null };
   rootCauses: { reason: string; occurrences: number }[];
   points: EventRecomputePoint[];
@@ -98,56 +118,81 @@ function object(value: unknown, name: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${name} must be an object`);
   return value as Record<string, unknown>;
 }
-
 function text(value: unknown, name: string): string {
   if (typeof value !== "string" || !value) throw new Error(`${name} is missing`);
   return value;
 }
-
 function optionalText(value: unknown, name: string): string | null {
   if (value === null || value === undefined) return null;
   return text(value, name);
 }
-
 function integer(value: unknown, name: string): number {
   if (!Number.isInteger(value) || Number(value) < 0) throw new Error(`${name} must be a non-negative integer`);
   return Number(value);
 }
-
 function time(value: unknown, name: string): string {
   const result = text(value, name);
   if (!Number.isFinite(Date.parse(result))) throw new Error(`${name} is invalid`);
   return result;
 }
-
+function optionalTime(value: unknown, name: string): string | null {
+  if (value === null || value === undefined) return null;
+  return time(value, name);
+}
 function score(value: unknown, name: string): number | null {
   if (value === null) return null;
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100) throw new Error(`${name} must be null or in [0,100]`);
   return value;
 }
-
 function finite(value: unknown, name: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${name} must be finite`);
   return value;
 }
-
 function positive(value: unknown, name: string): number {
   const result = finite(value, name);
   if (result <= 0) throw new Error(`${name} must be positive`);
   return result;
 }
-
 function finiteOrNull(value: unknown, name: string): number | null {
   if (value === null || value === undefined) return null;
   return finite(value, name);
 }
-
 function wgs84(latitudeValue: unknown, longitudeValue: unknown, name: string) {
   const latitude = finite(latitudeValue, `${name} latitude`);
   const longitude = finite(longitudeValue, `${name} longitude`);
   if (latitude < -90 || latitude > 90) throw new Error(`${name} latitude is outside WGS84 range`);
   if (longitude < -180 || longitude > 180) throw new Error(`${name} longitude is outside WGS84 range`);
   return { latitude, longitude };
+}
+function lifecycle(value: unknown, name: string): EventLifecycle {
+  if (value === undefined || value === null) {
+    return { status: "unknown", openedAt: null, openingReason: null, endedAt: null, endingReason: null, finalizeAt: null, closedAt: null, changes: [] };
+  }
+  const row = object(value, name);
+  const status = text(row.status, `${name} status`) as EventLifecycleStatus;
+  if (!["unknown", "active", "finalizing", "closed"].includes(status)) throw new Error(`${name} status is invalid`);
+  if (!Array.isArray(row.changes)) throw new Error(`${name} changes must be an array`);
+  const changes = row.changes.map((raw, index) => {
+    const change = object(raw, `${name} change ${index + 1}`);
+    const details = object(change.details, `${name} change details`);
+    return {
+      occurredAt: time(change.occurredAt, `${name} occurredAt`),
+      kind: text(change.kind, `${name} kind`),
+      serverId: integer(change.serverId, `${name} serverId`),
+      groupId: text(change.groupId, `${name} groupId`),
+      details: { ...details },
+    };
+  });
+  return {
+    status,
+    openedAt: optionalTime(row.openedAt, `${name} openedAt`),
+    openingReason: optionalText(row.openingReason, `${name} openingReason`),
+    endedAt: optionalTime(row.endedAt, `${name} endedAt`),
+    endingReason: optionalText(row.endingReason, `${name} endingReason`),
+    finalizeAt: optionalTime(row.finalizeAt, `${name} finalizeAt`),
+    closedAt: optionalTime(row.closedAt, `${name} closedAt`),
+    changes,
+  };
 }
 
 export function normalizeInvestigationEvents(value: unknown): InvestigationEventList {
@@ -173,6 +218,7 @@ export function normalizeInvestigationEvents(value: unknown): InvestigationEvent
       endAt: time(event.endAt, "endAt"),
       frameCount: integer(event.frameCount, "frameCount"),
       activeTemplateId: optionalText(event.activeTemplateId, "activeTemplateId"),
+      lifecycle: lifecycle(event.lifecycle, "event lifecycle"),
     };
   });
   return { schemaVersion: INVESTIGATION_EVENTS_SCHEMA, serverId, templates, events };
@@ -236,15 +282,9 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
       const member = object(raw, `member ${memberIndex + 1}`);
       if (typeof member.valid !== "boolean") throw new Error("member valid must be boolean");
       return {
-        memberId: text(member.memberId, "memberId"),
-        routeInstanceId: text(member.routeInstanceId, "routeInstanceId"),
-        slotId: text(member.slotId, "slotId"),
-        expectedPhase: finite(member.expectedPhase, "expectedPhase"),
-        positionErrorCycle: finite(member.positionErrorCycle, "positionErrorCycle"),
-        valid: member.valid,
-        sync: score(member.sync, "member sync"),
-        route: score(member.route, "member route"),
-        total: score(member.total, "member total"),
+        memberId: text(member.memberId, "memberId"), routeInstanceId: text(member.routeInstanceId, "routeInstanceId"), slotId: text(member.slotId, "slotId"),
+        expectedPhase: finite(member.expectedPhase, "expectedPhase"), positionErrorCycle: finite(member.positionErrorCycle, "positionErrorCycle"), valid: member.valid,
+        sync: score(member.sync, "member sync"), route: score(member.route, "member route"), total: score(member.total, "member total"),
         primaryReason: member.primaryReason === null ? null : text(member.primaryReason, "primaryReason"),
       };
     });
@@ -261,62 +301,30 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
       if (reliability < 0 || reliability > 1) throw new Error("navigation reliability must be in [0,1]");
       if (nav.active !== null && typeof nav.active !== "boolean") throw new Error("navigation active must be boolean or null");
       return {
-        memberId: text(nav.memberId, "navigation memberId"),
-        vehicleIdentifier: integer(nav.vehicleIdentifier, "navigation vehicleIdentifier"),
-        latitude,
-        longitude,
-        altitudeM: finiteOrNull(nav.altitudeM, "navigation altitudeM"),
-        velocityNorthMps: finiteOrNull(nav.velocityNorthMps, "navigation velocityNorthMps"),
-        velocityEastMps: finiteOrNull(nav.velocityEastMps, "navigation velocityEastMps"),
-        headingDeg,
-        active: nav.active as boolean | null,
-        reliability,
+        memberId: text(nav.memberId, "navigation memberId"), vehicleIdentifier: integer(nav.vehicleIdentifier, "navigation vehicleIdentifier"), latitude, longitude,
+        altitudeM: finiteOrNull(nav.altitudeM, "navigation altitudeM"), velocityNorthMps: finiteOrNull(nav.velocityNorthMps, "navigation velocityNorthMps"),
+        velocityEastMps: finiteOrNull(nav.velocityEastMps, "navigation velocityEastMps"), headingDeg, active: nav.active as boolean | null, reliability,
       };
     });
     if (new Set(navigation.map((item) => item.memberId)).size !== navigation.length) throw new Error("navigation member ids must be unique per frame");
     if (new Set(navigation.map((item) => item.vehicleIdentifier)).size !== navigation.length) throw new Error("navigation vehicle identifiers must be unique per frame");
-    const normalizedGroup = {
-      valid: group.valid,
-      sync: score(group.sync, "group sync"),
-      route: score(group.route, "group route"),
-      total: score(group.total, "group total"),
-    };
+    const normalizedGroup = { valid: group.valid, sync: score(group.sync, "group sync"), route: score(group.route, "group route"), total: score(group.total, "group total") };
     if (pendingReason !== null) {
       if (normalizedGroup.valid || normalizedGroup.sync !== null || normalizedGroup.route !== null || normalizedGroup.total !== null) throw new Error("pending point must not contain a valid group score");
       if (members.length !== 0) throw new Error("pending point must not contain recomputed members");
     }
-    return {
-      observedAt: time(point.observedAt, "observedAt"),
-      pendingReason,
-      group: normalizedGroup,
-      members,
-      navigation,
-    };
+    return { observedAt: time(point.observedAt, "observedAt"), pendingReason, group: normalizedGroup, members, navigation };
   });
   const observedMissing = points.filter((point) => point.pendingReason !== null).length;
   if (observedMissing !== missingFrameCount) throw new Error("missingFrameCount does not match pending points");
   return {
     schemaVersion: EVENT_RECOMPUTE_SCHEMA,
-    runId: text(row.runId, "runId"),
-    scenarioId: text(row.scenarioId, "scenarioId"),
-    eventId: text(row.eventId, "eventId"),
-    serverId: integer(row.serverId, "serverId"),
-    groupId: text(row.groupId, "groupId"),
-    templateId: text(row.templateId, "templateId"),
-    templateVersion: text(row.templateVersion, "templateVersion"),
-    codeVersion: text(row.codeVersion, "codeVersion"),
-    configVersion: text(row.configVersion, "configVersion"),
-    startAt: time(row.startAt, "startAt"),
-    endAt: time(row.endAt, "endAt"),
-    frameCount,
-    scoredFrameCount,
-    missingFrameCount,
-    routes,
-    summary: {
-      sync: score(summary.sync, "summary sync"),
-      route: score(summary.route, "summary route"),
-      total: score(summary.total, "summary total"),
-    },
+    runId: text(row.runId, "runId"), scenarioId: text(row.scenarioId, "scenarioId"), eventId: text(row.eventId, "eventId"),
+    serverId: integer(row.serverId, "serverId"), groupId: text(row.groupId, "groupId"), templateId: text(row.templateId, "templateId"),
+    templateVersion: text(row.templateVersion, "templateVersion"), codeVersion: text(row.codeVersion, "codeVersion"), configVersion: text(row.configVersion, "configVersion"),
+    startAt: time(row.startAt, "startAt"), endAt: time(row.endAt, "endAt"), frameCount, scoredFrameCount, missingFrameCount, routes,
+    lifecycle: lifecycle(row.lifecycle, "event lifecycle"),
+    summary: { sync: score(summary.sync, "summary sync"), route: score(summary.route, "summary route"), total: score(summary.total, "summary total") },
     rootCauses,
     points,
   };
