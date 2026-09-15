@@ -150,6 +150,7 @@ def run_browser_regression():
                     assert "34.82" in text_saved and "32.02" in text_saved, text_saved
 
                     route = page.get_by_test_id("route-wkt-path-route-e2e")
+                    route.scroll_into_view_if_needed()
                     box = route.bounding_box()
                     assert box and box["width"] > 5 and box["height"] > 5, "WKT path has no draggable browser geometry"
                     start_x = box["x"] + box["width"] * 0.5
