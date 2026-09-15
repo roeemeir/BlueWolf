@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { DEFAULT_INFLUX_MAPPINGS, DEFAULT_WORKSPACE, type InfluxFieldMapping, type WorkspaceState } from "@/lib/bluewolf";
 
 type StorageMode = "cloud" | "local";
+export type TimeWindowMinutes = 30 | 60 | 90 | 120;
 
 type WorkspaceContextValue = {
   state: WorkspaceState;
@@ -16,6 +17,10 @@ type WorkspaceContextValue = {
   storageMode: StorageMode;
   revision: number;
   lastSavedAt: string | null;
+  timeCursor: number;
+  setTimeCursor: Dispatch<SetStateAction<number>>;
+  timeWindowMinutes: TimeWindowMinutes;
+  setTimeWindowMinutes: Dispatch<SetStateAction<TimeWindowMinutes>>;
 };
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -67,6 +72,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [revision, setRevision] = useState(0);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
   const [workspaceId, setWorkspaceId] = useState("");
+  // Shared view-time contract from BW-OP-013/014. It is intentionally ephemeral:
+  // changing the replay cursor/window must not create a new configuration version.
+  const [timeCursor, setTimeCursor] = useState(92);
+  const [timeWindowMinutes, setTimeWindowMinutes] = useState<TimeWindowMinutes>(30);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,7 +138,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
   }, [revision, workspaceId]);
 
-  const value = useMemo(() => ({ state, setState, save, ready, loadProgress, storageMode, revision, lastSavedAt }), [state, save, ready, loadProgress, storageMode, revision, lastSavedAt]);
+  const value = useMemo(() => ({
+    state,
+    setState,
+    save,
+    ready,
+    loadProgress,
+    storageMode,
+    revision,
+    lastSavedAt,
+    timeCursor,
+    setTimeCursor,
+    timeWindowMinutes,
+    setTimeWindowMinutes,
+  }), [state, save, ready, loadProgress, storageMode, revision, lastSavedAt, timeCursor, timeWindowMinutes]);
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;
 }
 
