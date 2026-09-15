@@ -223,15 +223,71 @@ class ClosedRoute:
             raise ValueError("estimated_period_s must be positive")
         if not 0.0 <= self.detection_quality <= 1.0:
             raise ValueError("detection_quality must be in [0, 1]")
-        if self.center_latitude_deg < -90.0 or self.center_latitude_deg > 90.0:
-            raise ValueError("center_latitude_deg is out of WGS84 range")
-        if self.center_longitude_deg < -180.0 or self.center_longitude_deg > 180.0:
-            raise ValueError("center_longitude_deg is out of WGS84 range")
-        for name in ("center_latitude_deg", "center_longitude_deg", "length_m", "long_axis_a_m", "short_axis_b_m", "orientation_deg", "estimated_period_s", "detection_quality"):
-            _require_finite(name, float(getattr(self, name)))
         component_ids = [component.component_id for component in self.components]
         if len(component_ids) != len(set(component_ids)):
             raise ValueError("route component ids must be unique")
+        if self.subtype is RouteSubtype.DOUBLE_HIPPODROME and self.components:
+            if len(self.components) != 2 or any(
+                component.subtype is not RouteSubtype.HIPPODROME
+                for component in self.components
+            ):
+                raise ValueError(
+                    "Double Hippodrome components must be exactly two Hippodromes"
+                )
+
+
+@dataclass(frozen=True, slots=True)
+class PrimitiveMetrics:
+    """Primitive errors consumed by the score function.
+
+    `position_error` is expressed in degrees for SI and as a fraction of one
+    full cycle for SO.  The synchronization module may emphasize SO turn
+    regions before placing the effective value here; `position_reason` keeps
+    the operator-facing diagnostic without adding a fourth top-level weight.
+    """
+
+    family: RouteFamily
+    position_error: float
+    period_error_ratio: float
+    movement_error_ratio: float
+    distance_error_b_ratio: float
+    tangent_error_deg: float | None
+    curvature_error_ratio: float | None
+    reliability: float
+    speed_fraction: float
+    active: bool | None = True
+    wrong_direction_seconds: float = 0.0
+    position_reason: str = "phase_alignment"
+    diagnostics: Mapping[str, float | str | bool] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "diagnostics", MappingProxyType(dict(self.diagnostics)))
+        for name in (
+            "position_error",
+            "period_error_ratio",
+            "movement_error_ratio",
+            "distance_error_b_ratio",
+            "reliability",
+            "speed_fraction",
+            "wrong_direction_seconds",
+        ):
+            value = float(getattr(self, name))
+            if not isfinite(value) or value < 0:
+                raise ValueError(f"{name} must be finite and non-negative")
+        _require_finite("tangent_error_deg", self.tangent_error_deg)
+        _require_finite("curvature_error_ratio", self.curvature_error_ratio)
+        if self.reliability > 1.0:
+            raise ValueError("reliability must be in [0, 1]")
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentScores:
+    sync_position: float
+    sync_period: float
+    sync_movement: float
+    route_distance: float
+    route_tangent: float | None
+    route_curvature: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,14 +296,9 @@ class VehicleScores:
     sync: float | None
     route: float | None
     total: float | None
-    primary_reason: str | None = None
-
-    def __post_init__(self) -> None:
-        for name in ("sync", "route", "total"):
-            value = getattr(self, name)
-            _require_finite(name, value)
-            if value is not None and not 0.0 <= value <= 100.0:
-                raise ValueError(f"{name} must be in [0, 100]")
+    components: ComponentScores | None
+    primary_reason: str | None
+    reliability: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -263,6 +314,11 @@ class VehicleFrameResult:
     event_id: str | None = None
     route_id: str | None = None
     phase: float | None = None
+    # SO-only geometry-normalized phase used by quarter/template semantics.
+    # `phase` remains the raw/legacy route phase for backward compatibility and
+    # for SI consumers. Figure-8 may legitimately leave semantic_phase=None at
+    # a self-crossing when heading evidence is unavailable. Double Hippodrome
+    # semantic phase is local to the currently active logical component.
     semantic_phase: float | None = None
     active_so_component_id: str | None = None
     scores: VehicleScores | None = None
@@ -310,10 +366,3 @@ class GroupScores:
     total: float | None
     valid_vehicle_count: int
     primary_reason: str | None
-
-    def __post_init__(self) -> None:
-        for name in ("sync", "route", "total"):
-            value = getattr(self, name)
-            _require_finite(name, value)
-            if value is not None and not 0.0 <= value <= 100.0:
-                raise ValueError(f"{name} must be in [0, 100]")
