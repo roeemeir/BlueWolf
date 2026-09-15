@@ -1,6 +1,7 @@
 import { desc, eq, sql } from "drizzle-orm";
 
 import { auditEntries, workspaces } from "@/db/schema";
+import type { InfluxSettings } from "@/lib/bluewolf";
 import { readLocalWorkspace, writeLocalWorkspace } from "@/lib/sqlite-workspace";
 import { normalizeAndValidateWorkspaceState } from "@/lib/workspace-validation";
 
@@ -20,6 +21,11 @@ function errorMessage(error: unknown) {
     return "מסד הנתונים עדיין אינו זמין בפריסה זו.";
   }
   return message;
+}
+
+function influxFromState(value: unknown): InfluxSettings {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !("influx" in value)) throw new Error("influx settings are missing from workspace");
+  return (value as { influx: InfluxSettings }).influx;
 }
 
 export async function GET(request: Request) {
@@ -49,8 +55,17 @@ export async function PUT(request: Request) {
     if (state.length > 750_000) return Response.json({ error: "workspace state is too large" }, { status: 413 });
 
     if (localStorage()) {
+      let runtimeSync = null;
+      if ((body.category ?? "") === "influx") {
+        try {
+          const { syncInfluxToOperationalConfig } = await import("@/lib/influx-runtime-config");
+          runtimeSync = await syncInfluxToOperationalConfig(influxFromState(normalizedState));
+        } catch (error) {
+          return Response.json({ error: `Influx runtime config sync failed: ${errorMessage(error)}` }, { status: 502 });
+        }
+      }
       const result = await writeLocalWorkspace(workspaceId, state, (body.category ?? "configuration").slice(0,40), (body.action ?? "save").slice(0,80), (body.detail ?? "").slice(0,500), body.expectedRevision);
-      return Response.json(result, { status: result.conflict ? 409 : 200 });
+      return Response.json({ ...result, runtimeSync }, { status: result.conflict ? 409 : 200 });
     }
     const { getDb } = await import("@/db");
     const db = getDb();
@@ -68,7 +83,7 @@ export async function PUT(request: Request) {
         detail: (body.detail ?? "").slice(0, 500),
       }),
     ]);
-    return Response.json({ ok: true, revision: nextRevision });
+    return Response.json({ ok: true, revision: nextRevision, runtimeSync: null });
   } catch (error) {
     return Response.json({ error: errorMessage(error) }, { status: 400 });
   }
