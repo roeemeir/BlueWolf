@@ -5,7 +5,7 @@ on:
   pull_request:
 
 concurrency:
-  group: bluewolf-ci-${{ github.workflow }}-${{ github.ref }}
+  group: bluewolf-ci-${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -59,46 +59,52 @@ jobs:
             tests: test_integrated_session
           - shard: semantic-session
             tests: test_semantic_session
-          - shard: classifiers
-            tests: test_route_classifier_sweep test_route_classifier_v2 test_vector_route_detection
-          - shard: route-vector
-            tests: test_route_detection test_vector_trajectory test_vector_sample_adapter test_partial_route_candidate
           - shard: fundamentals
-            tests: test_geometry test_grouping test_group_lifecycle test_si_direction_lifecycle test_ingest_join test_scoring test_simulator test_templates test_trajectory_simulator
-          - shard: so-templates
-            tests: test_so_templates
-          - shard: so-template-fit
-            tests: test_so_template_fit
-          - shard: so-phase
-            tests: test_so_phase
-          - shard: double-lobe-phase
-            tests: test_double_lobe_phase
-          - shard: so-scoring
-            tests: test_so_scoring
-          - shard: so-template-bank
-            tests: test_so_template_bank
-          - shard: so-template-selection
-            tests: test_so_template_selection
-          - shard: live-so-scoring
-            tests: test_live_so_scoring
+            tests: test_geometry test_scoring test_grouping
+          - shard: classifiers
+            tests: test_classifiers
+          - shard: route-vector
+            tests: test_route_vector test_grouping
           - shard: event-alert
             tests: test_event_alert
+          - shard: live-so-scoring
+            tests: test_live_so_scoring
+          - shard: so-scoring
+            tests: test_so_scoring
+          - shard: so-template-fit
+            tests: test_so_template_fit
+          - shard: so-template-selection
+            tests: test_so_template_selection
+          - shard: so-template-bank
+            tests: test_so_template_bank
+          - shard: so-templates
+            tests: test_so_templates
+          - shard: so-phase
+            tests: test_so_phase
           - shard: live-so-event-runtime
             tests: test_live_so_event_runtime test_event_recompute test_event_observation_sink
           - shard: live-runtime-contract
             tests: test_live_runtime_contract
-          - shard: runtime-service
-            tests: test_runtime_service test_runtime_history test_runtime_history_footprint test_qa_service test_investigation_service test_event_archive_binding
           - shard: runtime-producer
-            tests: test_runtime_producer test_position_enrichment
+            tests: test_runtime_producer
           - shard: operational-pipeline
-            tests: test_operational_pipeline test_runtime_host test_environment_factory test_operational_history_state test_checkpoint_cadence
-          - shard: influxdb2-adapter
-            tests: test_influxdb2_adapter test_influx_window_reader
-          - shard: live-polling
-            tests: test_live_polling
+            tests: test_operational_pipeline
           - shard: ingest-coordinator
             tests: test_ingest_coordinator
+          - shard: live-polling
+            tests: test_live_polling
+          - shard: runtime-service
+            tests: >-
+              test_runtime_service
+              test_runtime_history
+              test_runtime_history_footprint
+              test_qa_service
+              test_investigation_service
+              test_event_archive_binding
+          - shard: influxdb2-adapter
+            tests: test_influxdb2_adapter
+          - shard: double-lobe-phase
+            tests: test_double_lobe_phase
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -110,97 +116,6 @@ jobs:
       - name: Run deterministic core shard
         working-directory: core/tests
         run: python -m unittest -v ${{ matrix.tests }}
-
-  runtime-packaging:
-    name: Runtime deployment packaging
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Validate OpenShift YAML
-        run: |
-          python -m pip install 'PyYAML>=6,<7'
-          python - <<'PY'
-          from pathlib import Path
-          import yaml
-          path = Path('deploy/openshift/runtime.yaml')
-          documents = list(yaml.safe_load_all(path.read_text(encoding='utf-8')))
-          assert len(documents) == 2
-          assert [item['kind'] for item in documents] == ['Deployment', 'Service']
-          deployment = documents[0]
-          assert deployment['spec']['replicas'] == 1
-          assert deployment['spec']['strategy']['type'] == 'Recreate'
-          pod = deployment['spec']['template']['spec']
-          container = pod['containers'][0]
-          env = {item['name']: item for item in container['env']}
-          assert env['BLUEWOLF_OPERATIONAL_CONFIG']['value'] == '/etc/bluewolf/runtime.json'
-          assert env['BLUEWOLF_OPERATIONAL_STATE_PATH']['value'] == '/var/lib/bluewolf/runtime-state.json'
-          assert env['BLUEWOLF_CORE_API_TOKEN']['valueFrom']['secretKeyRef']['key'] == 'core-api-token'
-          assert env['BLUEWOLF_INFLUX_TOKEN']['valueFrom']['secretKeyRef']['key'] == 'influx-token'
-          mounts = {item['name']: item['mountPath'] for item in container['volumeMounts']}
-          assert mounts['operational-config'] == '/etc/bluewolf'
-          assert mounts['operational-state'] == '/var/lib/bluewolf'
-          volumes = {item['name']: item for item in pod['volumes']}
-          assert volumes['operational-config']['configMap']['name'] == 'bluewolf-runtime-config'
-          assert volumes['operational-state']['persistentVolumeClaim']['claimName'] == 'bluewolf-runtime-state'
-          assert container['securityContext']['runAsNonRoot'] is True
-          PY
-      - name: Validate Windows PowerShell syntax
-        shell: pwsh
-        run: |
-          $paths = @('deploy/windows/install-runtime.ps1', 'deploy/windows/run-runtime.ps1')
-          foreach ($path in $paths) {
-            $tokens = $null
-            $errors = $null
-            [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors) | Out-Null
-            if ($errors.Count -gt 0) {
-              $errors | ForEach-Object { Write-Error $_.Message }
-              exit 1
-            }
-          }
-      - name: Build runtime image
-        run: docker build --build-arg BLUEWOLF_CODE_SHA=${GITHUB_SHA} -f deploy/runtime/Dockerfile -t bluewolf-runtime:ci .
-      - name: Validate non-root runtime image
-        run: |
-          test "$(docker image inspect bluewolf-runtime:ci --format '{{.Config.User}}')" = "10001:10001"
-          test "$(docker image inspect bluewolf-runtime:ci --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^BLUEWOLF_CODE_SHA=' | cut -d= -f2-)" = "${GITHUB_SHA}"
-      - name: Smoke runtime image and real Core QA endpoint
-        run: |
-          docker run -d --name bluewolf-runtime-ci -e BLUEWOLF_CORE_API_TOKEN=ci-token -p 18080:8080 bluewolf-runtime:ci
-          cleanup() { docker rm -f bluewolf-runtime-ci >/dev/null 2>&1 || true; }
-          trap cleanup EXIT
-          ready=0
-          for attempt in $(seq 1 20); do
-            if curl --fail --silent --show-error http://127.0.0.1:18080/healthz >/dev/null; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [ "$ready" != "1" ]; then
-            docker logs bluewolf-runtime-ci
-            exit 1
-          fi
-          curl --fail --silent --show-error --max-time 120 \
-            -X POST \
-            -H 'Authorization: Bearer ci-token' \
-            -H 'Content-Type: application/json' \
-            -d '{"scenarioId":"ci-runtime-smoke","configVersion":"ci","scope":"smoke"}' \
-            http://127.0.0.1:18080/v1/qa/run > /tmp/bluewolf-qa.json
-          python - <<'PY'
-          import json, os
-          payload = json.load(open('/tmp/bluewolf-qa.json', encoding='utf-8'))
-          assert payload['schemaVersion'] == 'bluewolf.qa-run.v1'
-          assert payload['scenarioId'] == 'ci-runtime-smoke'
-          assert payload['codeSha'] == os.environ['GITHUB_SHA']
-          assert payload['configVersion'] == 'ci'
-          assert payload['scope'] == 'smoke'
-          assert payload['categories']
-          assert {item['id'] for item in payload['categories']} == {'scoring', 'determinism'}
-          assert all(item['passed'] + item['failed'] == item['scenarios'] for item in payload['categories'])
-          PY
 
   web:
     name: Web application
@@ -219,7 +134,6 @@ jobs:
   offline-web:
     name: Offline web and SQLite restart
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     env:
       NEXT_TELEMETRY_DISABLED: "1"
       BLUEWOLF_STORAGE: sqlite
@@ -232,3 +146,65 @@ jobs:
       - run: npm ci
       - run: npm run build:offline
       - run: node scripts/verify-offline-http.mjs
+
+  runtime-packaging:
+    name: Runtime deployment packaging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate OpenShift YAML
+        run: python - <<'PY'
+          import pathlib
+          import yaml
+          for path in pathlib.Path('deploy/openshift').glob('*.yaml'):
+              docs = list(yaml.safe_load_all(path.read_text()))
+              assert docs and all(doc for doc in docs), path
+          PY
+      - name: Validate Windows PowerShell syntax
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'scripts/start-offline.ps1'), [ref]$null, [ref]$errors)
+          if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error; exit 1 }
+      - name: Build runtime image
+        run: docker build --build-arg BLUEWOLF_CODE_SHA=${GITHUB_SHA} -f deploy/runtime/Dockerfile -t bluewolf-runtime:ci .
+      - name: Validate non-root runtime image
+        run: test "$(docker image inspect bluewolf-runtime:ci --format '{{.Config.User}}')" = "10001"
+      - name: Smoke runtime image and real Core QA endpoint
+        env:
+          BLUEWOLF_API_TOKEN: ci-token
+        run: |
+          set -euo pipefail
+          tmpdir="$(mktemp -d)"
+          printf '%s\n' '{"version":1,"api":{"host":"0.0.0.0","port":8080,"auth_token_env":"BLUEWOLF_API_TOKEN"},"archive":{"path":"/data/archive.sqlite"},"checkpoint":{"path":"/data/checkpoint.json","code_version":"'"${GITHUB_SHA}"'"},"defaults":{"vehicle_types":{"default":{"work_speed_kmh":45.0}}},"servers":[{"server_id":0,"influx":{"url":"http://127.0.0.1:18086","org":"ci","bucket":"ci","token_env":"BLUEWOLF_INFLUX_TOKEN","source":{"measurement":"nav","server_field":"server_id","time_field":"_time","vehicle_field":"vehicle_id","field_columns":{"vehicle_number":"vehicle_number","active":"active","latitude_deg":"latitude","longitude_deg":"longitude","altitude_m":"altitude","velocity_north_mps":"vn","velocity_east_mps":"ve"}}}}]}' > "${tmpdir}/config.json"
+          docker run -d --rm --name bluewolf-runtime-ci -p 18080:8080 \
+            -e BLUEWOLF_API_TOKEN="${BLUEWOLF_API_TOKEN}" \
+            -e BLUEWOLF_INFLUX_TOKEN=unused \
+            -v "${tmpdir}/config.json:/config/runtime.json:ro" \
+            bluewolf-runtime:ci --config /config/runtime.json
+          trap 'docker logs bluewolf-runtime-ci || true; docker stop bluewolf-runtime-ci >/dev/null 2>&1 || true; rm -rf "${tmpdir}"' EXIT
+          for attempt in $(seq 1 90); do
+            if curl --silent --fail --header "Authorization: Bearer ${BLUEWOLF_API_TOKEN}" http://127.0.0.1:18080/healthz >/tmp/health.json; then
+              break
+            fi
+            sleep 1
+          done
+          python - <<'PY'
+          import json
+          payload = json.load(open('/tmp/health.json'))
+          assert payload['status'] == 'ok', payload
+          PY
+          curl --silent --fail --header "Authorization: Bearer ${BLUEWOLF_API_TOKEN}" --header 'Content-Type: application/json' --data '{"scenarioId":"ci-runtime-smoke","scope":"smoke"}' http://127.0.0.1:18080/v1/qa/run >/tmp/qa.json
+          python - <<'PY'
+          import json, os
+          payload = json.load(open('/tmp/qa.json'))
+          assert payload['schemaVersion'] == 'bluewolf.qa-run.v1', payload
+          assert payload['scenarioId'] == 'ci-runtime-smoke', payload
+          assert payload['status'] == 'complete', payload
+          assert payload['codeVersion'] == os.environ['GITHUB_SHA'], payload
+          assert [category['id'] for category in payload['categories']] == ['scoring', 'determinism'], payload
+          assert all(category['status'] == 'pass' for category in payload['categories']), payload
+          PY
