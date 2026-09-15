@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict';
+import test, { after } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createServer } from 'vite';
+
+const root = process.cwd();
+const dir = mkdtempSync(join(tmpdir(), 'bw-workspace-api-'));
+process.env.BLUEWOLF_STORAGE = 'sqlite';
+process.env.BLUEWOLF_SQLITE_PATH = join(dir, 'workspace.sqlite');
+const vite = await createServer({ appType: 'custom', configFile: false, root, resolve: { alias: { '@': root } }, server: { middlewareMode: true } });
+after(async () => { await vite.close(); rmSync(dir, { recursive: true, force: true }); });
+const route = await vite.ssrLoadModule('/app/api/workspace/route.ts');
+
+const validWkt = 'LINESTRING (34 32, 34.01 32, 34.01 32.01, 34 32)';
+const invalidWkt = 'LINESTRING (34 32, 34.01 32, 34.01 32.01)';
+
+function put(state, expectedRevision) {
+  return route.PUT(new Request('http://bluewolf.local/api/workspace', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ state, category: 'routes', action: 'save-bank', detail: 'wkt-api-regression', expectedRevision }),
+  }));
+}
+
+function get() {
+  return route.GET(new Request('http://bluewolf.local/api/workspace'));
+}
+
+test('invalid WKT is rejected before persistence and cannot erase the last valid geometry', async () => {
+  const first = await put({ routes: [{ id: 'r1', geometry: validWkt }] }, 0);
+  assert.equal(first.status, 200);
+  const firstPayload = await first.json();
+  assert.equal(firstPayload.ok, true);
+  assert.equal(firstPayload.revision, 1);
+
+  const rejected = await put({ routes: [{ id: 'r1', geometry: invalidWkt }] }, 1);
+  assert.equal(rejected.status, 400);
+
+  const read = await get();
+  assert.equal(read.status, 200);
+  const saved = await read.json();
+  assert.equal(saved.revision, 1);
+  assert.equal(saved.state.routes[0].geometry, validWkt);
+  assert.equal(saved.logs.length, 1);
+});
