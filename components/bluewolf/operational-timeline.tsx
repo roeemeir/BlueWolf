@@ -90,6 +90,7 @@ export function OperationalTimeline({
   serverId: string;
   selectedGroupId: string;
   layers: ScoreLayer[];
+  /** Global normalized view-time cursor in the closed interval [0, 100]. */
   cursor: number;
   onCursor: (value: number) => void;
   selectedVehicle?: number | null;
@@ -107,7 +108,8 @@ export function OperationalTimeline({
   const top = 20;
   const bottom = 205;
   const count = history.length;
-  const safeCursor = count === 0 ? 0 : Math.max(0, Math.min(count - 1, cursor));
+  const safeCursorPct = Math.max(0, Math.min(100, cursor));
+  const safeCursorIndex = count <= 1 ? 0 : Math.round((safeCursorPct / 100) * (count - 1));
   const x = (index: number) => count <= 1 ? (left + right) / 2 : left + index / (count - 1) * (right - left);
   const y = (score: number) => bottom - Math.max(0, Math.min(100, score)) / 100 * (bottom - top);
   const events = eventSpans(history, metadata);
@@ -121,7 +123,7 @@ export function OperationalTimeline({
       if (count === 0) return;
       const rect = event.currentTarget.getBoundingClientRect();
       const relative = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-      onCursor(Math.round(relative * (count - 1)));
+      onCursor(Math.round(relative * 100));
     }}
   >
     {[0, 25, 50, 75, 100].map((score) => <g key={score}>
@@ -144,7 +146,7 @@ export function OperationalTimeline({
       />;
     }))}
     {selectedVehicle && <text x="958" y="18" textAnchor="end" className="chart-label">רכב {selectedVehicle}</text>}
-    {count > 0 && <line x1={x(safeCursor)} x2={x(safeCursor)} y1={top} y2={bottom} className="cursor-line" />}
+    {count > 0 && <line x1={x(safeCursorIndex)} x2={x(safeCursorIndex)} y1={top} y2={bottom} className="cursor-line" />}
     <g className="v04-event-bands">{events.map((span) => <g key={`${span.groupId}:${span.id}`}>
       <rect
         x={x(span.from)}
