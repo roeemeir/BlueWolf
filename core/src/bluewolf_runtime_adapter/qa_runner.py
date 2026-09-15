@@ -38,14 +38,26 @@ def _category(category_id: str, title: str, checks: tuple[CheckResult, ...]) -> 
 
 
 def run_deterministic_qa(request: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """Execute real deterministic core checks and return a versioned QA record."""
+    """Execute real deterministic core checks and return a versioned QA record.
+
+    ``scope='smoke'`` skips only the expensive capacity envelope while still
+    exercising the real CoreSession scoring/determinism/restart checks.  The
+    default ``full`` scope keeps the capacity envelope and is what the developer
+    UI requests.
+    """
 
     payload = dict(request or {})
     scenario_id = str(payload.get("scenarioId") or "full-regression")[:120]
     config_version = str(payload.get("configVersion") or "unknown")[:120]
+    scope = str(payload.get("scope") or "full").strip().lower()
+    if scope not in {"full", "smoke"}:
+        raise ValueError("QA scope must be 'full' or 'smoke'")
     started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     started = perf_counter()
-    report = run_self_test(algorithm_version=_code_version())
+    report = run_self_test(
+        algorithm_version=_code_version(),
+        include_capacity=scope == "full",
+    )
     duration_ms = (perf_counter() - started) * 1000.0
     checks = {check.name: check for check in report.checks}
 
@@ -57,14 +69,16 @@ def run_deterministic_qa(request: Mapping[str, Any] | None = None) -> dict[str, 
         for name in ("batch_increment_equivalence", "checkpoint_restart_equivalence")
         if (check := checks.get(name)) is not None
     )
-    capacity = tuple(
-        check for name in ("core_envelope_150_vehicles",) if (check := checks.get(name)) is not None
-    )
     categories = [
         _category("scoring", "Scoring contract", scoring),
         _category("determinism", "Batch / incremental / restart equivalence", determinism),
-        _category("capacity", "Core capacity envelope", capacity),
     ]
+    capacity = tuple(
+        check for name in ("core_envelope_150_vehicles",) if (check := checks.get(name)) is not None
+    )
+    if capacity:
+        categories.append(_category("capacity", "Core capacity envelope", capacity))
+
     # BORDERLINE is not silently converted to pass: only PASSED counts as passed.
     overall_passed = report.overall_status is CheckStatus.PASSED
     return {
@@ -76,6 +90,7 @@ def run_deterministic_qa(request: Mapping[str, Any] | None = None) -> dict[str, 
         "startedAt": started_at,
         "durationMs": round(duration_ms, 3),
         "passed": overall_passed,
+        "scope": scope,
         "categories": categories,
         "details": [
             {
