@@ -41,7 +41,7 @@ export const SO_DIRECT_PHASES: Record<SoRouteKind, readonly number[]> = {
   double: [0, 0.25, 0.5, 0.75],
 };
 
-export function soSmilePoses(count: number, spacing = 170, risePerStep = 22): SoSmilePose[] {
+export function soSmilePoses(count: number, spacing = 245, risePerStep = 22): SoSmilePose[] {
   if (!Number.isInteger(count) || count < 1) return [];
   const center = (count - 1) / 2;
   return Array.from({ length: count }, (_, routeIndex) => {
@@ -90,8 +90,9 @@ export function localHippodromePoints(
   }
   points.push({ x: -halfLeg, y: radius });
 
-  // Left outer semicircle: bottom -> top. There is no turn in the center of Double.
-  for (let index = 1; index <= samples; index += 1) {
+  // Left outer semicircle: bottom -> almost top. The path is closed by SVG Z / sampler,
+  // so the initial point is not duplicated and Double has no synthetic center seam.
+  for (let index = 1; index < samples; index += 1) {
     const angle = Math.PI / 2 + index * Math.PI / samples;
     points.push({ x: -halfLeg + Math.cos(angle) * radius, y: Math.sin(angle) * radius });
   }
@@ -105,7 +106,7 @@ export function pointsToClosedPath(points: readonly SoPoint[]) {
 
 export function buildSoSmileGeometry(chain: readonly SoRouteKind[], options: SoGeometryOptions = {}): SoRouteGeometry[] {
   const center = { x: options.centerX ?? 0, y: options.centerY ?? 0 };
-  const poses = soSmilePoses(chain.length, options.spacing ?? 170, options.risePerStep ?? 22);
+  const poses = soSmilePoses(chain.length, options.spacing ?? 245, options.risePerStep ?? 22);
   return chain.map((kind, routeIndex) => {
     const pose = poses[routeIndex];
     const local = localHippodromePoints(kind, options);
@@ -135,7 +136,8 @@ export function pointAtSoPhase(points: readonly SoPoint[], phase: number, revers
   const closed = [...points, points[0]];
   const lengths = closed.slice(1).map((point, index) => distance(closed[index], point));
   const perimeter = lengths.reduce((sum, value) => sum + value, 0);
-  const directedPhase = reverse ? 1 - normalizedPhase(phase) : normalizedPhase(phase);
+  const basePhase = normalizedPhase(phase);
+  const directedPhase = reverse ? normalizedPhase(1 - basePhase) : basePhase;
   let remaining = directedPhase * perimeter;
 
   for (let index = 0; index < lengths.length; index += 1) {
