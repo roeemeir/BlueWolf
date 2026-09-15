@@ -29,17 +29,27 @@ function buildEvents(server: string): InvestigationEvent[] {
   ];
 }
 
+function cursorForEvent(event: InvestigationEvent, from: string, to: string) {
+  const fromMs = Date.parse(from);
+  const toMs = Date.parse(to);
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || toMs <= fromMs) return 0;
+  const datePrefix = from.slice(0, 10);
+  let eventMs = Date.parse(`${datePrefix}T${event.start}`);
+  if (!Number.isFinite(eventMs)) return 0;
+  if (eventMs < fromMs) eventMs += 24 * 60 * 60 * 1000;
+  return Math.max(0, Math.min(100, Math.round(((eventMs - fromMs) / (toMs - fromMs)) * 100)));
+}
+
 function downloadJson(filename: string, payload: unknown) { const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url); }
 
 export function InvestigationView({ server, onServerChange }: { server: string; onServerChange: (server: string) => void }) {
-  const { state, save } = useWorkspace();
+  const { state, save, timeCursor, setTimeCursor, timeWindowMinutes } = useWorkspace();
   const [arena, setArena] = useState(state.arenas[0] ?? "זירה א׳");
   const [from, setFrom] = useState("2026-09-02T17:00");
   const [to, setTo] = useState("2026-09-02T19:30");
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [familyFilter, setFamilyFilter] = useState<"all" | GroupKey>("all");
-  const [cursor, setCursor] = useState(72);
   const [draftEdits, setDraftEdits] = useState<Record<string, InvestigationEdit>>(() => structuredClone(state.investigationEdits));
   const layers: ScoreLayer[] = ["total", "sync", "route"];
   const allEvents = useMemo(() => buildEvents(server), [server]);
@@ -51,6 +61,10 @@ export function InvestigationView({ server, onServerChange }: { server: string; 
   const best = [...allEvents].sort((a, b) => b.score - a.score)[0];
   const draft = draftEdits[selected.id] ?? state.investigationEdits[selected.id] ?? { note: "", templateId: selected.templateId };
   const updateDraft = (patch: Partial<InvestigationEdit>) => setDraftEdits((current) => ({ ...current, [selected.id]: { ...draft, ...patch } }));
+  const selectEvent = (event: InvestigationEvent) => {
+    setSelectedId(event.id);
+    setTimeCursor(cursorForEvent(event, from, to));
+  };
 
   const loadRange = () => {
     if (new Date(from) >= new Date(to)) { toast.error("זמן ההתחלה חייב להיות מוקדם מזמן הסיום"); return; }
@@ -70,10 +84,10 @@ export function InvestigationView({ server, onServerChange }: { server: string; 
 
     <section className="v04-summary-map glass-panel"><div className="section-toolbar"><div><p className="eyebrow">מפה מסכמת</p><h2>כל האירועים בטווח · {arena}</h2></div><div className="toolbar-actions"><Button variant="outline" size="sm" onClick={() => downloadJson(`bluewolf-${server}-${arena}.json`, { server, arena, from, to, events: allEvents })}><Download />JSON</Button><Button size="sm" onClick={() => { toast.info("הדוח כולל סיכום, מפה, אירועים ו-root causes בלבד"); window.setTimeout(() => window.print(), 250); }}><FileDown />PDF</Button></div></div><EventOverviewMap eventLabels={allEvents.map((_, index) => `E${index + 1}`)} /></section>
 
-    <section className="investigation-timeline glass-panel"><div className="section-toolbar"><div><p className="eyebrow">ציר זמן</p><h2>ציונים בתוך אירועי הקבוצתיות</h2></div><div className="segmented-control"><button type="button" className={familyFilter === "all" ? "active" : ""} onClick={() => setFamilyFilter("all")}>הכול</button><button type="button" className={familyFilter === "si" ? "active" : ""} onClick={() => setFamilyFilter("si")}>SI</button><button type="button" className={familyFilter === "so" ? "active" : ""} onClick={() => setFamilyFilter("so")}>SO</button></div></div><TimelineChart serverId={server} selected={selected.family} layers={layers} cursor={cursor} onCursor={setCursor} fromLabel={from.replace("T", " ")} toLabel={to.replace("T", " ")} /><div className="timeline-footer"><span><CalendarRange />גבולות E1/E2/E3 הם גבולות קבוצתיות</span><span>אין רשימת התראות בדוח</span></div></section>
+    <section className="investigation-timeline glass-panel"><div className="section-toolbar"><div><p className="eyebrow">ציר זמן</p><h2>ציונים בתוך אירועי הקבוצתיות</h2></div><div className="toolbar-actions"><Badge variant="outline">cursor {Math.round(timeCursor)}%</Badge><Badge variant="outline">חלון חי {timeWindowMinutes} דק׳</Badge><div className="segmented-control"><button type="button" className={familyFilter === "all" ? "active" : ""} onClick={() => setFamilyFilter("all")}>הכול</button><button type="button" className={familyFilter === "si" ? "active" : ""} onClick={() => setFamilyFilter("si")}>SI</button><button type="button" className={familyFilter === "so" ? "active" : ""} onClick={() => setFamilyFilter("so")}>SO</button></div></div></div><TimelineChart serverId={server} selected={selected.family} layers={layers} cursor={timeCursor} onCursor={setTimeCursor} fromLabel={from.replace("T", " ")} toLabel={to.replace("T", " ")} /><div className="timeline-footer"><span><CalendarRange />גבולות E1/E2/E3 הם גבולות קבוצתיות</span><span>ה־cursor משותף למפעיל, מפה ותחקור</span><span>אין רשימת התראות בדוח</span></div></section>
 
-    <div className="investigation-main v04-investigation-main"><section className="event-list glass-panel"><div className="list-title"><div><p className="eyebrow">אירועים</p><h2>{events.length} רצפי קבוצתיות</h2></div><Filter /></div><div className="event-list-scroll">{events.map((event) => { const color = groupLineColor[event.family]; return <button type="button" className={`event-row ${selected.id === event.id ? "active" : ""}`} key={event.id} onClick={() => setSelectedId(event.id)}><EventMiniMap family={event.family} color={color} /><div><span>E{allEvents.indexOf(event) + 1} · {event.start}–{event.end}</span><strong>{event.group} · {quality(event.score)}</strong><p>{event.durationMin} דק׳ · {event.members.length} רכבים · {event.rootCauses.length} גורמי שורש</p></div><ScoreRing value={event.score} color={color} size="small" /></button>; })}</div></section>
-      <section className="event-detail glass-panel"><div className="section-toolbar"><div><p className="eyebrow">אירוע נבחר · {selected.start}–{selected.end}</p><h2>{selected.group} · {quality(selected.score)}</h2><p><UsersRound /> {selected.members.join(" · ")}</p></div><div className="event-score-summary"><span>סנכרון <b>{selected.sync}</b></span><span>נתיב <b>{selected.route}</b></span><ScoreRing value={selected.score} color={groupLineColor[selected.family]} /></div></div><div className="investigation-map-wrap"><LiveMap serverId={server} tick={cursor} selectedGroup={selected.family} selectedVehicle={null} showTrace={false} showRoutes showRelations showGrid vehicleTypes={state.vehicleTypes} animate={false} onSelectGroup={() => undefined} onSelectVehicle={() => undefined} />{loading && <MapLoadingOverlay progress={progress} label="מחשב את האירוע" />}</div>
+    <div className="investigation-main v04-investigation-main"><section className="event-list glass-panel"><div className="list-title"><div><p className="eyebrow">אירועים</p><h2>{events.length} רצפי קבוצתיות</h2></div><Filter /></div><div className="event-list-scroll">{events.map((event) => { const color = groupLineColor[event.family]; return <button type="button" className={`event-row ${selected.id === event.id ? "active" : ""}`} key={event.id} onClick={() => selectEvent(event)}><EventMiniMap family={event.family} color={color} /><div><span>E{allEvents.indexOf(event) + 1} · {event.start}–{event.end}</span><strong>{event.group} · {quality(event.score)}</strong><p>{event.durationMin} דק׳ · {event.members.length} רכבים · {event.rootCauses.length} גורמי שורש</p></div><ScoreRing value={event.score} color={color} size="small" /></button>; })}</div></section>
+      <section className="event-detail glass-panel"><div className="section-toolbar"><div><p className="eyebrow">אירוע נבחר · {selected.start}–{selected.end}</p><h2>{selected.group} · {quality(selected.score)}</h2><p><UsersRound /> {selected.members.join(" · ")}</p></div><div className="event-score-summary"><span>סנכרון <b>{selected.sync}</b></span><span>נתיב <b>{selected.route}</b></span><ScoreRing value={selected.score} color={groupLineColor[selected.family]} /></div></div><div className="investigation-map-wrap"><LiveMap serverId={server} tick={timeCursor} selectedGroup={selected.family} selectedVehicle={null} showTrace={false} showRoutes showRelations showGrid vehicleTypes={state.vehicleTypes} animate={false} onSelectGroup={() => undefined} onSelectVehicle={() => undefined} />{loading && <MapLoadingOverlay progress={progress} label="מחשב את האירוע" />}</div>
         <div className="v04-root-causes"><div className="panel-title"><div><p className="eyebrow">Root causes</p><h3>הסיבות שהורידו את הציון</h3></div><Badge variant="outline">מדורג לפי תרומה</Badge></div>{[...selected.rootCauses].sort((a, b) => b.contribution - a.contribution).map((cause, index) => <article key={cause.label}><span className="v04-cause-rank">#{index + 1}</span><div><strong>{cause.label}</strong><small>{cause.sharePct}% מזמן האירוע</small></div><span><TrendingDown />השפעה בעת הופעה <b>−{cause.impactPoints}</b></span><span>תרומה כוללת <b>−{cause.contribution}</b></span></article>)}</div>
         <div className="event-editor v04-event-editor"><div><p className="eyebrow">תיקון תחקור</p><h3>תבנית והערת מפתח</h3></div><label><span>תבנית לחישוב האירוע</span><Select value={draft.templateId} onValueChange={(value) => updateDraft({ templateId: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.templates.filter((item) => item.family.toLowerCase() === selected.family).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></label><Textarea value={draft.note} onChange={(event) => updateDraft({ note: event.target.value })} placeholder="הערת תחקור קצרה" /><Button onClick={saveEdit}><Save />שמור תיקון</Button></div>
       </section></div>
