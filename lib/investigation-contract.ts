@@ -32,6 +32,13 @@ export type RecomputedMember = {
   primaryReason: string | null;
 };
 
+export type EventRecomputePoint = {
+  observedAt: string;
+  pendingReason: string | null;
+  group: { valid: boolean; sync: number | null; route: number | null; total: number | null };
+  members: RecomputedMember[];
+};
+
 export type EventRecomputeResult = {
   schemaVersion: typeof EVENT_RECOMPUTE_SCHEMA;
   runId: string;
@@ -46,13 +53,11 @@ export type EventRecomputeResult = {
   startAt: string;
   endAt: string;
   frameCount: number;
+  scoredFrameCount: number;
+  missingFrameCount: number;
   summary: { sync: number | null; route: number | null; total: number | null };
   rootCauses: { reason: string; occurrences: number }[];
-  points: {
-    observedAt: string;
-    group: { valid: boolean; sync: number | null; route: number | null; total: number | null };
-    members: RecomputedMember[];
-  }[];
+  points: EventRecomputePoint[];
 };
 
 function object(value: unknown, name: string): Record<string, unknown> {
@@ -120,6 +125,11 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
   const summary = object(row.summary, "summary");
   if (!Array.isArray(row.rootCauses)) throw new Error("rootCauses must be an array");
   if (!Array.isArray(row.points)) throw new Error("points must be an array");
+  const frameCount = integer(row.frameCount, "frameCount");
+  const scoredFrameCount = integer(row.scoredFrameCount, "scoredFrameCount");
+  const missingFrameCount = integer(row.missingFrameCount, "missingFrameCount");
+  if (scoredFrameCount + missingFrameCount !== frameCount) throw new Error("scoredFrameCount + missingFrameCount must equal frameCount");
+  if (row.points.length !== frameCount) throw new Error("points length must equal frameCount");
   const rootCauses = row.rootCauses.map((item, index) => {
     const cause = object(item, `rootCause ${index + 1}`);
     return { reason: text(cause.reason, "root cause reason"), occurrences: integer(cause.occurrences, "root cause occurrences") };
@@ -129,6 +139,7 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
     const group = object(point.group, "group score");
     if (typeof group.valid !== "boolean") throw new Error("group valid must be boolean");
     if (!Array.isArray(point.members)) throw new Error("members must be an array");
+    const pendingReason = point.pendingReason === null ? null : text(point.pendingReason, "pendingReason");
     const members = point.members.map((raw, memberIndex) => {
       const member = object(raw, `member ${memberIndex + 1}`);
       if (typeof member.valid !== "boolean") throw new Error("member valid must be boolean");
@@ -145,17 +156,25 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
         primaryReason: member.primaryReason === null ? null : text(member.primaryReason, "primaryReason"),
       };
     });
+    const normalizedGroup = {
+      valid: group.valid,
+      sync: score(group.sync, "group sync"),
+      route: score(group.route, "group route"),
+      total: score(group.total, "group total"),
+    };
+    if (pendingReason !== null) {
+      if (normalizedGroup.valid || normalizedGroup.sync !== null || normalizedGroup.route !== null || normalizedGroup.total !== null) throw new Error("pending point must not contain a valid group score");
+      if (members.length !== 0) throw new Error("pending point must not contain recomputed members");
+    }
     return {
       observedAt: time(point.observedAt, "observedAt"),
-      group: {
-        valid: group.valid,
-        sync: score(group.sync, "group sync"),
-        route: score(group.route, "group route"),
-        total: score(group.total, "group total"),
-      },
+      pendingReason,
+      group: normalizedGroup,
       members,
     };
   });
+  const observedMissing = points.filter((point) => point.pendingReason !== null).length;
+  if (observedMissing !== missingFrameCount) throw new Error("missingFrameCount does not match pending points");
   return {
     schemaVersion: EVENT_RECOMPUTE_SCHEMA,
     runId: text(row.runId, "runId"),
@@ -169,7 +188,9 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
     configVersion: text(row.configVersion, "configVersion"),
     startAt: time(row.startAt, "startAt"),
     endAt: time(row.endAt, "endAt"),
-    frameCount: integer(row.frameCount, "frameCount"),
+    frameCount,
+    scoredFrameCount,
+    missingFrameCount,
     summary: {
       sync: score(summary.sync, "summary sync"),
       route: score(summary.route, "summary route"),
