@@ -2,8 +2,9 @@
 
 The operational checkpoint deliberately serializes deterministic Core state, not
 infrastructure callbacks. This binding therefore runs *after* the factory (and
-any checkpoint restoration) and reattaches the observation sink from the same
-``archive.path`` already approved for canonical source-sample retention.
+any checkpoint restoration) and reattaches both observation and lifecycle sinks
+from the same ``archive.path`` already approved for canonical source-sample
+retention.
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
+from .event_lifecycle_archive import SOEventLifecycleArchive
 from .event_observation_archive import SOEventObservationArchive
 from .operational_pipeline import OperationalRuntimeLoop
 
@@ -61,23 +63,37 @@ def event_archive_path_from_config(path: str | os.PathLike[str]) -> Path | None:
     return Path(value).expanduser().resolve(strict=False)
 
 
+def attach_event_archives(
+    loop: OperationalRuntimeLoop,
+    *,
+    config_path: str | os.PathLike[str],
+) -> tuple[SOEventObservationArchive, SOEventLifecycleArchive] | None:
+    """Attach shared observation + lifecycle SQLite archives to every runtime."""
+
+    archive_path = event_archive_path_from_config(config_path)
+    if archive_path is None:
+        return None
+    observation_archive = SOEventObservationArchive(archive_path)
+    lifecycle_archive = SOEventLifecycleArchive(archive_path)
+    for pipeline in loop.pipelines:
+        pipeline.producer.runtime.observation_sink = observation_archive.record_frame
+        pipeline.producer.runtime.lifecycle_sink = lifecycle_archive.record_change
+    return observation_archive, lifecycle_archive
+
+
 def attach_event_observation_archive(
     loop: OperationalRuntimeLoop,
     *,
     config_path: str | os.PathLike[str],
 ) -> SOEventObservationArchive | None:
-    """Attach one shared SQLite archive to every server runtime in ``loop``."""
+    """Backward-compatible wrapper returning the observation archive."""
 
-    archive_path = event_archive_path_from_config(config_path)
-    if archive_path is None:
-        return None
-    archive = SOEventObservationArchive(archive_path)
-    for pipeline in loop.pipelines:
-        pipeline.producer.runtime.observation_sink = archive.record_frame
-    return archive
+    attached = attach_event_archives(loop, config_path=config_path)
+    return None if attached is None else attached[0]
 
 
 __all__ = [
+    "attach_event_archives",
     "attach_event_observation_archive",
     "event_archive_path_from_config",
     "operational_config_fingerprint",
