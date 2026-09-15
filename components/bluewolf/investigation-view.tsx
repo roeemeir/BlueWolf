@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, FileChartColumn, History, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
@@ -13,6 +13,7 @@ import {
   normalizeInvestigationEvents,
   type EventRecomputeResult,
   type InvestigationEventIndex,
+  type InvestigationTemplate,
 } from "@/lib/investigation-contract";
 import { useWorkspace } from "./app-context";
 
@@ -35,7 +36,7 @@ async function requestEvents(server: string) {
     const detail = payload && typeof payload === "object" && "error" in payload ? String((payload as { error: unknown }).error) : `Investigation archive returned ${response.status}`;
     throw new Error(detail);
   }
-  return normalizeInvestigationEvents(payload).events;
+  return normalizeInvestigationEvents(payload);
 }
 
 function Timeline({ result }: { result: EventRecomputeResult }) {
@@ -54,7 +55,7 @@ function Timeline({ result }: { result: EventRecomputeResult }) {
 type EventsState =
   | { kind: "loading"; server: string }
   | { kind: "unavailable"; server: string; detail: string }
-  | { kind: "ready"; server: string; events: InvestigationEventIndex[] };
+  | { kind: "ready"; server: string; events: InvestigationEventIndex[]; templates: InvestigationTemplate[] };
 
 type RecomputeState =
   | { kind: "idle" }
@@ -69,16 +70,21 @@ export function InvestigationView({ server, onServerChange }: { server: string; 
   const [templateId, setTemplateId] = useState("");
   const [note, setNote] = useState("");
   const [recompute, setRecompute] = useState<RecomputeState>({ kind: "idle" });
-  const templates = useMemo(() => state.templates.filter((template) => template.family === "SO"), [state.templates]);
   const visibleState: EventsState = eventsState.server === server ? eventsState : { kind: "loading", server };
   const events = visibleState.kind === "ready" ? visibleState.events : [];
+  const coreTemplates = visibleState.kind === "ready" ? visibleState.templates : [];
   const selectedEvent = events.find((event) => event.eventId === selectedEventId) ?? null;
 
-  const chooseEvent = (eventId: string | null, availableEvents: InvestigationEventIndex[] = events) => {
+  const chooseEvent = (
+    eventId: string | null,
+    availableEvents: InvestigationEventIndex[] = events,
+    availableTemplates: InvestigationTemplate[] = coreTemplates,
+  ) => {
     const nextId = eventId && availableEvents.some((event) => event.eventId === eventId) ? eventId : (availableEvents[0]?.eventId ?? null);
     setSelectedEventId(nextId);
     const existing = nextId ? state.investigationEdits[nextId] : undefined;
-    setTemplateId(existing?.templateId || templates[0]?.id || "");
+    const existingIsActiveCoreTemplate = Boolean(existing?.templateId && availableTemplates.some((template) => template.id === existing.templateId));
+    setTemplateId(existingIsActiveCoreTemplate ? existing!.templateId : (availableTemplates[0]?.id ?? ""));
     setNote(existing?.note ?? "");
     setRecompute({ kind: "idle" });
   };
@@ -87,11 +93,11 @@ export function InvestigationView({ server, onServerChange }: { server: string; 
     setEventsState({ kind: "loading", server });
     try {
       const loaded = await requestEvents(server);
-      setEventsState({ kind: "ready", server, events: loaded });
-      chooseEvent(selectedEventId, loaded);
+      setEventsState({ kind: "ready", server, events: loaded.events, templates: loaded.templates });
+      chooseEvent(selectedEventId, loaded.events, loaded.templates);
     } catch (error) {
       setEventsState({ kind: "unavailable", server, detail: error instanceof Error ? error.message : "Investigation archive unavailable" });
-      chooseEvent(null, []);
+      chooseEvent(null, [], []);
     }
   };
 
@@ -101,11 +107,12 @@ export function InvestigationView({ server, onServerChange }: { server: string; 
       try {
         const loaded = await requestEvents(server);
         if (cancelled) return;
-        setEventsState({ kind: "ready", server, events: loaded });
-        const nextId = loaded[0]?.eventId ?? null;
+        setEventsState({ kind: "ready", server, events: loaded.events, templates: loaded.templates });
+        const nextId = loaded.events[0]?.eventId ?? null;
         setSelectedEventId(nextId);
         const existing = nextId ? state.investigationEdits[nextId] : undefined;
-        setTemplateId(existing?.templateId || templates[0]?.id || "");
+        const existingIsActiveCoreTemplate = Boolean(existing?.templateId && loaded.templates.some((template) => template.id === existing.templateId));
+        setTemplateId(existingIsActiveCoreTemplate ? existing!.templateId : (loaded.templates[0]?.id ?? ""));
         setNote(existing?.note ?? "");
         setRecompute({ kind: "idle" });
       } catch (error) {
@@ -117,7 +124,7 @@ export function InvestigationView({ server, onServerChange }: { server: string; 
     };
     void bootstrap();
     return () => { cancelled = true; };
-    // The server boundary controls archive retrieval. Workspace drafts are read when the async result arrives.
+    // The server boundary controls archive retrieval. Workspace drafts are read after the async Core response arrives.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [server]);
 
@@ -160,8 +167,9 @@ export function InvestigationView({ server, onServerChange }: { server: string; 
     {visibleState.kind === "loading" && <section className="glass-panel empty-state" style={{ padding: 32 }}><History /><strong>טוען event evidence…</strong><span>אין אחוז התקדמות ללא telemetry אמיתי.</span></section>}
     {visibleState.kind === "unavailable" && <section className="glass-panel empty-state" style={{ padding: 32 }}><AlertTriangle /><strong>ארכיון התחקור לא זמין</strong><span>{visibleState.detail}</span></section>}
     {visibleState.kind === "ready" && events.length === 0 && <section className="glass-panel empty-state" style={{ padding: 32 }}><ShieldCheck /><strong>אין אירועי SO שמורים</strong><span>לא מוצגים אירועי demo. לאחר שה-Core ישמור evidence, האירועים יופיעו כאן.</span></section>}
+    {visibleState.kind === "ready" && events.length > 0 && coreTemplates.length === 0 && <section className="glass-panel empty-state" style={{ padding: 24, marginBottom: 16 }}><AlertTriangle /><strong>בנק תבניות Core לא זמין לשרת</strong><span>ניתן לראות אירועים, אך recomputation מושבת עד שה־runtime יחזיר template bank פעיל.</span></section>}
 
-    {visibleState.kind === "ready" && events.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 340px) minmax(0, 1fr)", gap: 16 }}><aside className="glass-panel" style={{ padding: 14 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}><strong>אירועים</strong><Badge variant="outline">{events.length}</Badge></div><div style={{ display: "grid", gap: 8 }}>{events.map((event) => <button key={event.eventId} type="button" onClick={() => chooseEvent(event.eventId)} className={`event-list-item ${event.eventId === selectedEventId ? "active" : ""}`} style={{ textAlign: "right", width: "100%" }}><strong>{event.groupId}</strong><span>{formatTime(event.startAt)}</span><small>{event.frameCount} Core frames</small></button>)}</div></aside><section className="glass-panel" style={{ padding: 18 }}>{selectedEvent ? <><div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}><div><p className="eyebrow">{selectedEvent.eventId}</p><h3>קבוצה {selectedEvent.groupId}</h3><p>{formatTime(selectedEvent.startAt)} — {formatTime(selectedEvent.endAt)} · {selectedEvent.frameCount} frames</p></div><Badge variant="outline"><FileChartColumn />SO evidence</Badge></div><div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) minmax(260px, 1fr)", gap: 14, marginTop: 16 }}><label style={{ display: "grid", gap: 6 }}><span>תבנית לחישוב מחדש</span><Select value={templateId} onValueChange={(value) => { setTemplateId(value); setRecompute({ kind: "idle" }); }}><SelectTrigger><SelectValue placeholder="בחר תבנית SO" /></SelectTrigger><SelectContent>{templates.map((template) => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}</SelectContent></Select><small>הבחירה היא draft בלבד עד שה-Core מחזיר recomputation תקף.</small></label><label style={{ display: "grid", gap: 6 }}><span>הערת תחקור</span><Textarea value={note} onChange={(event) => setNote(event.target.value)} rows={4} placeholder="הערה ידנית נשמרת בנפרד מהציון" /></label></div><div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}><Button onClick={applyTemplate} disabled={!templateId || recompute.kind === "running"}><Play />{recompute.kind === "running" ? "מחשב מחדש…" : "החל תבנית וחשב מחדש"}</Button><Button variant="outline" onClick={saveNoteOnly}>שמור הערה בלבד</Button></div>{recompute.kind === "idle" && <div className="empty-state" style={{ marginTop: 18 }}><History /><strong>recompute not run</strong><span>הציון לא משתנה עד להרצת Core אמיתית.</span></div>}{recompute.kind === "running" && <div className="empty-state" style={{ marginTop: 18 }}><ShieldCheck /><strong>Core recomputation running</strong><span>אין progress מומצא; ממתין לתוצאה מלאה.</span></div>}{recompute.kind === "error" && <div className="empty-state" style={{ marginTop: 18 }}><AlertTriangle /><strong>החישוב מחדש נכשל</strong><span>{recompute.detail}</span></div>}{recompute.kind === "complete" && <RecomputeResultView state={recompute} />}</> : <div className="empty-state"><History /><strong>בחר אירוע</strong></div>}</section></div>}
+    {visibleState.kind === "ready" && events.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 340px) minmax(0, 1fr)", gap: 16 }}><aside className="glass-panel" style={{ padding: 14 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}><strong>אירועים</strong><Badge variant="outline">{events.length}</Badge></div><div style={{ display: "grid", gap: 8 }}>{events.map((event) => <button key={event.eventId} type="button" onClick={() => chooseEvent(event.eventId)} className={`event-list-item ${event.eventId === selectedEventId ? "active" : ""}`} style={{ textAlign: "right", width: "100%" }}><strong>{event.groupId}</strong><span>{formatTime(event.startAt)}</span><small>{event.frameCount} Core frames</small></button>)}</div></aside><section className="glass-panel" style={{ padding: 18 }}>{selectedEvent ? <><div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}><div><p className="eyebrow">{selectedEvent.eventId}</p><h3>קבוצה {selectedEvent.groupId}</h3><p>{formatTime(selectedEvent.startAt)} — {formatTime(selectedEvent.endAt)} · {selectedEvent.frameCount} frames</p></div><Badge variant="outline"><FileChartColumn />SO evidence</Badge></div><div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 1fr) minmax(260px, 1fr)", gap: 14, marginTop: 16 }}><label style={{ display: "grid", gap: 6 }}><span>תבנית לחישוב מחדש</span><Select value={templateId} onValueChange={(value) => { setTemplateId(value); setRecompute({ kind: "idle" }); }} disabled={coreTemplates.length === 0}><SelectTrigger><SelectValue placeholder="בחר תבנית SO מה-Core" /></SelectTrigger><SelectContent>{coreTemplates.map((template) => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}</SelectContent></Select><small>הרשימה מגיעה מבנק התבניות הפעיל של Python Core; הבחירה היא draft עד recomputation תקף.</small></label><label style={{ display: "grid", gap: 6 }}><span>הערת תחקור</span><Textarea value={note} onChange={(event) => setNote(event.target.value)} rows={4} placeholder="הערה ידנית נשמרת בנפרד מהציון" /></label></div><div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}><Button onClick={applyTemplate} disabled={!templateId || coreTemplates.length === 0 || recompute.kind === "running"}><Play />{recompute.kind === "running" ? "מחשב מחדש…" : "החל תבנית וחשב מחדש"}</Button><Button variant="outline" onClick={saveNoteOnly}>שמור הערה בלבד</Button></div>{recompute.kind === "idle" && <div className="empty-state" style={{ marginTop: 18 }}><History /><strong>recompute not run</strong><span>הציון לא משתנה עד להרצת Core אמיתית.</span></div>}{recompute.kind === "running" && <div className="empty-state" style={{ marginTop: 18 }}><ShieldCheck /><strong>Core recomputation running</strong><span>אין progress מומצא; ממתין לתוצאה מלאה.</span></div>}{recompute.kind === "error" && <div className="empty-state" style={{ marginTop: 18 }}><AlertTriangle /><strong>החישוב מחדש נכשל</strong><span>{recompute.detail}</span></div>}{recompute.kind === "complete" && <RecomputeResultView state={recompute} />}</> : <div className="empty-state"><History /><strong>בחר אירוע</strong></div>}</section></div>}
   </div>;
 }
 
