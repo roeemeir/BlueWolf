@@ -393,10 +393,10 @@ export function jpegPagesToPdf(pages: BrowserPdfPage[]) {
 export async function buildInvestigationPdfBrowser(report: InvestigationPdfReport) {
   if (!report.events.length) throw new Error("REP-01 PDF cannot be generated without report events");
   if (typeof document !== "undefined" && "fonts" in document) await document.fonts.ready;
-  const canvases: HTMLCanvasElement[] = [coverPage(report)];
+  const pages: BrowserPdfPage[] = [canvasJpeg(coverPage(report))];
   report.events.forEach((event, index) => {
-    canvases.push(eventMainPage(event, index, report.events.length));
-    canvases.push(...eventDetailPages(event, index, report.events.length));
+    pages.push(canvasJpeg(eventMainPage(event, index, report.events.length)));
+    for (const canvas of eventDetailPages(event, index, report.events.length)) pages.push(canvasJpeg(canvas));
   });
-  return jpegPagesToPdf(canvases.map(canvasJpeg));
+  return jpegPagesToPdf(pages);
 }
