@@ -124,6 +124,26 @@ def save_wkt(page):
     assert response.status == 200, f"workspace save returned {response.status}"
 
 
+def route_client_point(page, route_id: str):
+    hit = page.get_by_test_id(f"route-wkt-hit-{route_id}")
+    hit.scroll_into_view_if_needed()
+    point = hit.evaluate(
+        """path => {
+          const length = path.getTotalLength();
+          if (!Number.isFinite(length) || length <= 0) return null;
+          const local = path.getPointAtLength(length * 0.35);
+          const matrix = path.getScreenCTM();
+          if (!matrix) return null;
+          const client = new DOMPoint(local.x, local.y).matrixTransform(matrix);
+          return { x: client.x, y: client.y };
+        }"""
+    )
+    assert point and isinstance(point.get("x"), (int, float)) and isinstance(point.get("y"), (int, float)), (
+        "WKT path has no usable client-space point"
+    )
+    return point
+
+
 def run_browser_regression():
     with tempfile.TemporaryDirectory(prefix="bluewolf-wkt-e2e-") as directory:
         sqlite_path = Path(directory) / "workspace.sqlite"
@@ -149,15 +169,10 @@ def run_browser_regression():
                     text_saved = input_box.input_value()
                     assert "34.82" in text_saved and "32.02" in text_saved, text_saved
 
-                    route = page.get_by_test_id("route-wkt-path-route-e2e")
-                    route.scroll_into_view_if_needed()
-                    box = route.bounding_box()
-                    assert box and box["width"] > 5 and box["height"] > 5, "WKT path has no draggable browser geometry"
-                    start_x = box["x"] + box["width"] * 0.5
-                    start_y = box["y"] + box["height"] * 0.5
-                    page.mouse.move(start_x, start_y)
+                    start = route_client_point(page, "route-e2e")
+                    page.mouse.move(start["x"], start["y"])
                     page.mouse.down()
-                    page.mouse.move(start_x + 55, start_y + 35, steps=8)
+                    page.mouse.move(start["x"] + 55, start["y"] + 35, steps=8)
                     page.mouse.up()
                     page.wait_for_function(
                         "([selector, before]) => document.querySelector(selector)?.value !== before",
