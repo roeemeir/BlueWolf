@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { useWorkspace } from "./app-context";
+import { InvestigationRetroactivePanel } from "./investigation-retroactive-panel";
 
 type InvestigationEdit = { note: string; templateId: string; arena?: string };
 
@@ -96,19 +97,22 @@ export function InvestigationReportPanel({ server }: { server: string }) {
     }
   };
 
-  return <section className="glass-panel" dir="rtl" data-requirements="BW-REP-008 BW-REP-009 BW-REP-011" style={{ padding: 16, marginBottom: 16 }}>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 16, flexWrap: "wrap" }}>
-      <div><p className="eyebrow">Engineering PDF</p><h3>דוח תחקור לטווח</h3><p className="card-hint">הדוח נטען מחדש מארכיון ה-Core, מבצע recomputation אמיתי לכל אירוע, וכולל מפות WGS84, ציוני קבוצה ורכב, גרפים, תבניות, root causes וגרסאות code/config/template.</p></div>
-      <FileChartColumn />
-    </div>
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(190px,1fr) minmax(190px,1fr) auto", gap: 10, alignItems: "end", marginTop: 12 }}>
-      <label style={{ display: "grid", gap: 5 }}><span>מתאריך ושעה</span><input type="datetime-local" value={from} onChange={(event) => { setFrom(event.target.value); setReport({ kind: "idle" }); }} /></label>
-      <label style={{ display: "grid", gap: 5 }}><span>עד תאריך ושעה</span><input type="datetime-local" value={to} onChange={(event) => { setTo(event.target.value); setReport({ kind: "idle" }); }} /></label>
-      <Button onClick={generate} disabled={report.kind === "running"}><Download />{report.kind === "running" ? "מפיק PDF…" : "הפק PDF לטווח"}</Button>
-    </div>
-    <p className="card-hint">טווח ריק = כל האירועים השמורים לשרת. אין `window.print()` ואין fallback ל-demo; אירוע ללא template provenance עוצר את הדוח.</p>
-    {report.kind === "running" && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}><ShieldCheck /><span>מבצע recomputation ומרנדר PDF. אין אחוז התקדמות ללא telemetry אמיתי.</span></div>}
-    {report.kind === "error" && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}><TriangleAlert /><span>{report.detail}</span></div>}
-    {report.kind === "complete" && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}><ShieldCheck /><span>PDF אומת · code {report.codeVersion.slice(0, 12)} · config {report.configVersion.slice(0, 12)}</span></div>}
-  </section>;
+  return <>
+    <InvestigationRetroactivePanel server={server} />
+    <section className="glass-panel" dir="rtl" data-requirements="BW-REP-008 BW-REP-009 BW-REP-011" style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 16, flexWrap: "wrap" }}>
+        <div><p className="eyebrow">Engineering PDF</p><h3>דוח תחקור לטווח</h3><p className="card-hint">הדוח נטען מחדש מארכיון ה-Core, מבצע recomputation אמיתי לכל אירוע, וכולל מפות WGS84, ציוני קבוצה ורכב, גרפים, תבניות, root causes וגרסאות code/config/template.</p></div>
+        <FileChartColumn />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(190px,1fr) minmax(190px,1fr) auto", gap: 10, alignItems: "end", marginTop: 12 }}>
+        <label style={{ display: "grid", gap: 5 }}><span>מתאריך ושעה</span><input type="datetime-local" value={from} onChange={(event) => { setFrom(event.target.value); setReport({ kind: "idle" }); }} /></label>
+        <label style={{ display: "grid", gap: 5 }}><span>עד תאריך ושעה</span><input type="datetime-local" value={to} onChange={(event) => { setTo(event.target.value); setReport({ kind: "idle" }); }} /></label>
+        <Button onClick={generate} disabled={report.kind === "running"}><Download />{report.kind === "running" ? "מפיק PDF…" : "הפק PDF לטווח"}</Button>
+      </div>
+      <p className="card-hint">טווח ריק = כל האירועים השמורים לשרת. אין `window.print()` ואין fallback ל-demo; אירוע ללא template provenance עוצר את הדוח.</p>
+      {report.kind === "running" && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}><ShieldCheck /><span>מבצע recomputation ומרנדר PDF. אין אחוז התקדמות ללא telemetry אמיתי.</span></div>}
+      {report.kind === "error" && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}><TriangleAlert /><span>{report.detail}</span></div>}
+      {report.kind === "complete" && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}><ShieldCheck /><span>PDF אומת · code {report.codeVersion.slice(0, 12)} · config {report.configVersion.slice(0, 12)}</span></div>}
+    </section>
+  </>;
 }
