@@ -3,6 +3,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const VALID_IMPLEMENTATION = new Set(['yes', 'partial', 'no', 'pending']);
+const LATE_REQUIREMENT_PREFIXES = ['GEO', 'SI', 'SO', 'UI', 'REP', 'IN', 'BANK', 'TEST', 'ARCH', 'PROC'];
+const REQUIREMENT_ID_PATTERN = new RegExp(`^(?:BW-[A-Z]+-\\d{3}|(?:${LATE_REQUIREMENT_PREFIXES.join('|')})-\\d{2})$`);
 
 export function validateReleaseScope(manifest) {
   const errors = [];
@@ -24,7 +26,7 @@ export function validateReleaseScope(manifest) {
       continue;
     }
     const id = typeof requirement.id === 'string' ? requirement.id.trim() : '';
-    if (!/^BW-[A-Z]+-\d{3}$/.test(id)) errors.push(`${prefix}.id is invalid`);
+    if (!REQUIREMENT_ID_PATTERN.test(id)) errors.push(`${prefix}.id is invalid`);
     if (ids.has(id)) errors.push(`duplicate requirement id: ${id}`);
     ids.add(id);
     if (requirement.frozen !== true) errors.push(`${id || prefix} is not marked frozen`);
