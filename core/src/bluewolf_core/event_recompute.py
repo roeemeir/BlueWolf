@@ -1,8 +1,10 @@
 """Event-scoped SO template recomputation from immutable Core observations.
 
-The investigation layer must never replace a displayed number cosmetically.  A
+The investigation layer must never replace a displayed number cosmetically. A
 recompute replays the approved ``score_so_template`` bridge over the immutable
 ``SOScoringObservation`` snapshots captured by the Core during the event.
+Frames where Core evidence was not yet sufficient are retained explicitly as
+missing points so the reported event range is never shortened silently.
 """
 from __future__ import annotations
 
@@ -63,6 +65,7 @@ class SOEventObservationFrame:
     group_id: str
     sample_time_utc: datetime
     observations: tuple[SOScoringObservation, ...]
+    pending_reason: str | None = None
 
     def __post_init__(self) -> None:
         if not self.event_id:
@@ -72,8 +75,10 @@ class SOEventObservationFrame:
         if not self.group_id:
             raise ValueError("group_id is required")
         object.__setattr__(self, "sample_time_utc", _utc(self.sample_time_utc))
-        if len(self.observations) < 2:
-            raise ValueError("recompute frame requires at least two SO observations")
+        if self.pending_reason == "":
+            raise ValueError("pending_reason must be non-empty when supplied")
+        if len(self.observations) < 2 and self.pending_reason is None:
+            raise ValueError("fewer than two SO observations require a pending_reason")
         member_ids = [item.member_id for item in self.observations]
         if len(member_ids) != len(set(member_ids)):
             raise ValueError("recompute frame member ids must be unique")
@@ -105,10 +110,7 @@ def recompute_so_event(
 
     if not event_id:
         raise ValueError("event_id is required")
-    for name, value in (
-        ("code_version", code_version),
-        ("config_version", config_version),
-    ):
+    for name, value in (("code_version", code_version), ("config_version", config_version)):
         if not value:
             raise ValueError(f"{name} is required")
     resolved_template_version = template_version or template_fingerprint(template)
@@ -138,14 +140,27 @@ def recompute_so_event(
     group_totals: list[float] = []
     group_sync: list[float] = []
     group_route: list[float] = []
+    scored_frame_count = 0
 
     for frame in ordered:
+        if frame.pending_reason is not None:
+            points.append(
+                {
+                    "observedAt": _iso(frame.sample_time_utc),
+                    "pendingReason": frame.pending_reason,
+                    "group": {"valid": False, "sync": None, "route": None, "total": None},
+                    "members": [],
+                }
+            )
+            continue
+
         result = score_so_template(
             template,
             frame.observations,
             config=config,
             minimum_valid_vehicles=minimum_valid_vehicles,
         )
+        scored_frame_count += 1
         group = result.group_scores
         total = _finite_score(group.total)
         sync = _finite_score(group.sync)
@@ -179,12 +194,8 @@ def recompute_so_event(
         points.append(
             {
                 "observedAt": _iso(frame.sample_time_utc),
-                "group": {
-                    "valid": group.valid,
-                    "sync": sync,
-                    "route": route,
-                    "total": total,
-                },
+                "pendingReason": None,
+                "group": {"valid": group.valid, "sync": sync, "route": route, "total": total},
                 "members": members,
             }
         )
@@ -210,6 +221,8 @@ def recompute_so_event(
         "startAt": _iso(ordered[0].sample_time_utc),
         "endAt": _iso(ordered[-1].sample_time_utc),
         "frameCount": len(ordered),
+        "scoredFrameCount": scored_frame_count,
+        "missingFrameCount": len(ordered) - scored_frame_count,
         "summary": {
             "sync": average(group_sync),
             "route": average(group_route),
