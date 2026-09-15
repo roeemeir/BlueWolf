@@ -84,11 +84,11 @@ jobs:
           - shard: event-alert
             tests: test_event_alert
           - shard: live-so-event-runtime
-            tests: test_live_so_event_runtime test_event_recompute
+            tests: test_live_so_event_runtime test_event_recompute test_event_observation_sink
           - shard: live-runtime-contract
             tests: test_live_runtime_contract
           - shard: runtime-service
-            tests: test_runtime_service test_runtime_history test_runtime_history_footprint test_qa_service
+            tests: test_runtime_service test_runtime_history test_runtime_history_footprint test_qa_service test_investigation_service test_event_archive_binding
           - shard: runtime-producer
             tests: test_runtime_producer test_position_enrichment
           - shard: operational-pipeline
