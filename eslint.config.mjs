@@ -23,6 +23,15 @@ const eslintConfig = defineConfig([
       "react-hooks/set-state-in-effect": "off",
     },
   },
+  {
+    files: ["components/bluewolf/visuals.tsx"],
+    rules: {
+      // LiveMap records the deterministic navigation frame exactly when the
+      // external server/tick input changes. Keeping this one file-specific
+      // exception avoids weakening the rule for the rest of the application.
+      "react-hooks/set-state-in-effect": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;
