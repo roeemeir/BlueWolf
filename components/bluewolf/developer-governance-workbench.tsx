@@ -10,6 +10,20 @@ import { VehicleRangeWorkbench } from "./vehicle-range-workbench";
 export function DeveloperGovernanceWorkbench() {
   const { revision } = useWorkspace();
   return <>
+    <style>{`
+      /* SI-01: desktop hover previews a legal empty placement without changing state.
+         Touch/click remains the source of placement; forbidden and occupied slots are untouched. */
+      [data-testid="si-direct-ring-board"] g[data-testid^="si-slot-"]:hover > circle[fill="transparent"][opacity="0.65"] {
+        fill: currentColor !important;
+        opacity: 0.22 !important;
+        stroke-width: 2.5 !important;
+      }
+      [data-testid="si-direct-ring-board"] g[data-testid^="si-slot-"]:focus-visible > circle[fill="transparent"][opacity="0.65"] {
+        fill: currentColor !important;
+        opacity: 0.22 !important;
+        stroke-width: 2.5 !important;
+      }
+    `}</style>
     <TemplateGovernanceWorkbench />
     <RouteBankWktWorkbench key={`route-bank-${revision}`} />
     <VehicleRangeWorkbench />
