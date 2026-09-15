@@ -8,6 +8,7 @@ after(async () => { await vite.close(); });
 
 const {
   canonicalSoOrderKey,
+  directSoPlacementKey,
   generateUniqueSoOrders,
   soSmilePoses,
   soPhasesForRoute,
@@ -66,4 +67,14 @@ test('SO relations are derived from semantic quarter placement and direction', (
   assert.deepEqual(deriveSoRelations(chain, placements), ['same', 'opposite']);
   const mixed = [...placements, { routeIndex: 1, phase: 0.25, typeId: 'storm', direction: 'forward' }];
   assert.equal(deriveSoRelations(chain, mixed)[0], 'mixed');
+});
+
+test('SO direct identity keeps non-equivalent placements distinct even when chain is identical', () => {
+  const chain = ['double', 'double'];
+  const first = [{ routeIndex: 0, phase: 0, typeId: 'storm', direction: 'forward' }];
+  const second = [{ routeIndex: 0, phase: 0.25, typeId: 'storm', direction: 'forward' }];
+  const third = [{ routeIndex: 0, phase: 0, typeId: 'storm', direction: 'reverse' }];
+  assert.notEqual(directSoPlacementKey(chain, first), directSoPlacementKey(chain, second));
+  assert.notEqual(directSoPlacementKey(chain, first), directSoPlacementKey(chain, third));
+  assert.equal(directSoPlacementKey(chain, first), directSoPlacementKey(chain, [...first]));
 });
