@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 import unittest
+from datetime import UTC, datetime, timedelta
 
 from bluewolf_ingest.polling import LivePollConfig, PollWindow, ServerPollCursor
 
@@ -19,21 +19,30 @@ class LivePollingTests(unittest.TestCase):
             window.end_time_utc - timedelta(seconds=2400),
         )
 
+    def test_default_active_path_reserves_two_seconds_for_ui_within_ten_seconds(self):
+        config = LivePollConfig()
+        self.assertEqual(config.join_tolerance_seconds, 5)
+        self.assertEqual(config.active_poll_seconds, 3)
+        self.assertLessEqual(
+            config.join_tolerance_seconds + config.active_poll_seconds + 2,
+            10,
+        )
+
     def test_active_windows_are_contiguous_without_duplicate_logical_second(self):
         cursor = ServerPollCursor()
         first = cursor.next_window(START)
         assert first is not None
         cursor.complete(first, completed_at_utc=START, server_awake=True)
-        self.assertEqual(cursor.next_due_utc, START + timedelta(seconds=5))
-        self.assertIsNone(cursor.next_window(START + timedelta(seconds=4)))
+        self.assertEqual(cursor.next_due_utc, START + timedelta(seconds=3))
+        self.assertIsNone(cursor.next_window(START + timedelta(seconds=2)))
 
-        second = cursor.next_window(START + timedelta(seconds=5))
+        second = cursor.next_window(START + timedelta(seconds=3))
         assert second is not None
         self.assertEqual(
             second.start_time_utc,
             first.end_time_utc + timedelta(seconds=1),
         )
-        self.assertEqual(second.end_time_utc, START)
+        self.assertEqual(second.end_time_utc, START - timedelta(seconds=2))
 
     def test_idle_server_uses_probe_interval_but_keeps_watermark(self):
         config = LivePollConfig(idle_probe_seconds=300)
@@ -54,10 +63,10 @@ class LivePollingTests(unittest.TestCase):
         assert first is not None
         cursor.complete(first, completed_at_utc=START, server_awake=True)
         watermark = cursor.last_processed_utc
-        failure_time = START + timedelta(seconds=5)
+        failure_time = START + timedelta(seconds=3)
         cursor.defer_after_error(failed_at_utc=failure_time)
         self.assertEqual(cursor.last_processed_utc, watermark)
-        self.assertEqual(cursor.next_due_utc, failure_time + timedelta(seconds=5))
+        self.assertEqual(cursor.next_due_utc, failure_time + timedelta(seconds=3))
 
     def test_checkpoint_roundtrip_preserves_schedule_and_watermark(self):
         cursor = ServerPollCursor()
@@ -72,8 +81,8 @@ class LivePollingTests(unittest.TestCase):
         self.assertEqual(restored.next_due_utc, cursor.next_due_utc)
         self.assertTrue(restored.awake)
         self.assertEqual(
-            restored.next_window(START + timedelta(seconds=5)),
-            cursor.next_window(START + timedelta(seconds=5)),
+            restored.next_window(START + timedelta(seconds=3)),
+            cursor.next_window(START + timedelta(seconds=3)),
         )
 
     def test_non_contiguous_completion_is_rejected(self):
@@ -88,7 +97,7 @@ class LivePollingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "contiguous"):
             cursor.complete(
                 bad,
-                completed_at_utc=START + timedelta(seconds=5),
+                completed_at_utc=START + timedelta(seconds=3),
                 server_awake=True,
             )
 
