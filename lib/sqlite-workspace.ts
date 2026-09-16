@@ -1,6 +1,8 @@
 // Local deployment only. The hosted preview keeps its separate D1 adapter.
 import type { DatabaseSync } from "node:sqlite";
 
+import { applyLocalSchemaMigrations } from "@/lib/sqlite-migrations";
+
 let connection: Promise<DatabaseSync> | undefined;
 
 async function database() {
@@ -14,40 +16,8 @@ async function database() {
     const filename = path.resolve(process.env.BLUEWOLF_SQLITE_PATH ?? "data/bluewolf.sqlite");
     fs.mkdirSync(path.dirname(filename), { recursive: true });
     const db: DatabaseSync = new DatabaseSync(filename);
-    db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS local_schema_migrations (
-        id TEXT PRIMARY KEY,
-        applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-      CREATE TABLE IF NOT EXISTS workspaces (
-        id TEXT PRIMARY KEY, state TEXT NOT NULL, revision INTEGER NOT NULL,
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-      CREATE TABLE IF NOT EXISTS audit_entries (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id TEXT NOT NULL,
-        category TEXT NOT NULL, action TEXT NOT NULL, detail TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-      CREATE INDEX IF NOT EXISTS audit_workspace ON audit_entries(workspace_id,id);
-      CREATE TABLE IF NOT EXISTS workspace_versions (
-        workspace_id TEXT NOT NULL,
-        revision INTEGER NOT NULL,
-        state TEXT NOT NULL,
-        category TEXT NOT NULL,
-        action TEXT NOT NULL,
-        detail TEXT NOT NULL,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY(workspace_id, revision));
-      CREATE INDEX IF NOT EXISTS workspace_versions_recent
-        ON workspace_versions(workspace_id, revision DESC);
-      INSERT OR IGNORE INTO workspace_versions(workspace_id,revision,state,category,action,detail,created_at)
-        SELECT id,revision,state,'migration','snapshot','Backfilled current workspace during version-history migration',updated_at
-        FROM workspaces WHERE revision > 0;
-      INSERT OR IGNORE INTO local_schema_migrations(id) VALUES('001-workspace-version-history');
-      CREATE TABLE IF NOT EXISTS map_source_secrets (
-        workspace_id TEXT NOT NULL,
-        source_id TEXT NOT NULL,
-        token TEXT NOT NULL,
-        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY(workspace_id, source_id));
-      INSERT OR IGNORE INTO local_schema_migrations(id) VALUES('002-map-source-secrets');`);
+    db.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;");
+    applyLocalSchemaMigrations(db);
     return db;
   })().catch((error) => { connection = undefined; throw error; });
   return connection;
