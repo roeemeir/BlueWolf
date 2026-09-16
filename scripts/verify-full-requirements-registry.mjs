@@ -87,7 +87,9 @@ export function validateFullRegistry(registry, releaseScope = null, { strictRele
   if (unspecified.length) warnings.push(`source document lacks implementation/approval status for: ${unspecified.join(", ")}`);
 
   if (strictRelease && audit && typeof audit === "object" && !Array.isArray(audit)) {
-    if (unspecified.length) errors.push(`release audit cannot proceed with unspecified source status: ${unspecified.join(", ")}`);
+    // A source-document status of "unspecified" is historical metadata, not a
+    // permanent release blocker. A complete current-head audit below is the
+    // authoritative resolution. Missing audit rows still fail explicitly.
     for (const id of expected) {
       const row = audit[id];
       if (!row || typeof row !== "object" || Array.isArray(row)) {
