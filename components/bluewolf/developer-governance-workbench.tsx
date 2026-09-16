@@ -27,17 +27,20 @@ export function DeveloperGovernanceWorkbench() {
       .developer-template-tabs>[data-slot="tabs-list"]>[data-slot="tabs-trigger"]{min-width:120px;gap:7px}
       .developer-tab-intro{margin-bottom:12px;padding:14px 16px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,var(--surface-strong),var(--surface));box-shadow:var(--shadow),inset 0 1px 0 var(--glass-edge)}
       .developer-tab-intro h2{margin:0;font-size:17px}.developer-tab-intro p{margin:5px 0 0;color:var(--text-soft);font-size:12px}
-      /* SI-01: hover previews a legal empty placement without changing state. */
+      /* SI-01: desktop hover previews a legal empty placement without changing state. */
       [data-testid="si-direct-ring-board"] g[data-testid^="si-slot-"]:hover > circle[fill="transparent"][opacity="0.65"],
-      [data-testid="si-direct-ring-board"] g[data-testid^="si-slot-"]:focus-visible > circle[fill="transparent"][opacity="0.65"] {
-        fill: currentColor !important;opacity:.22 !important;stroke-width:2.5 !important;
+      [data-testid="si-direct-ring-board"] g[data-testid^="si-slot-"]:focus-visible > circle[fill="transparent"][opacity="0.65"]{
+        fill:currentColor!important;opacity:.22!important;stroke-width:2.5!important;
       }
-      /* Template editor is explicitly split: the generic workbench owns SI only; direct SO authoring lives in the SO tab. */
-      [data-testid="template-governance-workbench"] .v04-family-switch > button:nth-child(2){display:none!important}
-      .protected-legacy-developer .developer-nav nav > button:nth-child(2),
-      .protected-legacy-developer .developer-nav nav > button:nth-child(3),
-      .protected-legacy-developer .developer-nav nav > button:nth-child(4),
-      .protected-legacy-developer .developer-nav nav > button:nth-child(6),
+      /* SI and SO have independent editors. The old generic SO switch is not an editing path. */
+      [data-testid="template-governance-workbench"] .v04-family-switch>button:nth-child(2){display:none!important}
+      /* SO-01: vehicle type is an operational binding, not a template-authoring choice. The direct board keeps
+         its positional model while the legacy palette is removed from the active UX. */
+      [data-testid="so-direct-workbench"] [data-testid="so-vehicle-palette"]{display:none!important}
+      .protected-legacy-developer .developer-nav nav>button:nth-child(2),
+      .protected-legacy-developer .developer-nav nav>button:nth-child(3),
+      .protected-legacy-developer .developer-nav nav>button:nth-child(4),
+      .protected-legacy-developer .developer-nav nav>button:nth-child(6),
       .protected-legacy-developer .developer-nav .core-state{display:none!important}
       @media(max-width:760px){.developer-governance-tabs{padding:10px}.developer-primary-tabs>[data-slot="tabs-list"]{border-radius:12px}.developer-primary-tabs>[data-slot="tabs-list"]>[data-slot="tabs-trigger"]{padding-inline:10px}.developer-template-tabs>[data-slot="tabs-list"]{display:grid;grid-template-columns:1fr 1fr;width:100%}.developer-template-tabs>[data-slot="tabs-list"]>[data-slot="tabs-trigger"]{min-width:0}}
     `}</style>
