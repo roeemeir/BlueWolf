@@ -1,3 +1,11 @@
+import {
+  defaultWmtsLayerSelections,
+  validateWmtsSelections,
+  wmtsResourceTemplate,
+  type WmtsCapabilitiesCatalog,
+  type WmtsLayerSelection,
+} from "./wmts-capabilities";
+
 export type MapSourceKind = "xyz" | "wms" | "wmts";
 export type MapTokenMode = "none" | "bearer" | "query";
 
@@ -17,6 +25,8 @@ export type OperationalMapSource = {
   tileMatrixSet?: string;
   tokenMode: MapTokenMode;
   tokenQueryParam?: string;
+  wmtsCatalog?: WmtsCapabilitiesCatalog;
+  wmtsLayers?: WmtsLayerSelection[];
 };
 
 type JsonObject = Record<string, unknown>;
@@ -49,14 +59,36 @@ function parsedHttpUrl(raw: string, label: string) {
 function mapBaseUrl(value: unknown, kind: MapSourceKind, label: string) {
   const raw = text(value, label);
   if (kind === "xyz") {
-    // Validate scheme/host/credentials before placeholder completeness.  A URL
-    // containing user-info is a secret-handling violation regardless of whether
-    // the XYZ template is otherwise well-formed.
     parsedHttpUrl(raw.replaceAll("{z}", "0").replaceAll("{x}", "0").replaceAll("{y}", "0"), label);
     for (const placeholder of ["{z}", "{x}", "{y}"]) if (!raw.includes(placeholder)) throw new Error(`${label} XYZ template must include ${placeholder}`);
     return raw;
   }
   return parsedHttpUrl(raw, label).toString();
+}
+
+function catalogFromUnknown(value: unknown, sourceId: string): WmtsCapabilitiesCatalog | undefined {
+  if (value === undefined || value === null) return undefined;
+  const row = object(value, `map source ${sourceId} WMTS catalog`);
+  if (!Array.isArray(row.layers) || !Array.isArray(row.tileMatrixSets) || !Array.isArray(row.getTileKvpUrls)) throw new Error(`map source ${sourceId} WMTS catalog is invalid`);
+  for (const endpoint of row.getTileKvpUrls) if (typeof endpoint !== "string") throw new Error(`map source ${sourceId} WMTS KVP endpoint is invalid`);
+  return value as WmtsCapabilitiesCatalog;
+}
+
+function selectionsFromUnknown(value: unknown, sourceId: string): WmtsLayerSelection[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) throw new Error(`map source ${sourceId} WMTS layers must be an array`);
+  return value.map((item, index) => {
+    const row = object(item, `map source ${sourceId} WMTS layer ${index + 1}`);
+    return {
+      layer: text(row.layer, "WMTS layer"),
+      style: text(row.style, "WMTS style", "default"),
+      format: text(row.format, "WMTS format", "image/png"),
+      tileMatrixSet: text(row.tileMatrixSet, "WMTS TileMatrixSet"),
+      enabled: row.enabled === true,
+      order: typeof row.order === "number" ? row.order : index,
+      opacity: typeof row.opacity === "number" ? row.opacity : 1,
+    };
+  });
 }
 
 export function normalizeMapSource(value: unknown, index = 0): OperationalMapSource {
@@ -80,8 +112,14 @@ export function normalizeMapSource(value: unknown, index = 0): OperationalMapSou
   }
   const layer = optionalText(row.layer);
   const tileMatrixSet = optionalText(row.tileMatrixSet);
-  if ((kind === "wms" || kind === "wmts") && !layer) throw new Error(`map source ${id} requires a layer`);
-  if (kind === "wmts" && !tileMatrixSet) throw new Error(`map source ${id} requires a tileMatrixSet`);
+  const wmtsCatalog = kind === "wmts" ? catalogFromUnknown(row.wmtsCatalog, id) : undefined;
+  const storedSelections = kind === "wmts" ? selectionsFromUnknown(row.wmtsLayers, id) : undefined;
+  const wmtsLayers = wmtsCatalog
+    ? validateWmtsSelections(wmtsCatalog, storedSelections ?? defaultWmtsLayerSelections(wmtsCatalog))
+    : storedSelections;
+  if (kind === "wms" && !layer) throw new Error(`map source ${id} requires a layer`);
+  if (kind === "wmts" && !wmtsCatalog && !layer) throw new Error(`map source ${id} requires GetCapabilities discovery or a legacy layer`);
+  if (kind === "wmts" && !wmtsCatalog && !tileMatrixSet) throw new Error(`map source ${id} requires GetCapabilities discovery or a legacy tileMatrixSet`);
   const crs = optionalText(row.crs) ?? (kind === "wms" ? "CRS:84" : undefined);
   if (kind === "wms" && crs !== "CRS:84" && crs !== "EPSG:4326") throw new Error(`map source ${id} WMS currently supports CRS:84 or EPSG:4326`);
   return {
@@ -100,6 +138,8 @@ export function normalizeMapSource(value: unknown, index = 0): OperationalMapSou
     tileMatrixSet,
     tokenMode,
     tokenQueryParam,
+    wmtsCatalog,
+    wmtsLayers,
   };
 }
 
@@ -118,7 +158,17 @@ export function normalizeMapSources(value: unknown): OperationalMapSource[] {
 }
 
 export type WmsProxyRequest = { bbox: [number, number, number, number]; width: number; height: number };
-export type WmtsProxyRequest = { tileMatrix: string; tileRow: number; tileCol: number };
+export type WmtsProxyRequest = {
+  tileMatrix: string;
+  tileRow: number;
+  tileCol: number;
+  layer?: string;
+  style?: string;
+  format?: string;
+  tileMatrixSet?: string;
+  resourceTemplate?: string;
+  kvpUrl?: string;
+};
 
 function finite(value: number, label: string) {
   if (!Number.isFinite(value)) throw new Error(`${label} must be finite`);
@@ -153,19 +203,77 @@ export function buildWmsUpstreamUrl(source: OperationalMapSource, request: WmsPr
   return url;
 }
 
+export function buildWmtsCapabilitiesUrl(source: Pick<OperationalMapSource, "kind" | "baseUrl" | "version">) {
+  if (source.kind !== "wmts") throw new Error("map source is not WMTS");
+  const url = new URL(source.baseUrl);
+  url.searchParams.set("SERVICE", "WMTS");
+  url.searchParams.set("REQUEST", "GetCapabilities");
+  url.searchParams.set("VERSION", source.version ?? "1.0.0");
+  return url;
+}
+
+function replaceTemplateToken(value: string, token: string, replacement: string) {
+  return value.replace(new RegExp(`\\{${token}\\}`, "gi"), encodeURIComponent(replacement));
+}
+
+export function resolveWmtsLayer(source: OperationalMapSource, requestedLayer?: string) {
+  if (source.kind !== "wmts") throw new Error("map source is not WMTS");
+  if (source.wmtsCatalog) {
+    const selections = validateWmtsSelections(source.wmtsCatalog, source.wmtsLayers ?? defaultWmtsLayerSelections(source.wmtsCatalog));
+    const selection = requestedLayer
+      ? selections.find((item) => item.layer === requestedLayer)
+      : selections.find((item) => item.enabled);
+    if (!selection) throw new Error(requestedLayer ? `WMTS layer ${requestedLayer} is not configured` : "WMTS source has no enabled default layer");
+    const layer = source.wmtsCatalog.layers.find((item) => item.identifier === selection.layer);
+    if (!layer) throw new Error(`WMTS layer ${selection.layer} is missing from catalog`);
+    return {
+      ...selection,
+      resourceTemplate: wmtsResourceTemplate(layer, selection.format),
+      kvpUrl: source.wmtsCatalog.getTileKvpUrls[0],
+    };
+  }
+  if (requestedLayer && requestedLayer !== source.layer) throw new Error(`WMTS layer ${requestedLayer} is not configured`);
+  return {
+    layer: source.layer ?? "",
+    style: source.style ?? "",
+    format: source.format ?? "image/png",
+    tileMatrixSet: source.tileMatrixSet ?? "",
+    enabled: true,
+    order: 0,
+    opacity: 1,
+    resourceTemplate: undefined,
+    kvpUrl: undefined,
+  };
+}
+
 export function buildWmtsUpstreamUrl(source: OperationalMapSource, request: WmtsProxyRequest) {
   if (source.kind !== "wmts") throw new Error("map source is not WMTS");
-  if (!request.tileMatrix || request.tileMatrix.length > 80) throw new Error("WMTS tileMatrix is invalid");
+  if (!request.tileMatrix || request.tileMatrix.length > 160) throw new Error("WMTS tileMatrix is invalid");
   if (!Number.isInteger(request.tileRow) || request.tileRow < 0) throw new Error("WMTS tileRow must be a non-negative integer");
   if (!Number.isInteger(request.tileCol) || request.tileCol < 0) throw new Error("WMTS tileCol must be a non-negative integer");
-  const url = new URL(source.baseUrl);
+  const layer = request.layer ?? source.layer ?? "";
+  const style = request.style ?? source.style ?? "";
+  const format = request.format ?? source.format ?? "image/png";
+  const tileMatrixSet = request.tileMatrixSet ?? source.tileMatrixSet ?? "";
+  if (!layer || !tileMatrixSet) throw new Error("WMTS request is missing layer or TileMatrixSet");
+  if (request.resourceTemplate) {
+    let raw = request.resourceTemplate;
+    raw = replaceTemplateToken(raw, "Layer", layer);
+    raw = replaceTemplateToken(raw, "Style", style);
+    raw = replaceTemplateToken(raw, "TileMatrixSet", tileMatrixSet);
+    raw = replaceTemplateToken(raw, "TileMatrix", request.tileMatrix);
+    raw = replaceTemplateToken(raw, "TileRow", String(request.tileRow));
+    raw = replaceTemplateToken(raw, "TileCol", String(request.tileCol));
+    return parsedHttpUrl(raw, "WMTS ResourceURL");
+  }
+  const url = new URL(request.kvpUrl ?? source.baseUrl);
   url.searchParams.set("SERVICE", "WMTS");
   url.searchParams.set("REQUEST", "GetTile");
   url.searchParams.set("VERSION", source.version ?? "1.0.0");
-  url.searchParams.set("LAYER", source.layer ?? "");
-  url.searchParams.set("STYLE", source.style ?? "");
-  url.searchParams.set("FORMAT", source.format ?? "image/png");
-  url.searchParams.set("TILEMATRIXSET", source.tileMatrixSet ?? "");
+  url.searchParams.set("LAYER", layer);
+  url.searchParams.set("STYLE", style);
+  url.searchParams.set("FORMAT", format);
+  url.searchParams.set("TILEMATRIXSET", tileMatrixSet);
   url.searchParams.set("TILEMATRIX", request.tileMatrix);
   url.searchParams.set("TILEROW", String(request.tileRow));
   url.searchParams.set("TILECOL", String(request.tileCol));
