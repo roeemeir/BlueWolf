@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import unittest
+
 from bluewolf_core.models import PrimitiveMetrics, RouteFamily
 from bluewolf_core.si_scoring import SIScoringMemberInput, score_si_template
 from bluewolf_core.templates import ObservedMember, SynchronizationTemplate, TemplateSlot
@@ -31,42 +33,49 @@ def _template(template_id: str, second_offset: float) -> SynchronizationTemplate
     )
 
 
-def test_bw_sync_012_si_template_position_changes_raw_member_and_group_score() -> None:
-    members = (
-        SIScoringMemberInput(ObservedMember("v1", "outer", 0.0), _metrics()),
-        SIScoringMemberInput(ObservedMember("v2", "outer", 1.0 / 3.0), _metrics()),
-    )
+class SIScoringAcceptanceTests(unittest.TestCase):
+    def test_bw_sync_012_si_template_position_changes_raw_member_and_group_score(self) -> None:
+        members = (
+            SIScoringMemberInput(ObservedMember("v1", "outer", 0.0), _metrics()),
+            SIScoringMemberInput(ObservedMember("v2", "outer", 1.0 / 3.0), _metrics()),
+        )
 
-    exact = score_si_template(_template("exact-120", 1.0 / 3.0), members)
-    changed = score_si_template(_template("changed-90", 1.0 / 4.0), members)
+        exact = score_si_template(_template("exact-120", 1.0 / 3.0), members)
+        changed = score_si_template(_template("changed-90", 1.0 / 4.0), members)
 
-    assert exact.group_scores.valid is True
-    assert changed.group_scores.valid is True
-    assert exact.group_scores.sync == 100.0
-    assert exact.group_scores.total == 100.0
-    assert changed.group_scores.sync < exact.group_scores.sync
-    assert changed.group_scores.total < exact.group_scores.total
-    assert changed.fit.mean_position_error_cycle > exact.fit.mean_position_error_cycle
-    assert all(score.components is not None for score in changed.member_scores.values())
-    assert all(
-        score.components.sync_position < 100.0
-        for score in changed.member_scores.values()
-        if score.components is not None
-    )
+        self.assertTrue(exact.group_scores.valid)
+        self.assertTrue(changed.group_scores.valid)
+        self.assertEqual(exact.group_scores.sync, 100.0)
+        self.assertEqual(exact.group_scores.total, 100.0)
+        self.assertLess(changed.group_scores.sync, exact.group_scores.sync)
+        self.assertLess(changed.group_scores.total, exact.group_scores.total)
+        self.assertGreater(changed.fit.mean_position_error_cycle, exact.fit.mean_position_error_cycle)
+        self.assertTrue(all(score.components is not None for score in changed.member_scores.values()))
+        self.assertTrue(
+            all(
+                score.components.sync_position < 100.0
+                for score in changed.member_scores.values()
+                if score.components is not None
+            )
+        )
+
+    def test_bw_sync_012_template_fit_overrides_stale_display_or_input_position_error(self) -> None:
+        members = (
+            SIScoringMemberInput(ObservedMember("v1", "outer", 0.0), _metrics()),
+            SIScoringMemberInput(ObservedMember("v2", "outer", 1.0 / 3.0), _metrics()),
+        )
+        result = score_si_template(_template("exact-120", 1.0 / 3.0), members)
+
+        # The input metric intentionally contains position_error=999. The score is
+        # nevertheless perfect because the raw score uses the fitted SI template.
+        self.assertEqual(result.group_scores.sync, 100.0)
+        for score in result.member_scores.values():
+            self.assertTrue(score.valid)
+            self.assertIsNotNone(score.components)
+            assert score.components is not None
+            self.assertEqual(score.components.sync_position, 100.0)
+            self.assertIsNone(score.primary_reason)
 
 
-def test_bw_sync_012_template_fit_overrides_stale_display_or_input_position_error() -> None:
-    members = (
-        SIScoringMemberInput(ObservedMember("v1", "outer", 0.0), _metrics()),
-        SIScoringMemberInput(ObservedMember("v2", "outer", 1.0 / 3.0), _metrics()),
-    )
-    result = score_si_template(_template("exact-120", 1.0 / 3.0), members)
-
-    # The input metric intentionally contains position_error=999.  The score is
-    # nevertheless perfect because the raw score uses the fitted SI template.
-    assert result.group_scores.sync == 100.0
-    for score in result.member_scores.values():
-        assert score.valid is True
-        assert score.components is not None
-        assert score.components.sync_position == 100.0
-        assert score.primary_reason is None
+if __name__ == "__main__":
+    unittest.main()
