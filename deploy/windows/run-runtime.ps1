@@ -2,6 +2,7 @@ param(
     [string]$VenvPath = ".bluewolf-runtime-venv",
     [string]$OperationalConfig = "",
     [string]$StatePath = "",
+    [string]$ArchivePath = ".bluewolf-runtime-data\joined-samples.sqlite3",
     [int]$Port = 8080,
     [int]$StaleSeconds = 15,
     [int]$ExpireSeconds = 60,
@@ -47,6 +48,9 @@ if ($ArchiveRetentionDays -lt 1) {
 if ($ArchivePruneIntervalSeconds -lt 60) {
     throw "ArchivePruneIntervalSeconds must be at least 60 seconds."
 }
+if ([string]::IsNullOrWhiteSpace($ArchivePath)) {
+    throw "ArchivePath is required for operational sample persistence."
+}
 if (-not [string]::IsNullOrWhiteSpace($StatePath) -and [string]::IsNullOrWhiteSpace($OperationalConfig)) {
     throw "StatePath requires OperationalConfig so checkpoint compatibility can be verified."
 }
@@ -58,6 +62,18 @@ $env:BLUEWOLF_RUNTIME_STALE_SECONDS = [string]$StaleSeconds
 $env:BLUEWOLF_RUNTIME_EXPIRE_SECONDS = [string]$ExpireSeconds
 $env:BLUEWOLF_ARCHIVE_RETENTION_DAYS = [string]$ArchiveRetentionDays
 $env:BLUEWOLF_ARCHIVE_PRUNE_INTERVAL_SECONDS = [string]$ArchivePruneIntervalSeconds
+
+if ([System.IO.Path]::IsPathRooted($ArchivePath)) {
+    $ResolvedArchive = [System.IO.Path]::GetFullPath($ArchivePath)
+}
+else {
+    $ResolvedArchive = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $ArchivePath))
+}
+$ArchiveDirectory = Split-Path -Parent $ResolvedArchive
+if (-not [string]::IsNullOrWhiteSpace($ArchiveDirectory)) {
+    New-Item -ItemType Directory -Force -Path $ArchiveDirectory | Out-Null
+}
+$env:BLUEWOLF_SAMPLE_ARCHIVE_PATH = $ResolvedArchive
 
 if (-not [string]::IsNullOrWhiteSpace($OperationalConfig)) {
     $ResolvedConfig = Resolve-Path $OperationalConfig -ErrorAction Stop
@@ -92,6 +108,7 @@ elseif (-not [string]::IsNullOrWhiteSpace($OperationalConfig)) {
     Write-Host "No StatePath supplied; persistence may still be enabled by persistence.path in runtime.json."
 }
 
+Write-Host "Joined sample archive: $ResolvedArchive"
 Write-Host "Sample archive retention: $ArchiveRetentionDays days; prune interval: $ArchivePruneIntervalSeconds seconds."
 Write-Host "Starting Blue Wolf runtime on port $Port (single process) · code $($InstalledCodeSha.Substring(0, [Math]::Min(12, $InstalledCodeSha.Length)))."
 & $RuntimeExe
