@@ -95,7 +95,21 @@ export function GtScenarioWorkbench() {
     finally { setBusy(false); }
   };
 
-  useEffect(() => { void loadList(0, ""); }, []); // local SQLite bank is independent of demo/runtime groups
+  useEffect(() => {
+    let cancelled = false;
+    const params = new URLSearchParams({ q: "", limit: "50", offset: "0" });
+    void fetch(`/api/gt-scenarios?${params.toString()}`, { cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json() as ListPayload;
+        if (!response.ok) throw new Error(payload.error ?? "טעינת בנק GT נכשלה");
+        if (cancelled) return;
+        setItems(payload.items ?? []);
+        setTotal(payload.total ?? 0);
+        setOffset(0);
+      })
+      .catch((error) => { if (!cancelled) toast.error(error instanceof Error ? error.message : "טעינת בנק GT נכשלה"); });
+    return () => { cancelled = true; };
+  }, []); // local SQLite bank is independent of demo/runtime groups
 
   const patchGroup = (id: string, patch: Partial<GtScenarioGroup>) => setScenario((current) => ({ ...current, groups: current.groups.map((group) => group.id === id ? { ...group, ...patch } : group) }));
 
