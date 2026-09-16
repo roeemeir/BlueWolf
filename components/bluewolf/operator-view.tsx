@@ -12,7 +12,9 @@ import { getServerScenario, type DataMode, type DemoGroup, type SyncTemplate, ty
 import { normalizeEventRecompute, type EventRecomputeResult } from "@/lib/investigation-contract";
 import { getRuntimeGroups } from "@/lib/live-runtime";
 import { groupFromEventRecompute, sameRecomputeVersion } from "@/lib/operator-retroactive-result";
+import { workspaceScopeId, type GroupScopedSettings, type ServerScopedSettings } from "@/lib/scoped-workspace-settings";
 import { formatKnotsFromKmh, formatKnotsFromMps } from "@/lib/speed-units";
+import { readWorkspaceScope, writeWorkspaceScope } from "@/lib/workspace-scope-client";
 import { useWorkspace } from "./app-context";
 import { OperationalLiveMap } from "./operational-live-map";
 import { OperationalTimeline } from "./operational-timeline";
@@ -42,6 +44,7 @@ type VersionedInvestigationEdit = {
   requiredConfigVersion?: string;
   requiredTemplateVersion?: string;
 };
+type LoadedScope<T> = { id: string; settings: T; revision: number; available: boolean };
 
 function TypeGlyph({ type, color }: { type?: VehicleType; color: string }) { return <svg className="member-type-icon" viewBox="-15 -15 30 30" aria-hidden="true"><VehicleIconGlyph icon={type?.icon ?? "rover"} color={color} /></svg>; }
 
@@ -70,7 +73,7 @@ function TemplateOverrideDialog({ open, onOpenChange, group, activeId, templates
 }
 
 export function OperatorView({ serverId, serverName, dataMode, onDataModeChange, onInvestigate }: { serverId: string; serverName: string; dataMode: DataMode; onDataModeChange: (mode: DataMode) => void; onInvestigate: () => void }) {
-  const { state, save } = useWorkspace();
+  const { state, setState, save } = useWorkspace();
   const scenario = getServerScenario(serverId);
   const runtimeGroups = getRuntimeGroups(serverId);
   const preferredBaseGroup = runtimeGroups.find((group) => group.key === "so") ?? runtimeGroups[0] ?? scenario.groups.so;
@@ -88,6 +91,8 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
   const [mutedUntil, setMutedUntil] = useState<MuteUntil>(null);
   const [mapProfile, setMapProfile] = useState(state.settings.defaultMap);
   const [recomputeOverride, setRecomputeOverride] = useState<EventRecomputeResult | null>(null);
+  const [serverScope, setServerScope] = useState<LoadedScope<ServerScopedSettings> | null>(null);
+  const [groupScopes, setGroupScopes] = useState<Record<string, LoadedScope<GroupScopedSettings>>>({});
   const restoredVersionKey = useRef<string | null>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const influxConfigured = Boolean(state.influx.url.trim() && state.influx.token.trim());
@@ -95,9 +100,40 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
   useEffect(() => { if (!running || (dataMode === "influx" && !influxConfigured)) return; const timer = window.setInterval(() => setCountdown((value) => { if (value <= 1) { setTick((current) => current + 1); return 5; } return value - 1; }), 1000); return () => window.clearInterval(timer); }, [running, dataMode, influxConfigured]);
   useEffect(() => { if (typeof mutedUntil !== "number") return; const timer = window.setTimeout(() => setMutedUntil(null), Math.max(0, mutedUntil - Date.now())); return () => window.clearTimeout(timer); }, [mutedUntil]);
 
+  const baseGroups = runtimeGroups.length ? runtimeGroups : [scenario.groups.si, scenario.groups.so];
+  const groupScopeKey = baseGroups.map((group) => workspaceScopeId("group", serverId, group.id)).sort().join("|");
+  useEffect(() => {
+    let cancelled = false;
+    const id = workspaceScopeId("server", serverId);
+    void readWorkspaceScope<ServerScopedSettings>("server", id).then((scope) => {
+      if (cancelled) return;
+      const settings = scope.state ?? {};
+      setServerScope({ id, settings, revision: scope.revision, available: scope.available });
+      if (settings.arena && state.arenas.includes(settings.arena)) setArena(settings.arena);
+      if (settings.mapProfile && state.mapServers.some((item) => item.id === settings.mapProfile && item.enabled)) setMapProfile(settings.mapProfile);
+    }).catch((error) => { if (!cancelled) toast.error(error instanceof Error ? `טעינת הגדרות שרת נכשלה: ${error.message}` : "טעינת הגדרות שרת נכשלה"); });
+    return () => { cancelled = true; };
+  }, [serverId]); // scope reload belongs to the selected server only
+
+  useEffect(() => {
+    let cancelled = false;
+    const groups = runtimeGroups.length ? runtimeGroups : [scenario.groups.si, scenario.groups.so];
+    void Promise.all(groups.map(async (group) => {
+      const id = workspaceScopeId("group", serverId, group.id);
+      const scope = await readWorkspaceScope<GroupScopedSettings>("group", id);
+      return [id, { id, settings: scope.state ?? {}, revision: scope.revision, available: scope.available }] as const;
+    })).then((rows) => {
+      if (cancelled) return;
+      setGroupScopes((current) => ({ ...current, ...Object.fromEntries(rows) }));
+    }).catch((error) => { if (!cancelled) toast.error(error instanceof Error ? `טעינת הגדרות קבוצה נכשלה: ${error.message}` : "טעינת הגדרות קבוצה נכשלה"); });
+    return () => { cancelled = true; };
+  }, [serverId, groupScopeKey]);
+
   const selectedBase = runtimeGroups.find((group) => group.id === selectedGroupId) ?? preferredBaseGroup;
   const overrideKey = `${serverId}:${selectedBase.id}`;
-  const application = state.templateApplications[overrideKey] as VersionedTemplateApplication | undefined;
+  const selectedGroupScope = groupScopes[workspaceScopeId("group", serverId, selectedBase.id)];
+  const application = (selectedGroupScope?.settings.templateApplication as VersionedTemplateApplication | undefined)
+    ?? state.templateApplications[overrideKey] as VersionedTemplateApplication | undefined;
   const currentEventId = "event" in selectedBase ? selectedBase.event?.id : undefined;
 
   useEffect(() => {
@@ -135,8 +171,12 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
   const displayGroups = runtimeGroups.map((group) => activeRecomputeOverride?.groupId === group.id && activeRecomputeOverride.eventId === group.event?.id ? groupFromEventRecompute(group, activeRecomputeOverride) : group);
   const preferredGroup = displayGroups.find((group) => group.key === "so") ?? displayGroups[0] ?? scenario.groups.so;
   const selected = displayGroups.find((group) => group.id === selectedGroupId) ?? preferredGroup;
-  const activeTemplateId = state.activeTemplateOverrides[overrideKey] ?? selected.templateId;
-  const templateFor = (group: DemoGroup) => { const id = state.activeTemplateOverrides[`${serverId}:${group.id}`] ?? group.templateId; return state.templates.find((item) => item.id === id) ?? state.templates.find((item) => item.family === group.family); };
+  const activeTemplateId = selectedGroupScope?.settings.activeTemplateId ?? state.activeTemplateOverrides[overrideKey] ?? selected.templateId;
+  const templateFor = (group: DemoGroup) => {
+    const scopeId = workspaceScopeId("group", serverId, group.id);
+    const id = groupScopes[scopeId]?.settings.activeTemplateId ?? state.activeTemplateOverrides[`${serverId}:${group.id}`] ?? group.templateId;
+    return state.templates.find((item) => item.id === id) ?? state.templates.find((item) => item.family === group.family);
+  };
   const groupForFamily = (key: GroupKey) => displayGroups.find((group) => group.key === key) ?? scenario.groups[key];
   const templateValues = { si: templateFor(groupForFamily("si"))?.values ?? [120, 120, 120], so: templateFor(groupForFamily("so"))?.values ?? [2, 0] };
   const activeAlertGroup = displayGroups.find((group) => group.alert); const activeAlert = activeAlertGroup?.alert; const muted = mutedUntil === "restart" || typeof mutedUntil === "number";
@@ -151,6 +191,19 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
     const closeTimer = window.setTimeout(() => { void context.close().catch(() => undefined); }, 320);
     return () => { window.clearTimeout(closeTimer); try { oscillator.stop(); } catch { /* already stopped */ } void context.close().catch(() => undefined); };
   }, [activeAlert?.id, activeAlert?.severity, muted]);
+
+  const persistServerScope = async (patch: Partial<ServerScopedSettings>) => {
+    const id = workspaceScopeId("server", serverId);
+    try {
+      const current = serverScope?.id === id ? serverScope : (() => null)();
+      const loaded = current ?? await readWorkspaceScope<ServerScopedSettings>("server", id).then((scope) => ({ id, settings: scope.state ?? {}, revision: scope.revision, available: scope.available }));
+      if (!loaded.available) return;
+      const settings = { ...loaded.settings, ...patch };
+      const result = await writeWorkspaceScope("server", id, settings, loaded.revision, "server-settings", Object.keys(patch).join(","));
+      if (result.conflict) { toast.error("הגדרות השרת השתנו במקביל; השינוי המקומי לא נשמר"); return; }
+      if (result.ok) setServerScope({ id, settings, revision: result.revision, available: true });
+    } catch (error) { toast.error(error instanceof Error ? `שמירת הגדרות שרת נכשלה: ${error.message}` : "שמירת הגדרות שרת נכשלה"); }
+  };
 
   const chooseTemplate = async (id: string, mode: "now" | "event-start") => {
     let recomputedResult: EventRecomputeResult | null = null;
@@ -184,13 +237,46 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
         requiredTemplateVersion: recomputedResult.templateVersion,
       },
     } : state.investigationEdits;
-    const next = {
-      ...state,
-      activeTemplateOverrides: { ...state.activeTemplateOverrides, [overrideKey]: id },
-      templateApplications: { ...state.templateApplications, [overrideKey]: versionedApplication },
-      investigationEdits,
-    };
-    await save(next, "operator", "template-override", `${selected.id} → ${id} · ${mode}${recomputedResult ? ` · run ${recomputedResult.runId} · code ${recomputedResult.codeVersion} · config ${recomputedResult.configVersion}` : ""}`);
+
+    const scopeId = workspaceScopeId("group", serverId, selectedBase.id);
+    let scopedSaved = false;
+    try {
+      const cached = groupScopes[scopeId];
+      const loaded = cached ?? await readWorkspaceScope<GroupScopedSettings>("group", scopeId).then((scope) => ({ id: scopeId, settings: scope.state ?? {}, revision: scope.revision, available: scope.available }));
+      if (loaded.available) {
+        const settings: GroupScopedSettings = { activeTemplateId: id, templateApplication: versionedApplication };
+        const result = await writeWorkspaceScope("group", scopeId, settings, loaded.revision, "template-override", `${selectedBase.id} → ${id} · ${mode}`);
+        if (result.conflict) { toast.error("הגדרות הקבוצה השתנו במקביל; רענן לפני החלפת תבנית נוספת"); return; }
+        if (result.ok) {
+          setGroupScopes((current) => ({ ...current, [scopeId]: { id: scopeId, settings, revision: result.revision, available: true } }));
+          scopedSaved = true;
+        }
+      }
+    } catch (error) { toast.error(error instanceof Error ? `שמירת הגדרות קבוצה נכשלה: ${error.message}` : "שמירת הגדרות קבוצה נכשלה"); return; }
+
+    if (scopedSaved) {
+      // Keep the old in-memory fields as a compatibility mirror for components
+      // that have not yet moved to scoped storage. They are deliberately not
+      // persisted as the source of truth in offline mode.
+      setState((current) => ({
+        ...current,
+        activeTemplateOverrides: { ...current.activeTemplateOverrides, [overrideKey]: id },
+        templateApplications: { ...current.templateApplications, [overrideKey]: versionedApplication },
+      }));
+      if (recomputedResult && eventId) {
+        const persisted = await save({ ...state, investigationEdits }, "operator", "event-recompute-metadata", `${selected.id} → ${id} · ${mode} · run ${recomputedResult.runId}`);
+        if (!persisted) toast.warning("התבנית נשמרה ב־group scope, אך metadata התחקור לא נשמר; יש לרענן לפני הפקת דוח");
+      }
+    } else {
+      const next = {
+        ...state,
+        activeTemplateOverrides: { ...state.activeTemplateOverrides, [overrideKey]: id },
+        templateApplications: { ...state.templateApplications, [overrideKey]: versionedApplication },
+        investigationEdits,
+      };
+      const persisted = await save(next, "operator", "template-override", `${selected.id} → ${id} · ${mode}${recomputedResult ? ` · run ${recomputedResult.runId} · code ${recomputedResult.codeVersion} · config ${recomputedResult.configVersion}` : ""}`);
+      if (!persisted) return;
+    }
     setRecomputeOverride(recomputedResult);
     setTemplateDialog(false);
     toast.success(mode === "event-start" ? "התבנית נשמרה לאחר חישוב מחדש אמיתי; הכרטיס, הגרף, העקבה והדוח נעולים לאותה גרסת תוצאה" : "התבנית הוחלה מעכשיו; העבר נשמר ללא חישוב חוזר");
@@ -203,7 +289,7 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
   const chooseVehicleGroup = (id: number, key: GroupKey) => displayGroups.find((group) => group.key === key && group.members.some((member) => member.id === id)) ?? chooseFamilyGroup(key);
 
   return <div className="operator-workspace v04-operator">
-    <section className="live-map-panel glass-panel" ref={mapRef}><div className="section-toolbar"><div><p className="eyebrow">מפה חיה · {arena}</p><h2>{serverName}</h2><div className="live-context"><span className={`source-badge ${dataMode}`}><Radio />{dataMode === "simulation" ? "SIMULATION" : influxConfigured ? "INFLUXDB 2" : "INFLUX חסר"}</span><span><Clock3 />טיק בעוד {running ? countdown : "—"} שנ׳</span><span>{scenario.status}</span></div></div><div className="toolbar-actions"><Select value={arena} onValueChange={setArena}><SelectTrigger className="v04-arena-select"><SelectValue /></SelectTrigger><SelectContent>{state.arenas.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select><Select value={mapProfile} onValueChange={setMapProfile}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.mapServers.filter((item) => item.enabled).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select><Button variant="outline" size="icon" onClick={() => setRunning((value) => !value)}>{running ? <Pause /> : <Play />}</Button><Button variant="outline" size="icon" onClick={enterFullscreen}><Expand /></Button></div></div><div className="v04-map-toolbar">{dataMode === "simulation" ? <div><Button size="sm" variant={showRelations ? "default" : "outline"} onClick={() => setShowRelations((v) => !v)}><Focus />יחסים</Button></div> : <span>CORE: מוצגים רק מיקומי WGS84 תקפים · auto-fit לכל הקבוצות</span>}<Button size="sm" variant={showTrace ? "default" : "outline"} onClick={() => setShowTrace(v => !v)}>עקבה לפי סנכרון</Button><span>עקבה: ירוק ≥80 · צהוב 50–79 · אדום &lt;50 · אפור ללא ציון</span></div><div className="map-stage">{dataMode === "influx" ? <OperationalLiveMap serverId={serverId} selectedGroupId={selected.id} selectedVehicle={selectedVehicle} vehicleTypes={state.vehicleTypes} showGrid showTrace={showTrace} recomputeOverride={activeRecomputeOverride} onSelectGroup={(groupId) => { setSelectedGroupId(groupId); setSelectedVehicle(null); }} onSelectVehicle={(id, groupId) => { setSelectedGroupId(groupId); setSelectedVehicle(id); }} /> : <GovernedLiveMap serverId={serverId} tick={tick} selectedGroup={selected.key} selectedVehicle={selectedVehicle} showTrace={showTrace} showRoutes showRelations={showRelations} showGrid vehicleTypes={state.vehicleTypes} templateValues={templateValues} mapProfile={mapProfile} onSelectGroup={(key) => { const group = chooseFamilyGroup(key); setSelectedGroupId(group.id); setSelectedVehicle(null); }} onSelectVehicle={(id, key) => { const group = chooseVehicleGroup(id, key); setSelectedGroupId(group.id); setSelectedVehicle(id); }} />}</div></section>
+    <section className="live-map-panel glass-panel" ref={mapRef}><div className="section-toolbar"><div><p className="eyebrow">מפה חיה · {arena}</p><h2>{serverName}</h2><div className="live-context"><span className={`source-badge ${dataMode}`}><Radio />{dataMode === "simulation" ? "SIMULATION" : influxConfigured ? "INFLUXDB 2" : "INFLUX חסר"}</span><span><Clock3 />טיק בעוד {running ? countdown : "—"} שנ׳</span><span>{scenario.status}</span></div></div><div className="toolbar-actions"><Select value={arena} onValueChange={(value) => { setArena(value); void persistServerScope({ arena: value }); }}><SelectTrigger className="v04-arena-select"><SelectValue /></SelectTrigger><SelectContent>{state.arenas.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select><Select value={mapProfile} onValueChange={(value) => { setMapProfile(value); void persistServerScope({ mapProfile: value }); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.mapServers.filter((item) => item.enabled).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select><Button variant="outline" size="icon" onClick={() => setRunning((value) => !value)}>{running ? <Pause /> : <Play />}</Button><Button variant="outline" size="icon" onClick={enterFullscreen}><Expand /></Button></div></div><div className="v04-map-toolbar">{dataMode === "simulation" ? <div><Button size="sm" variant={showRelations ? "default" : "outline"} onClick={() => setShowRelations((v) => !v)}><Focus />יחסים</Button></div> : <span>CORE: מוצגים רק מיקומי WGS84 תקפים · auto-fit לכל הקבוצות</span>}<Button size="sm" variant={showTrace ? "default" : "outline"} onClick={() => setShowTrace(v => !v)}>עקבה לפי סנכרון</Button><span>עקבה: ירוק ≥80 · צהוב 50–79 · אדום &lt;50 · אפור ללא ציון</span></div><div className="map-stage">{dataMode === "influx" ? <OperationalLiveMap serverId={serverId} selectedGroupId={selected.id} selectedVehicle={selectedVehicle} vehicleTypes={state.vehicleTypes} showGrid showTrace={showTrace} recomputeOverride={activeRecomputeOverride} onSelectGroup={(groupId) => { setSelectedGroupId(groupId); setSelectedVehicle(null); }} onSelectVehicle={(id, groupId) => { setSelectedGroupId(groupId); setSelectedVehicle(id); }} /> : <GovernedLiveMap serverId={serverId} tick={tick} selectedGroup={selected.key} selectedVehicle={selectedVehicle} showTrace={showTrace} showRoutes showRelations={showRelations} showGrid vehicleTypes={state.vehicleTypes} templateValues={templateValues} mapProfile={mapProfile} onSelectGroup={(key) => { const group = chooseFamilyGroup(key); setSelectedGroupId(group.id); setSelectedVehicle(null); }} onSelectVehicle={(id, key) => { const group = chooseVehicleGroup(id, key); setSelectedGroupId(group.id); setSelectedVehicle(id); }} />}</div></section>
     <aside className="live-summary"><div className="summary-heading"><div><p className="eyebrow">קבוצות פעילות</p><h2>מצב נוכחי</h2></div><Badge variant="outline">{displayGroups.length} קבוצות</Badge></div>{displayGroups.map((group) => <GroupCard key={group.id} group={group} selected={selected.id === group.id} vehicleTypes={state.vehicleTypes} templateName={templateFor(group)?.name ?? "ללא תבנית"} onSelect={() => { setSelectedGroupId(group.id); setSelectedVehicle(null); }} onSelectVehicle={(id) => { setSelectedGroupId(group.id); setSelectedVehicle(id); }} onTemplate={() => { setSelectedGroupId(group.id); setTemplateDialog(true); }} />)}{selectedVehicle && <VehicleDetail group={selected} id={selectedVehicle} vehicleTypes={state.vehicleTypes} onClose={() => setSelectedVehicle(null)} />}</aside>
     <section className="timeline-panel glass-panel"><div className="section-toolbar"><div><p className="eyebrow">ציונים רציפים</p><h2>קבוצות לאורך זמן</h2></div><div className="toolbar-actions"><div className="segmented-control">{(["sync", "route", "total"] as ScoreLayer[]).map((layer) => <button type="button" key={layer} className={layers.includes(layer) ? "active" : ""} onClick={() => toggleLayer(layer)}>{layer === "sync" ? "סנכרון" : layer === "route" ? "נתיב" : "כולל"}</button>)}</div><Button variant="outline" size="sm" onClick={onInvestigate}><History />תחקור</Button></div></div>{dataMode === "influx" ? <OperationalTimeline serverId={serverId} selectedGroupId={selected.id} layers={layers} cursor={cursor} onCursor={setCursor} selectedVehicle={selectedVehicle} recomputeOverride={activeRecomputeOverride} /> : <SimulationTimeline serverId={serverId} selected={selected.key} layers={layers} cursor={cursor} onCursor={setCursor} selectedVehicle={selectedVehicle} />}<div className="timeline-footer"><span>אירוע = קבוצתיות רציפה. קווי האירועים אינם התראות.</span><span>{dataMode === "influx" ? "הגרף מבוסס snapshots אמיתיים מה־Core" : "לחיצה על הגרף מזיזה את הסמן"}</span></div></section>
     {activeAlert && <section className={`active-alert v04-live-alert glass-panel ${activeAlert.severity}`}><TriangleAlert /><div><span>התראה חיה · {activeAlertGroup?.id}</span><strong>{activeAlert.title}</strong><p>{activeAlert.detail}</p></div><div className="alert-actions">{muted ? <Button variant="outline" size="sm" onClick={() => setMutedUntil(null)}><VolumeX />בטל השתקה</Button> : <><Button variant="outline" size="sm" onClick={() => muteFor(5)}>5 דק׳</Button><Button variant="outline" size="sm" onClick={() => muteFor(15)}>15 דק׳</Button><Button variant="outline" size="sm" onClick={() => muteFor(30)}>30 דק׳</Button><Button variant="outline" size="sm" onClick={() => muteFor("restart")}><Volume2 />עד restart</Button></>}<Button size="sm" onClick={() => toast.success("ההתראה סומנה כטופלה; היא לא הופכת לאירוע תחקור")}><BellRing />טופל</Button></div></section>}
