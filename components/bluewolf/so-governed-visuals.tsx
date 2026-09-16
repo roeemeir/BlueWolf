@@ -20,6 +20,8 @@ import {
 } from "./visuals";
 
 const ringRadius: Record<string, number> = { inner: 48, middle: 82, outer: 116 };
+const SIM_TICKS_PER_MINUTE = 12;
+const SIM_TRACE_RETENTION_MINUTES = 90;
 
 function lerp(a: SoPoint, b: SoPoint, t: number): SoPoint {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
@@ -53,7 +55,7 @@ function DirectionCue({ a, b, relation, reverse = false }: { a: SoPoint; b: SoPo
   return <g className={`v04-direction-cue ${relation}`}><line x1={start.x} y1={start.y} x2={end.x} y2={end.y} /><path d={`M${end.x},${end.y} l${-direction.x * 8 + -direction.y * 4},${-direction.y * 8 + direction.x * 4} M${end.x},${end.y} l${-direction.x * 8 + direction.y * 4},${-direction.y * 8 - direction.x * 4}`} /></g>;
 }
 
-export function GovernedLiveMap({ serverId, tick, selectedGroup, selectedVehicle, showTrace, showRoutes, showRelations, showGrid, vehicleTypes, templateValues, mapProfile = "engineering", animate = true, onSelectGroup, onSelectVehicle }: { serverId: string; tick: number; selectedGroup: GroupKey; selectedVehicle: number | null; showTrace: boolean; showRoutes: boolean; showRelations: boolean; showGrid: boolean; vehicleTypes: VehicleType[]; templateValues?: Partial<Record<GroupKey, number[]>>; mapProfile?: string; animate?: boolean; onSelectGroup: (key: GroupKey) => void; onSelectVehicle: (id: number, group: GroupKey) => void }) {
+export function GovernedLiveMap({ serverId, tick, selectedGroup, selectedVehicle, showTrace, showObservedTrace = false, showRoutes, showRelations, showGroups = true, showGrid, traceWindowMinutes = 30, vehicleTypes, templateValues, mapProfile = "engineering", animate = true, onSelectGroup, onSelectVehicle }: { serverId: string; tick: number; selectedGroup: GroupKey; selectedVehicle: number | null; showTrace: boolean; showObservedTrace?: boolean; showRoutes: boolean; showRelations: boolean; showGroups?: boolean; showGrid: boolean; traceWindowMinutes?: number; vehicleTypes: VehicleType[]; templateValues?: Partial<Record<GroupKey, number[]>>; mapProfile?: string; animate?: boolean; onSelectGroup: (key: GroupKey) => void; onSelectVehicle: (id: number, group: GroupKey) => void }) {
   const scenario = getServerScenario(serverId);
   const progress = ((tick * .028) + Number(serverId) * .013) % 1;
   const typeById = (typeId: string) => vehicleTypes.find((type) => type.id === typeId) ?? vehicleTypes[0];
@@ -78,22 +80,30 @@ export function GovernedLiveMap({ serverId, tick, selectedGroup, selectedVehicle
   const [traceFrames, setTraceFrames] = useState<{ server: string; tick: number; points: { x: number; y: number; id: number; sync: number }[] }[]>([]);
   useEffect(() => {
     const points = [...siPoints, ...soPoints].map((point) => ({ x: point.x, y: point.y, id: point.vehicle.id, sync: point.vehicle.sync }));
-    setTraceFrames((previous) => [...previous.filter((frame) => frame.server === serverId && frame.tick < tick && frame.tick >= tick - 360), { server: serverId, tick, points }]);
+    const retentionTicks = SIM_TRACE_RETENTION_MINUTES * SIM_TICKS_PER_MINUTE;
+    setTraceFrames((previous) => [...previous.filter((frame) => frame.server === serverId && frame.tick < tick && frame.tick >= tick - retentionTicks), { server: serverId, tick, points }]);
     // Simulation navigation is deterministic for server/tick; repainting is not a new sample.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId, tick]);
 
   const relations = (templateValues?.so ?? [2, 0]).map(relationFromCode);
   const mapClass = mapProfile === "orthophoto" ? "orthophoto" : "engineering";
-  return <svg className={`map-svg v04-live-map ${mapClass}`} viewBox="0 0 1000 570" role="img" aria-label="מפה חיה של קבוצות SI ו-SO" data-requirements="GEO-01 GEO-02">
+  const windowTicks = Math.max(1, Math.round(traceWindowMinutes * SIM_TICKS_PER_MINUTE));
+  const visibleTraceFrames = traceFrames.filter((frame) => frame.server === serverId && frame.tick >= tick - windowTicks);
+  const traceLines = visibleTraceFrames.slice(1).flatMap((frame, index) => frame.points.flatMap((point) => {
+    const prior = visibleTraceFrames[index]?.points.find((item) => item.id === point.id);
+    return prior ? [{ frame, point, prior }] : [];
+  }));
+  return <svg className={`map-svg v04-live-map ${mapClass}`} viewBox="0 0 1000 570" role="img" aria-label="מפה חיה של קבוצות SI ו-SO" data-requirements="GEO-01 GEO-02 OP-02">
     <defs><pattern id={`v04-grid-${serverId}`} width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" className="v04-grid-line" /></pattern></defs>
     <rect width="1000" height="570" fill="var(--map-bg)" /><rect width="1000" height="570" className="v04-map-wash" />{showGrid && <rect width="1000" height="570" fill={`url(#v04-grid-${serverId})`} />}
     <g className="v04-map-labels"><text x="38" y="45">SI · טבעות</text><text x="455" y="45">SO · שרשרת היפודרומים</text><text x="455" y="68">30° מדויק · רווח פיזי בין מסלולים · ללא חיבור קצוות</text></g>
     {showRoutes && <g className="v04-routes"><g className={selectedGroup === "si" ? "active" : ""} onClick={() => onSelectGroup("si")}>{(["inner", "middle", "outer"] as const).map((ring) => <circle key={ring} cx={siCenter.x} cy={siCenter.y} r={ringRadius[ring]} className="v04-si-route" />)}</g><g className={selectedGroup === "so" ? "active" : ""} onClick={() => onSelectGroup("so")}>{soRoutes.map((route) => <path key={route.routeIndex} d={route.path} className={`v04-so-route ${route.kind === "double" ? "double" : ""}`} />)}</g></g>}
-    {showTrace && <g className="score-trace">{traceFrames.filter((frame) => frame.server === serverId).slice(1).flatMap((frame, index) => frame.points.flatMap((point) => { const prior = traceFrames[index]?.points.find((item) => item.id === point.id); return prior ? [<line key={`${frame.tick}:${point.id}`} x1={prior.x} y1={prior.y} x2={point.x} y2={point.y} style={{ stroke: traceScoreColor(point.sync) }} />] : []; }))}</g>}
+    {showObservedTrace && <g className="observed-trace">{traceLines.map(({ frame, point, prior }) => <line key={`observed:${frame.tick}:${point.id}`} x1={prior.x} y1={prior.y} x2={point.x} y2={point.y} stroke="#7b8790" strokeWidth="2" opacity=".58" />)}</g>}
+    {showTrace && <g className="score-trace">{traceLines.map(({ frame, point, prior }) => <line key={`score:${frame.tick}:${point.id}`} x1={prior.x} y1={prior.y} x2={point.x} y2={point.y} style={{ stroke: traceScoreColor(point.sync) }} />)}</g>}
     {showRelations && selectedGroup === "so" && <g>{soRoutes.slice(0, -1).map((route, index) => <g key={route.routeIndex}><RelationBadge first={route.center} second={soRoutes[index + 1].center} relation={relations[index] ?? "mixed"} /><DirectionCue a={route.center} b={soRoutes[index + 1].center} relation={relations[index] ?? "mixed"} reverse={relations[index] === "opposite"} /></g>)}</g>}
     {showRelations && selectedGroup === "si" && <g className="v04-si-relations">{siPoints.map((point, index) => siPoints.slice(index + 1).map((other, offset) => { const pairIndex = index * siPoints.length - (index * (index + 1)) / 2 + offset; const angle = templateValues?.si?.[pairIndex] ?? 120; const middle = lerp(point, other, .5); return <g key={`${point.vehicle.id}-${other.vehicle.id}`}><line x1={point.x} y1={point.y} x2={other.x} y2={other.y} /><rect x={middle.x - 24} y={middle.y - 12} width="48" height="24" rx="12" /><text x={middle.x} y={middle.y + 4} textAnchor="middle">{angle}°</text></g>; }))}</g>}
-    <g className="v04-vehicles">{siPoints.map((point) => <VehicleMarker key={point.vehicle.id} x={point.x} y={point.y} heading={point.heading} id={point.vehicle.id} color={groupLineColor.si} icon={typeById(point.vehicle.typeId)?.icon ?? "rover"} selected={selectedVehicle === point.vehicle.id} onClick={() => onSelectVehicle(point.vehicle.id, "si")} />)}{soPoints.map((point) => <VehicleMarker key={point.vehicle.id} x={point.x} y={point.y} heading={point.heading} id={point.vehicle.id} color={groupLineColor.so} icon={typeById(point.vehicle.typeId)?.icon ?? "rover"} selected={selectedVehicle === point.vehicle.id} onClick={() => onSelectVehicle(point.vehicle.id, "so")} />)}</g>
+    {showGroups && <g className="v04-vehicles">{siPoints.map((point) => <VehicleMarker key={point.vehicle.id} x={point.x} y={point.y} heading={point.heading} id={point.vehicle.id} color={groupLineColor.si} icon={typeById(point.vehicle.typeId)?.icon ?? "rover"} selected={selectedVehicle === point.vehicle.id} onClick={() => onSelectVehicle(point.vehicle.id, "si")} />)}{soPoints.map((point) => <VehicleMarker key={point.vehicle.id} x={point.x} y={point.y} heading={point.heading} id={point.vehicle.id} color={groupLineColor.so} icon={typeById(point.vehicle.typeId)?.icon ?? "rover"} selected={selectedVehicle === point.vehicle.id} onClick={() => onSelectVehicle(point.vehicle.id, "so")} />)}</g>}
     <g className="v04-map-scale"><path d="M42 520h90" /><text x="42" y="510">100 מ׳</text><text x="955" y="535" textAnchor="end">{animate ? "LIVE" : "SNAPSHOT"}</text></g>
   </svg>;
 }
