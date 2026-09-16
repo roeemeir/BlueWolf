@@ -166,7 +166,7 @@ export const DEFAULT_WORKSPACE: WorkspaceState = {
     { id: "engineering", name: "מפת הנדסה", urlTemplate: "https://maps.internal/engineering/{z}/{x}/{y}.png", attribution: "BlueWolf GIS", enabled: true, isDefault: true },
     { id: "orthophoto", name: "אורתופוטו מאושר", urlTemplate: "https://maps.internal/ortho/{z}/{x}/{y}.jpg", attribution: "מאגר תצלומים ארגוני", enabled: true, isDefault: false },
   ],
-  influx: { url: "http://influx.internal:8086", organization: "blue-wolf", token: "", stream: { serverColumn: "server", timeColumn: "_time", vehicleNumberColumn: "vehicle_number" }, idleProbeMinutes: 5, activePollSeconds: 5, joinToleranceSeconds: 5, mappings: DEFAULT_INFLUX_MAPPINGS },
+  influx: { url: "http://influx.internal:8086", organization: "blue-wolf", token: "", stream: { serverColumn: "server", timeColumn: "_time", vehicleNumberColumn: "vehicle_number" }, idleProbeMinutes: 5, activePollSeconds: 3, joinToleranceSeconds: 5, mappings: DEFAULT_INFLUX_MAPPINGS },
   servers: Array.from({ length: 3 }, (_, index) => ({ id: String(index + 1), name: `שרת ${String(index + 1).padStart(2, "0")}`, enabled: true, influxTag: String(index + 1) })),
   arenas: ["זירה א׳", "זירה ב׳", "זירה ג׳"],
   vehicleTypes: [
@@ -180,7 +180,7 @@ export const DEFAULT_WORKSPACE: WorkspaceState = {
   ],
   activeTemplateOverrides: {},
   templateApplications: {},
-  settings: { timezone: "Asia/Jerusalem", retentionDays: 90, maxSoVehicles: 8, uiRefreshSeconds: 5, defaultMap: "engineering" },
+  settings: { timezone: "Asia/Jerusalem", retentionDays: 90, maxSoVehicles: 8, uiRefreshSeconds: 2, defaultMap: "engineering" },
   investigationEdits: {},
 };
 
