@@ -43,6 +43,7 @@ export type LiveRuntimeVehicle = DemoVehicle & {
   latitude?: number;
   longitude?: number;
   headingDeg?: number;
+  speedMps?: number;
 };
 
 export type LiveRuntimeGroup = Omit<DemoGroup, "members" | "alert"> & {
@@ -188,6 +189,11 @@ function normalizeVehicle(value: unknown): LiveRuntimeVehicle | null {
     if (typeof row.headingDeg !== "number" || !Number.isFinite(row.headingDeg)) return null;
     headingDeg = ((row.headingDeg % 360) + 360) % 360;
   }
+  let speedMps: number | undefined;
+  if (row.speedMps !== undefined) {
+    if (typeof row.speedMps !== "number" || !Number.isFinite(row.speedMps) || row.speedMps < 0) return null;
+    speedMps = row.speedMps;
+  }
 
   return {
     id: row.id,
@@ -203,6 +209,7 @@ function normalizeVehicle(value: unknown): LiveRuntimeVehicle | null {
     latitude,
     longitude,
     headingDeg,
+    speedMps,
   };
 }
 
