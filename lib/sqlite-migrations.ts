@@ -94,6 +94,26 @@ const MIGRATIONS: readonly LocalSchemaMigration[] = [
       `);
     },
   },
+  {
+    id: "004-map-tile-cache",
+    apply(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS map_tile_cache (
+          cache_key TEXT PRIMARY KEY,
+          source_id TEXT NOT NULL,
+          content_type TEXT NOT NULL,
+          body BLOB NOT NULL,
+          byte_length INTEGER NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          last_accessed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS map_tile_cache_source_recent
+          ON map_tile_cache(source_id,last_accessed_at DESC);
+        CREATE INDEX IF NOT EXISTS map_tile_cache_lru
+          ON map_tile_cache(last_accessed_at ASC);
+      `);
+    },
+  },
 ] as const;
 
 function ensureMigrationLedger(db: DatabaseSync) {
