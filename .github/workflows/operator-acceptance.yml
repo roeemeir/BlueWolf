@@ -27,6 +27,7 @@ jobs:
             tests/operator-speed-ui.test.mjs \
             tests/speed-units.test.mjs \
             tests/op04-template-recompute-ui.test.mjs \
+            tests/op04-shared-result.test.mjs \
             tests/op05-timeline-visibility.test.mjs \
             tests/op05-timeline-window.test.mjs \
             tests/operator-alert-mute.test.mjs
