@@ -1,0 +1,34 @@
+name: Blue Wolf Operator Acceptance
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: bluewolf-operator-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  operator-acceptance:
+    name: OP-01..05 + BW-UI-008
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Run operator acceptance regressions
+        run: |
+          node --test \
+            tests/op01-arena-presentation.test.mjs \
+            tests/op02-map-layers.test.mjs \
+            tests/operator-speed-ui.test.mjs \
+            tests/speed-units.test.mjs \
+            tests/op04-template-recompute-ui.test.mjs \
+            tests/op05-timeline-visibility.test.mjs \
+            tests/op05-timeline-window.test.mjs \
+            tests/operator-alert-mute.test.mjs
+      - name: Type-check operator surfaces
+        run: npx tsc --noEmit
