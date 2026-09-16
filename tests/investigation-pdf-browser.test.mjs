@@ -118,9 +118,10 @@ test('legacy event without route evidence remains renderable without invented ro
   assert.doesNotMatch(source, /buildSoSmileGeometry/);
 });
 
-test('REP-01/02 renderer remains the base of the lifecycle PDF and keeps local RTL truth-backed rendering', async () => {
+test('REP-01/02 renderer remains the base of lifecycle and release PDF with local RTL truth-backed rendering', async () => {
   const source = await readFile('lib/investigation-pdf-browser.ts', 'utf8');
   const lifecycle = await readFile('lib/investigation-pdf-lifecycle.ts', 'utf8');
+  const release = await readFile('lib/investigation-pdf-release.ts', 'utf8');
   const panel = await readFile('components/bluewolf/investigation-report-panel.tsx', 'utf8');
   assert.match(source, /זאב כחול — דוח תחקור הנדסי/);
   assert.match(source, /summaryMapPage/);
@@ -137,8 +138,11 @@ test('REP-01/02 renderer remains the base of the lifecycle PDF and keeps local R
   assert.match(lifecycle, /buildInvestigationPdfBrowser/);
   assert.match(lifecycle, /extractCanvasJpegPages/);
   assert.match(lifecycle, /jpegPagesToPdf\(\[\.\.\.basePages, \.\.\.lifecycle\]\)/);
+  assert.match(release, /buildInvestigationPdfWithLifecycle/);
+  assert.match(release, /buildInvestigationWmtsMapPages/);
+  assert.match(release, /jpegPagesToPdf\(\[\.\.\.engineeringPages, \.\.\.mapPages\]\)/);
   assert.match(panel, /format: "data"/);
   assert.match(panel, /normalizeInvestigationReportData/);
-  assert.match(panel, /buildInvestigationPdfWithLifecycle/);
+  assert.match(panel, /buildInvestigationReleasePdf/);
   assert.match(panel, /אין `window\.print\(\)`, CDN או fallback ל-demo/);
 });
