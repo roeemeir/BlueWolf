@@ -15,6 +15,9 @@ async function database() {
     fs.mkdirSync(path.dirname(filename), { recursive: true });
     const db: DatabaseSync = new DatabaseSync(filename);
     db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
+      CREATE TABLE IF NOT EXISTS local_schema_migrations (
+        id TEXT PRIMARY KEY,
+        applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
       CREATE TABLE IF NOT EXISTS workspaces (
         id TEXT PRIMARY KEY, state TEXT NOT NULL, revision INTEGER NOT NULL,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -36,7 +39,15 @@ async function database() {
         ON workspace_versions(workspace_id, revision DESC);
       INSERT OR IGNORE INTO workspace_versions(workspace_id,revision,state,category,action,detail,created_at)
         SELECT id,revision,state,'migration','snapshot','Backfilled current workspace during version-history migration',updated_at
-        FROM workspaces WHERE revision > 0;`);
+        FROM workspaces WHERE revision > 0;
+      INSERT OR IGNORE INTO local_schema_migrations(id) VALUES('001-workspace-version-history');
+      CREATE TABLE IF NOT EXISTS map_source_secrets (
+        workspace_id TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        token TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(workspace_id, source_id));
+      INSERT OR IGNORE INTO local_schema_migrations(id) VALUES('002-map-source-secrets');`);
     return db;
   })().catch((error) => { connection = undefined; throw error; });
   return connection;
@@ -63,6 +74,44 @@ export async function readLocalWorkspaceVersion(id: string, revision: number) {
     FROM workspace_versions WHERE workspace_id=? AND revision=?`).get(id, revision);
   if (!row) return null;
   return { ...row, state: JSON.parse(String(row.state)) };
+}
+
+export async function readLocalMapSourceToken(workspaceId: string, sourceId: string) {
+  const db = await database();
+  const row = db.prepare("SELECT token FROM map_source_secrets WHERE workspace_id=? AND source_id=?").get(workspaceId, sourceId);
+  return row ? String(row.token) : null;
+}
+
+export async function hasLocalMapSourceToken(workspaceId: string, sourceId: string) {
+  const db = await database();
+  const row = db.prepare("SELECT 1 AS present FROM map_source_secrets WHERE workspace_id=? AND source_id=?").get(workspaceId, sourceId);
+  return Boolean(row);
+}
+
+export async function writeLocalMapSourceToken(workspaceId: string, sourceId: string, token: string) {
+  const normalized = token.trim();
+  if (!normalized) throw new Error("map source token must not be empty");
+  if (normalized.length > 4096) throw new Error("map source token is too large");
+  const db = await database();
+  db.prepare(`INSERT INTO map_source_secrets(workspace_id,source_id,token)
+    VALUES(?,?,?)
+    ON CONFLICT(workspace_id,source_id) DO UPDATE SET token=excluded.token,updated_at=CURRENT_TIMESTAMP`).run(workspaceId, sourceId, normalized);
+  db.prepare("INSERT INTO audit_entries(workspace_id,category,action,detail) VALUES(?,?,?,?)")
+    .run(workspaceId, "map-source", "set-token", `token updated for ${sourceId}`);
+  return { ok: true, sourceId, configured: true, storage: "sqlite" };
+}
+
+export async function deleteLocalMapSourceToken(workspaceId: string, sourceId: string) {
+  const db = await database();
+  db.prepare("DELETE FROM map_source_secrets WHERE workspace_id=? AND source_id=?").run(workspaceId, sourceId);
+  db.prepare("INSERT INTO audit_entries(workspace_id,category,action,detail) VALUES(?,?,?,?)")
+    .run(workspaceId, "map-source", "delete-token", `token removed for ${sourceId}`);
+  return { ok: true, sourceId, configured: false, storage: "sqlite" };
+}
+
+export async function listLocalSchemaMigrations() {
+  const db = await database();
+  return db.prepare("SELECT id,applied_at AS appliedAt FROM local_schema_migrations ORDER BY applied_at ASC,id ASC").all();
 }
 
 function currentRevision(db: DatabaseSync, id: string) {
