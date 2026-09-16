@@ -16,6 +16,11 @@ import {
   type OperatorTimelineWindowMinutes,
 } from "@/lib/operator-timeline";
 import { historyWithEventRecompute } from "@/lib/operator-retroactive-result";
+import {
+  DISPLAY_SMOOTHING_OPTIONS_SECONDS,
+  smoothRuntimeHistoryForDisplay,
+  type DisplaySmoothingSeconds,
+} from "@/lib/display-score-smoothing";
 import type { ScoreLayer } from "./visuals";
 
 type GroupMeta = { id: string; color: string; name: string };
@@ -75,6 +80,7 @@ export function OperationalTimeline({
   recomputeOverride?: EventRecomputeResult | null;
 }) {
   const [windowMinutes, setWindowMinutes] = useState<OperatorTimelineWindowMinutes>(30);
+  const [smoothingSeconds, setSmoothingSeconds] = useState<DisplaySmoothingSeconds>(10);
   const [explicitGroupIds, setExplicitGroupIds] = useState<string[]>([]);
   const originalHistory = getLiveRuntimeHistory(serverId);
   const recomputeGroup = recomputeOverride
@@ -83,7 +89,8 @@ export function OperationalTimeline({
   const rawHistory = recomputeOverride && recomputeGroup
     ? historyWithEventRecompute(originalHistory, recomputeOverride, recomputeGroup)
     : originalHistory;
-  const history = filterByDataWindow(rawHistory, windowMinutes);
+  const displayHistory = smoothRuntimeHistoryForDisplay(rawHistory, smoothingSeconds);
+  const history = filterByDataWindow(displayHistory, windowMinutes);
   const metadata = new Map<string, GroupMeta>();
   for (const point of history) for (const group of groupsFor(point)) {
     if (!metadata.has(group.id)) metadata.set(group.id, { id: group.id, color: group.color, name: group.name });
@@ -101,10 +108,13 @@ export function OperationalTimeline({
     return next.length === groups.length ? [] : next;
   });
 
-  return <div className="operational-timeline-shell" dir="rtl" data-requirements="OP-04 OP-05">
+  return <div className="operational-timeline-shell" dir="rtl" data-requirements="OP-04 OP-05 BW-SYNC-013">
     <div className="v04-timeline-controls" style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
       <div className="segmented-control" aria-label="חלון זמן לפי נתוני Core">
         {OPERATOR_TIMELINE_WINDOWS.map((minutes) => <button type="button" key={minutes} className={windowMinutes === minutes ? "active" : ""} onClick={() => setWindowMinutes(minutes)}>{minutes} דק׳</button>)}
+      </div>
+      <div className="segmented-control" aria-label="החלקת תצוגה בלבד">
+        {DISPLAY_SMOOTHING_OPTIONS_SECONDS.map((seconds) => <button type="button" key={seconds} className={smoothingSeconds === seconds ? "active" : ""} onClick={() => setSmoothingSeconds(seconds)}>{seconds === 0 ? "RAW" : `${seconds}ש׳`}</button>)}
       </div>
       <div className="segmented-control" aria-label="סינון קבוצות מפורש">
         <button type="button" className={explicitGroupIds.length === 0 ? "active" : ""} onClick={() => setExplicitGroupIds([])}>כל הקבוצות</button>
@@ -112,7 +122,7 @@ export function OperationalTimeline({
       </div>
     </div>
     {recomputeOverride && <div className="card-hint" data-op04-version>אירוע {recomputeOverride.eventId} מוצג מ־run {recomputeOverride.runId.slice(0, 12)} · code {recomputeOverride.codeVersion.slice(0, 12)} · config {recomputeOverride.configVersion.slice(0, 12)}</div>}
-    <svg className="timeline-svg v04-timeline operational-timeline" viewBox="0 0 1000 260" role="img" aria-label={`היסטוריית ציוני Python Core · ${windowMinutes} דקות לפי זמן הנתונים`} onClick={(event) => {
+    <svg className="timeline-svg v04-timeline operational-timeline" viewBox="0 0 1000 260" role="img" aria-label={`היסטוריית ציוני Python Core · ${windowMinutes} דקות לפי זמן הנתונים · smoothing ${smoothingSeconds}s display only`} onClick={(event) => {
       if (count === 0) return;
       const rect = event.currentTarget.getBoundingClientRect();
       const relative = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
@@ -131,6 +141,6 @@ export function OperationalTimeline({
       <g className="v04-event-bands">{events.map((span) => <g key={`${span.groupId}:${span.id}`}><rect x={x(span.from)} y="218" width={Math.max(8, x(span.to) - x(span.from) + 6)} height="14" rx="7" fill={span.color} opacity=".35" /><text x={x(span.from) + 5} y="248">{span.id}</text></g>)}</g>
       {count > 0 && <><text x={left} y="254" className="chart-label">{timeLabel(history[0].observedAt)}</text><text x={right} y="254" textAnchor="end" className="chart-label">{timeLabel(history[count - 1].observedAt)}</text></>}
     </svg>
-    <div className="card-hint" style={{ marginTop: 4 }}>חלון הזמן נמדד יחסית ל־timestamp האחרון בנתונים, לא לשעון המחשב. כולל — רציף · סנכרון — מקווקו · נתיב — נקודות.</div>
+    <div className="card-hint" style={{ marginTop: 4 }}>חלון הזמן נמדד יחסית ל־timestamp האחרון בנתונים, לא לשעון המחשב. החלקה היא לתצוגה בלבד ({smoothingSeconds === 0 ? "RAW" : `${smoothingSeconds} שנ׳`}); ציוני Core, התראות ואירועים נשארים raw. כולל — רציף · סנכרון — מקווקו · נתיב — נקודות.</div>
   </div>;
 }
