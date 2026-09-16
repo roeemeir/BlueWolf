@@ -10,8 +10,8 @@ import { InfluxGovernanceWorkbench } from "./influx-governance-workbench";
 import { MapSourceGovernanceWorkbench } from "./map-source-governance-workbench";
 import { QaTruthWorkbench } from "./qa-truth-workbench";
 import { RouteBankWktWorkbench } from "./route-bank-wkt-workbench";
+import { SiTemplateGovernanceWorkbench } from "./si-template-governance-workbench";
 import { SoTemplateGovernanceWorkbench } from "./so-template-governance-workbench";
-import { TemplateGovernanceWorkbench } from "./template-governance-workbench";
 import { VehicleRangeWorkbench } from "./vehicle-range-workbench";
 import { WorkspaceRecoveryWorkbench } from "./workspace-recovery-workbench";
 
@@ -27,15 +27,7 @@ export function DeveloperGovernanceWorkbench() {
       .developer-template-tabs>[data-slot="tabs-list"]>[data-slot="tabs-trigger"]{min-width:120px;gap:7px}
       .developer-tab-intro{margin-bottom:12px;padding:14px 16px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,var(--surface-strong),var(--surface));box-shadow:var(--shadow),inset 0 1px 0 var(--glass-edge)}
       .developer-tab-intro h2{margin:0;font-size:17px}.developer-tab-intro p{margin:5px 0 0;color:var(--text-soft);font-size:12px}
-      /* SI-01: desktop hover previews a legal empty placement without changing state. */
-      [data-testid="si-direct-ring-board"] g[data-testid^="si-slot-"]:hover > circle[fill="transparent"][opacity="0.65"],
-      [data-testid="si-direct-ring-board"] g[data-testid^="si-slot-"]:focus-visible > circle[fill="transparent"][opacity="0.65"]{
-        fill:currentColor!important;opacity:.22!important;stroke-width:2.5!important;
-      }
-      /* SI and SO have independent editors. The old generic SO switch is not an editing path. */
-      [data-testid="template-governance-workbench"] .v04-family-switch>button:nth-child(2){display:none!important}
-      /* SO-01: vehicle type is an operational binding, not a template-authoring choice. The direct board keeps
-         its positional model while the legacy palette is removed from the active UX. */
+      /* SO-01: vehicle type is an operational binding, not a template-authoring choice. */
       [data-testid="so-direct-workbench"] [data-testid="so-vehicle-palette"]{display:none!important}
       .protected-legacy-developer .developer-nav nav>button:nth-child(2),
       .protected-legacy-developer .developer-nav nav>button:nth-child(3),
@@ -59,7 +51,7 @@ export function DeveloperGovernanceWorkbench() {
         <div className="developer-tab-intro"><h2>עורך תבניות</h2><p>SI ו־SO מופרדים למשטחי עריכה עצמאיים כדי למנוע ערבוב חוקים, סוגי מיקום וסמנטיקה.</p></div>
         <Tabs defaultValue="si" className="developer-template-tabs">
           <TabsList aria-label="משפחת תבנית"><TabsTrigger value="si"><SlidersHorizontal />SI</TabsTrigger><TabsTrigger value="so"><Map />SO</TabsTrigger></TabsList>
-          <TabsContent value="si"><TemplateGovernanceWorkbench /></TabsContent>
+          <TabsContent value="si"><SiTemplateGovernanceWorkbench /></TabsContent>
           <TabsContent value="so"><SoTemplateGovernanceWorkbench /></TabsContent>
         </Tabs>
       </TabsContent>
