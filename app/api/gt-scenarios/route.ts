@@ -41,7 +41,8 @@ export async function PUT(request: Request) {
     const expectedRevision = body.expectedRevision === undefined ? undefined : Number(body.expectedRevision);
     if (expectedRevision !== undefined && (!Number.isInteger(expectedRevision) || expectedRevision < 0)) throw new Error("expectedRevision is invalid");
     const result = await writeLocalGtScenario(body.scenario, expectedRevision);
-    return Response.json(result, { status: result.conflict ? 409 : 200 });
+    const conflict = "conflict" in result && result.conflict === true;
+    return Response.json(result, { status: conflict ? 409 : 200 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "GT scenario save failed" }, { status: 400 });
   }
@@ -55,8 +56,9 @@ export async function DELETE(request: Request) {
     if (!id) throw new Error("GT scenario id is required");
     const expectedRevision = params.has("revision") ? integer(params.get("revision"), 0, 0, 1_000_000_000) : undefined;
     const result = await deleteLocalGtScenario(id, expectedRevision);
-    const status = result.notFound ? 404 : result.conflict ? 409 : 200;
-    return Response.json(result, { status });
+    const notFound = "notFound" in result && result.notFound === true;
+    const conflict = "conflict" in result && result.conflict === true;
+    return Response.json(result, { status: notFound ? 404 : conflict ? 409 : 200 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "GT scenario delete failed" }, { status: 400 });
   }
