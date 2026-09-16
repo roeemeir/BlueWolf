@@ -114,6 +114,32 @@ const MIGRATIONS: readonly LocalSchemaMigration[] = [
       `);
     },
   },
+  {
+    id: "005-gt-scenarios",
+    apply(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS gt_scenarios (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          server_id TEXT NOT NULL,
+          arena TEXT NOT NULL,
+          start_at TEXT NOT NULL,
+          end_at TEXT NOT NULL,
+          group_count INTEGER NOT NULL,
+          state TEXT NOT NULL,
+          revision INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS gt_scenarios_recent
+          ON gt_scenarios(updated_at DESC,id);
+        CREATE INDEX IF NOT EXISTS gt_scenarios_server
+          ON gt_scenarios(server_id,updated_at DESC);
+        CREATE INDEX IF NOT EXISTS gt_scenarios_name
+          ON gt_scenarios(name COLLATE NOCASE);
+      `);
+    },
+  },
 ] as const;
 
 function ensureMigrationLedger(db: DatabaseSync) {
