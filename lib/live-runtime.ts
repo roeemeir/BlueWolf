@@ -37,6 +37,18 @@ export type LiveRuntimeEvent = {
   active: boolean;
 };
 
+export type LiveRuntimeRoutePoint = { latitude: number; longitude: number };
+export type LiveRuntimeDetectedRoute = {
+  routeInstanceId: string;
+  routeId: string;
+  family: string;
+  subtype: string;
+  topology: string;
+  direction: string;
+  detectionQuality: number;
+  centerline: LiveRuntimeRoutePoint[];
+};
+
 export type LiveRuntimeVehicle = DemoVehicle & {
   scoreValid: boolean;
   reasons?: string[];
@@ -50,6 +62,7 @@ export type LiveRuntimeGroup = Omit<DemoGroup, "members" | "alert"> & {
   members: LiveRuntimeVehicle[];
   scoreValid: boolean;
   observedAt: string;
+  detectedRoutes?: LiveRuntimeDetectedRoute[];
   alert?: LiveRuntimeAlert;
   event?: LiveRuntimeEvent;
   recommendation?: LiveRuntimeRecommendation;
@@ -72,7 +85,12 @@ export type LiveRuntimeSnapshot = {
 
 const SIMULATION_BASELINES: Record<string, ServerScenario> = structuredClone(SERVER_SCENARIOS);
 const RUNTIME_TRACES: Record<string, ScoreTracePoint[]> = {};
-export const getRuntimeTrace = (serverId: string): ScoreTracePoint[] => RUNTIME_TRACES[serverId] ?? [];
+export const getRuntimeTrace = (serverId: string, horizonMinutes = 30): ScoreTracePoint[] => {
+  const source = RUNTIME_TRACES[serverId] ?? [];
+  if (!Number.isFinite(horizonMinutes) || horizonMinutes <= 0) return [];
+  const end = source.at(-1)?.timeMs ?? 0;
+  return source.filter((point) => point.timeMs >= end - horizonMinutes * 60_000);
+};
 
 const RUNTIME_GROUP_LISTS: Record<string, LiveRuntimeGroup[] | undefined> = {};
 
@@ -166,6 +184,39 @@ function groupKeyFromValue(value: unknown): DemoGroupKey | null {
   return null;
 }
 
+function normalizeDetectedRoutes(value: unknown): LiveRuntimeDetectedRoute[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error("runtime detectedRoutes must be an array");
+  const ids = new Set<string>();
+  return value.map((raw) => {
+    if (!raw || typeof raw !== "object") throw new Error("runtime detected route must be an object");
+    const row = raw as Record<string, unknown>;
+    if (typeof row.routeInstanceId !== "string" || !row.routeInstanceId || ids.has(row.routeInstanceId)) throw new Error("runtime route instance id must be unique and non-empty");
+    ids.add(row.routeInstanceId);
+    if (typeof row.routeId !== "string" || !row.routeId) throw new Error("runtime route id is required");
+    for (const field of ["family", "subtype", "topology", "direction"] as const) if (typeof row[field] !== "string" || !row[field]) throw new Error(`runtime route ${field} is required`);
+    if (typeof row.detectionQuality !== "number" || !Number.isFinite(row.detectionQuality) || row.detectionQuality < 0 || row.detectionQuality > 1) throw new Error("runtime route detectionQuality must be in [0,1]");
+    if (!Array.isArray(row.centerline) || row.centerline.length < 3) throw new Error("runtime route centerline requires at least three points");
+    const centerline = row.centerline.map((point) => {
+      if (!point || typeof point !== "object") throw new Error("runtime route point must be an object");
+      const item = point as Record<string, unknown>;
+      if (typeof item.latitude !== "number" || !Number.isFinite(item.latitude) || item.latitude < -90 || item.latitude > 90) throw new Error("runtime route latitude is invalid");
+      if (typeof item.longitude !== "number" || !Number.isFinite(item.longitude) || item.longitude < -180 || item.longitude > 180) throw new Error("runtime route longitude is invalid");
+      return { latitude: item.latitude, longitude: item.longitude };
+    });
+    return {
+      routeInstanceId: row.routeInstanceId,
+      routeId: row.routeId,
+      family: row.family as string,
+      subtype: row.subtype as string,
+      topology: row.topology as string,
+      direction: row.direction as string,
+      detectionQuality: row.detectionQuality,
+      centerline,
+    };
+  });
+}
+
 function normalizeVehicle(value: unknown): LiveRuntimeVehicle | null {
   if (!value || typeof value !== "object") return null;
   const row = value as Record<string, unknown>;
@@ -221,6 +272,7 @@ function normalizeGroup(value: unknown, key: DemoGroupKey, observedAt: string): 
   if (![row.total, row.sync, row.route, row.confidence].every(isFiniteScore)) return null;
   const members = Array.isArray(row.members) ? row.members.map(normalizeVehicle) : [];
   if (members.some((member) => member === null)) return null;
+  const detectedRoutes = normalizeDetectedRoutes(row.detectedRoutes);
   const alertValue = row.alert && typeof row.alert === "object" ? row.alert as Record<string, unknown> : null;
   const alert = alertValue && typeof alertValue.title === "string" && typeof alertValue.detail === "string" && (alertValue.severity === "warning" || alertValue.severity === "critical")
     ? {
@@ -275,6 +327,7 @@ function normalizeGroup(value: unknown, key: DemoGroupKey, observedAt: string): 
     success: typeof row.success === "string" ? row.success : "",
     scoreValid: row.scoreValid !== false,
     observedAt: typeof row.observedAt === "string" ? row.observedAt : observedAt,
+    detectedRoutes,
     alert,
     recommendation,
     event,
@@ -352,7 +405,7 @@ export function scenarioFromRuntimeSnapshot(snapshot: LiveRuntimeSnapshot): Serv
 
 export function applyLiveRuntimeSnapshot(snapshot: LiveRuntimeSnapshot) {
   const incoming = (snapshot.groupList ?? Object.values(snapshot.groups).filter((g): g is LiveRuntimeGroup => Boolean(g))).flatMap(group => group.members.flatMap(vehicle => vehicle.latitude === undefined || vehicle.longitude === undefined ? [] : [{ timeMs: Date.parse(group.observedAt), groupId: group.id, eventId: group.event?.id ?? group.id, vehicleId: vehicle.id, latitude: vehicle.latitude, longitude: vehicle.longitude, sync: vehicle.scoreValid ? vehicle.sync : null }]));
-  RUNTIME_TRACES[snapshot.serverId] = mergeScoreTrace(RUNTIME_TRACES[snapshot.serverId] ?? [], incoming);
+  RUNTIME_TRACES[snapshot.serverId] = mergeScoreTrace(RUNTIME_TRACES[snapshot.serverId] ?? [], incoming, 2 * 60 * 60_000);
 
   SERVER_SCENARIOS[snapshot.serverId] = scenarioFromRuntimeSnapshot(snapshot);
   RUNTIME_GROUP_LISTS[snapshot.serverId] = structuredClone(
