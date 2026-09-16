@@ -3,6 +3,8 @@ import type { DatabaseSync } from "node:sqlite";
 
 import { applyLocalSchemaMigrations } from "@/lib/sqlite-migrations";
 
+export type WorkspaceScopeType = "server" | "group";
+
 let connection: Promise<DatabaseSync> | undefined;
 
 async function database() {
@@ -21,6 +23,13 @@ async function database() {
     return db;
   })().catch((error) => { connection = undefined; throw error; });
   return connection;
+}
+
+function normalizedScope(scopeType: WorkspaceScopeType, scopeId: string) {
+  if (scopeType !== "server" && scopeType !== "group") throw new Error("scope type must be server or group");
+  const id = scopeId.trim();
+  if (!/^[A-Za-z0-9_.:@-]{1,160}$/.test(id)) throw new Error("scope id contains unsupported characters");
+  return { scopeType, scopeId: id };
 }
 
 export async function readLocalWorkspace(id: string) {
@@ -44,6 +53,67 @@ export async function readLocalWorkspaceVersion(id: string, revision: number) {
     FROM workspace_versions WHERE workspace_id=? AND revision=?`).get(id, revision);
   if (!row) return null;
   return { ...row, state: JSON.parse(String(row.state)) };
+}
+
+export async function readLocalWorkspaceScope(workspaceId: string, scopeType: WorkspaceScopeType, rawScopeId: string) {
+  const { scopeId } = normalizedScope(scopeType, rawScopeId);
+  const db = await database();
+  const row = db.prepare(`SELECT state,revision,updated_at AS updatedAt
+    FROM workspace_scopes WHERE workspace_id=? AND scope_type=? AND scope_id=?`).get(workspaceId, scopeType, scopeId);
+  if (!row) return { state: null, revision: 0, updatedAt: null, scopeType, scopeId, storage: "sqlite" };
+  return { state: JSON.parse(String(row.state)), revision: Number(row.revision), updatedAt: row.updatedAt ?? null, scopeType, scopeId, storage: "sqlite" };
+}
+
+export async function listLocalWorkspaceScopeVersions(workspaceId: string, scopeType: WorkspaceScopeType, rawScopeId: string, limit = 30) {
+  const { scopeId } = normalizedScope(scopeType, rawScopeId);
+  const bounded = Math.max(1, Math.min(100, Math.trunc(limit)));
+  const db = await database();
+  return db.prepare(`SELECT revision,category,action,detail,created_at AS createdAt
+    FROM workspace_scope_versions
+    WHERE workspace_id=? AND scope_type=? AND scope_id=?
+    ORDER BY revision DESC LIMIT ?`).all(workspaceId, scopeType, scopeId, bounded);
+}
+
+export async function writeLocalWorkspaceScope(
+  workspaceId: string,
+  scopeType: WorkspaceScopeType,
+  rawScopeId: string,
+  state: string,
+  category: string,
+  action: string,
+  detail: string,
+  expectedRevision?: number,
+) {
+  const { scopeId } = normalizedScope(scopeType, rawScopeId);
+  // Parse before taking the lock so malformed state can never create a revision.
+  JSON.parse(state);
+  const db = await database();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const row = db.prepare(`SELECT revision FROM workspace_scopes
+      WHERE workspace_id=? AND scope_type=? AND scope_id=?`).get(workspaceId, scopeType, scopeId);
+    const revision = Number(row?.revision ?? 0);
+    if (expectedRevision !== undefined && revision !== expectedRevision) {
+      db.exec("ROLLBACK");
+      return { conflict: true, revision, scopeType, scopeId };
+    }
+    const nextRevision = revision + 1;
+    db.prepare(`INSERT INTO workspace_scopes(workspace_id,scope_type,scope_id,state,revision)
+      VALUES(?,?,?,?,?)
+      ON CONFLICT(workspace_id,scope_type,scope_id) DO UPDATE SET
+        state=excluded.state,revision=excluded.revision,updated_at=CURRENT_TIMESTAMP`)
+      .run(workspaceId, scopeType, scopeId, state, nextRevision);
+    db.prepare(`INSERT INTO workspace_scope_versions(
+      workspace_id,scope_type,scope_id,revision,state,category,action,detail
+    ) VALUES(?,?,?,?,?,?,?,?)`).run(workspaceId, scopeType, scopeId, nextRevision, state, category, action, detail);
+    db.prepare("INSERT INTO audit_entries(workspace_id,category,action,detail) VALUES(?,?,?,?)")
+      .run(workspaceId, `scope-${scopeType}`.slice(0, 40), action.slice(0, 80), `${scopeId}: ${detail}`.slice(0, 500));
+    db.exec("COMMIT");
+    return { ok: true, revision: nextRevision, scopeType, scopeId, storage: "sqlite" };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 export async function readLocalMapSourceToken(workspaceId: string, sourceId: string) {
