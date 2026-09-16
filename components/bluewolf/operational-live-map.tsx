@@ -128,7 +128,7 @@ export function OperationalLiveMap({
 
   const evidence = eventEvidence?.eventId === activeEventId && eventEvidence.templateId === activeTemplateId ? eventEvidence : null;
   const current = projectedPositions(serverId);
-  const history = filterTraceWindow(getRuntimeTrace(serverId), traceWindowMinutes);
+  const history = filterTraceWindow(getRuntimeTrace(serverId, TRACE_WINDOWS.at(-1) ?? 90), traceWindowMinutes);
   const routeEvidence = evidence?.routes ?? selectedRuntimeGroup?.detectedRoutes ?? [];
   const templateAssignments = evidence?.assignments ?? [];
   const routePoints = routeEvidence.flatMap((route) => route.centerline);
