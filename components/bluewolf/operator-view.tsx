@@ -195,7 +195,7 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
   const persistServerScope = async (patch: Partial<ServerScopedSettings>) => {
     const id = workspaceScopeId("server", serverId);
     try {
-      const current = serverScope?.id === id ? serverScope : (() => null)();
+      const current = serverScope?.id === id ? serverScope : undefined;
       const loaded = current ?? await readWorkspaceScope<ServerScopedSettings>("server", id).then((scope) => ({ id, settings: scope.state ?? {}, revision: scope.revision, available: scope.available }));
       if (!loaded.available) return;
       const settings = { ...loaded.settings, ...patch };
