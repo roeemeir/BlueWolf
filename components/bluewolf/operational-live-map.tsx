@@ -126,7 +126,7 @@ export function OperationalLiveMap({
     return () => { cancelled = true; };
   }, [activeEventId, activeTemplateId]);
 
-  const evidence = eventEvidence?.eventId === activeEventId && eventEvidence.templateId === activeTemplateId ? eventEvidence : null;
+  const evidence = eventEvidence && eventEvidence.eventId === activeEventId && eventEvidence.templateId === activeTemplateId ? eventEvidence : null;
   const current = projectedPositions(serverId);
   const history = filterTraceWindow(getRuntimeTrace(serverId, TRACE_WINDOWS.at(-1) ?? 90), traceWindowMinutes);
   const routeEvidence = evidence?.routes ?? selectedRuntimeGroup?.detectedRoutes ?? [];
