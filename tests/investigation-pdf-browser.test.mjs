@@ -69,10 +69,7 @@ test('report data contract preserves Hebrew metadata, detected route evidence an
   assert.equal(envelope.report.events[0].result.codeVersion, 'sha-rtl');
   assert.equal(envelope.report.events[0].result.routes[0].routeId, 'route-core-1');
   assert.equal(envelope.report.events[0].result.routes[0].centerline.length, 4);
-  assert.throws(() => reportData.normalizeInvestigationReportData({
-    ...envelope,
-    codeVersion: 'different-sha',
-  }), /code version mismatch/);
+  assert.throws(() => reportData.normalizeInvestigationReportData({ ...envelope, codeVersion: 'different-sha' }), /code version mismatch/);
 });
 
 test('REP-01/02 renderer sends Hebrew metadata to RTL canvas, draws summary map and paginates long detail tables', async () => {
@@ -80,24 +77,8 @@ test('REP-01/02 renderer sends Hebrew metadata to RTL canvas, draws summary map 
   const rendered = [];
   const canvases = [];
   class FakeContext {
-    constructor() {
-      this.direction = 'ltr';
-      this.textAlign = 'left';
-      this.font = '';
-      this.fillStyle = '#000';
-      this.strokeStyle = '#000';
-      this.lineWidth = 1;
-      this.textBaseline = 'alphabetic';
-    }
-    save() {}
-    restore() {}
-    fillRect() {}
-    beginPath() {}
-    moveTo() {}
-    lineTo() {}
-    stroke() {}
-    roundRect() {}
-    fill() {}
+    constructor() { this.direction = 'ltr'; this.textAlign = 'left'; this.font = ''; this.fillStyle = '#000'; this.strokeStyle = '#000'; this.lineWidth = 1; this.textBaseline = 'alphabetic'; }
+    save() {} restore() {} fillRect() {} beginPath() {} moveTo() {} lineTo() {} stroke() {} roundRect() {} fill() {}
     measureText(value) { return { width: String(value).length * 10 }; }
     fillText(value) { rendered.push({ text: String(value), direction: this.direction, align: this.textAlign, font: this.font }); }
   }
@@ -106,44 +87,13 @@ test('REP-01/02 renderer sends Hebrew metadata to RTL canvas, draws summary map 
     getContext(kind) { return kind === '2d' ? this.context : null; }
     toDataURL() { return `data:image/jpeg;base64,${Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64')}`; }
   }
-  globalThis.document = {
-    fonts: { ready: Promise.resolve() },
-    createElement(name) { if (name !== 'canvas') throw new Error(`unexpected element ${name}`); return new FakeCanvas(); },
-  };
+  globalThis.document = { fonts: { ready: Promise.resolve() }, createElement(name) { if (name !== 'canvas') throw new Error(`unexpected element ${name}`); return new FakeCanvas(); } };
   try {
     const result = recomputePayload();
     result.rootCauses = Array.from({ length: 18 }, (_, index) => ({ reason: `reason-${index + 1}`, occurrences: index + 1 }));
-    result.points[0].members = Array.from({ length: 65 }, (_, index) => ({
-      memberId: `v${index + 1}`,
-      routeInstanceId: 'r1',
-      slotId: `slot-${index + 1}`,
-      expectedPhase: (index % 4) / 4,
-      positionErrorCycle: 0.01,
-      valid: true,
-      sync: 88,
-      route: 91,
-      total: 89,
-      primaryReason: 'so_template_phase',
-    }));
-    result.points[0].navigation = Array.from({ length: 65 }, (_, index) => ({
-      memberId: `v${index + 1}`,
-      vehicleIdentifier: 1000 + index,
-      latitude: 32 + index * 0.00001,
-      longitude: 34.8 + index * 0.00001,
-      altitudeM: 10,
-      velocityNorthMps: 1,
-      velocityEastMps: 0,
-      headingDeg: 0,
-      active: true,
-      reliability: 1,
-    }));
-    const report = {
-      serverId: 7,
-      from: '2026-09-15T06:00:00Z',
-      to: '2026-09-15T07:00:00Z',
-      generatedAt: '2026-09-15T07:01:00Z',
-      events: [{ result, arena: 'זירה צפונית', note: 'טקסט תחקור בעברית ללא חיתוך' }],
-    };
+    result.points[0].members = Array.from({ length: 65 }, (_, index) => ({ memberId: `v${index + 1}`, routeInstanceId: 'r1', slotId: `slot-${index + 1}`, expectedPhase: (index % 4) / 4, positionErrorCycle: 0.01, valid: true, sync: 88, route: 91, total: 89, primaryReason: 'so_template_phase' }));
+    result.points[0].navigation = Array.from({ length: 65 }, (_, index) => ({ memberId: `v${index + 1}`, vehicleIdentifier: 1000 + index, latitude: 32 + index * 0.00001, longitude: 34.8 + index * 0.00001, altitudeM: 10, velocityNorthMps: 1, velocityEastMps: 0, headingDeg: 0, active: true, reliability: 1 }));
+    const report = { serverId: 7, from: '2026-09-15T06:00:00Z', to: '2026-09-15T07:00:00Z', generatedAt: '2026-09-15T07:01:00Z', events: [{ result, arena: 'זירה צפונית', note: 'טקסט תחקור בעברית ללא חיתוך' }] };
     const pdf = await browserPdf.buildInvestigationPdfBrowser(report);
     const latin = Buffer.from(pdf).toString('latin1');
     const count = Number(latin.match(/\/Count (\d+)/)?.[1] || 0);
@@ -157,8 +107,7 @@ test('REP-01/02 renderer sends Hebrew metadata to RTL canvas, draws summary map 
     assert.ok(rendered.some((item) => item.text.includes('טקסט תחקור בעברית ללא חיתוך') && item.direction === 'rtl'));
     assert.ok(rendered.some((item) => item.text.includes('רכב v65') && item.direction === 'rtl'));
   } finally {
-    if (originalDocument === undefined) delete globalThis.document;
-    else globalThis.document = originalDocument;
+    if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument;
   }
 });
 
@@ -169,8 +118,9 @@ test('legacy event without route evidence remains renderable without invented ro
   assert.doesNotMatch(source, /buildSoSmileGeometry/);
 });
 
-test('REP-01/02 renderer is local, RTL-first, truth-backed, paginated, and avoids the legacy ASCII replacement path', async () => {
+test('REP-01/02 renderer remains the base of the lifecycle PDF and keeps local RTL truth-backed rendering', async () => {
   const source = await readFile('lib/investigation-pdf-browser.ts', 'utf8');
+  const lifecycle = await readFile('lib/investigation-pdf-lifecycle.ts', 'utf8');
   const panel = await readFile('components/bluewolf/investigation-report-panel.tsx', 'utf8');
   assert.match(source, /זאב כחול — דוח תחקור הנדסי/);
   assert.match(source, /summaryMapPage/);
@@ -184,8 +134,11 @@ test('REP-01/02 renderer is local, RTL-first, truth-backed, paginated, and avoid
   assert.doesNotMatch(source, /\[\^\\x20-\\x7E\]/);
   assert.doesNotMatch(source, /fetch\(/);
   assert.doesNotMatch(source, /window\.print/);
+  assert.match(lifecycle, /buildInvestigationPdfBrowser/);
+  assert.match(lifecycle, /extractCanvasJpegPages/);
+  assert.match(lifecycle, /jpegPagesToPdf\(\[\.\.\.basePages, \.\.\.lifecycle\]\)/);
   assert.match(panel, /format: "data"/);
   assert.match(panel, /normalizeInvestigationReportData/);
-  assert.match(panel, /buildInvestigationPdfBrowser/);
-  assert.match(panel, /אין CDN/);
+  assert.match(panel, /buildInvestigationPdfWithLifecycle/);
+  assert.match(panel, /אין `window\.print\(\)`, CDN או fallback ל-demo/);
 });
