@@ -4,10 +4,19 @@ import type { InvestigationPdfReport } from "@/lib/investigation-pdf";
 export const INVESTIGATION_REPORT_DATA_SCHEMA = "bluewolf.investigation-report-data.v1" as const;
 export const INVESTIGATION_REPORT_SOURCE = "core-event-archive" as const;
 
+export type InvestigationReportEvent = InvestigationPdfReport["events"][number] & {
+  arena: string | null;
+  note: string | null;
+};
+
+export type NormalizedInvestigationReport = Omit<InvestigationPdfReport, "events"> & {
+  events: InvestigationReportEvent[];
+};
+
 export type InvestigationReportDataEnvelope = {
   schemaVersion: typeof INVESTIGATION_REPORT_DATA_SCHEMA;
   source: typeof INVESTIGATION_REPORT_SOURCE;
-  report: InvestigationPdfReport;
+  report: NormalizedInvestigationReport;
   codeVersion: string;
   configVersion: string;
 };
@@ -51,7 +60,7 @@ export function normalizeInvestigationReportData(value: unknown): InvestigationR
   if (!Number.isFinite(Date.parse(generatedAt))) throw new Error("report generatedAt must be ISO-8601");
   if (!Array.isArray(reportRow.events) || reportRow.events.length === 0) throw new Error("report events must be a non-empty array");
   if (reportRow.events.length > 200) throw new Error("report event limit exceeded");
-  const events = reportRow.events.map((raw, index) => {
+  const events: InvestigationReportEvent[] = reportRow.events.map((raw, index) => {
     const event = object(raw, `report event ${index + 1}`);
     const result = normalizeEventRecompute(event.result);
     if (result.serverId !== serverId) throw new Error("report event belongs to a different server");
