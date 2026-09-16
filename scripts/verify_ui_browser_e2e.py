@@ -137,10 +137,42 @@ def assert_local_hebrew_canvas(page: Page) -> None:
 
 def open_operator(page: Page) -> None:
     page.goto(ORIGIN, wait_until="domcontentloaded")
-    operator_tab = page.get_by_role("tab", name="מפעיל")
+    operator_tab = page.get_by_role("tab", name="מבצעי")
     if operator_tab.count():
         operator_tab.click()
     page.get_by_role("button", name="החלפה").first.wait_for(state="visible", timeout=30000)
+
+
+def verify_investigation_shell(page: Page, *, width: int, height: int, label: str) -> None:
+    page.set_viewport_size({"width": width, "height": height})
+    page.get_by_role("tab", name="תחקור").click()
+    workspace = page.locator(".investigation-workspace")
+    workspace.wait_for(state="visible", timeout=10000)
+    assert workspace.locator('input[type="datetime-local"]').count() == 2, (
+        f"{label}: investigation must expose exactly one from/to time pair"
+    )
+    page.get_by_role("button", name="אישור והצג דוח").wait_for(state="visible")
+    assert_no_page_overflow(page, f"{label}/investigation")
+    assert_svg_text_has_no_stroke(page, f"{label}/investigation")
+
+    metrics = workspace.evaluate(
+        """(element) => ({
+          width: element.getBoundingClientRect().width,
+          left: element.getBoundingClientRect().left,
+          right: element.getBoundingClientRect().right,
+          viewport: document.documentElement.clientWidth,
+          rangeColumns: getComputedStyle(element.querySelector('.investigation-range-grid')).gridTemplateColumns,
+        })"""
+    )
+    assert metrics["left"] >= -1, f"{label}: investigation escapes the left viewport edge: {metrics}"
+    assert metrics["right"] <= metrics["viewport"] + 1, f"{label}: investigation escapes the right viewport edge: {metrics}"
+    if width <= 760:
+        assert " " not in metrics["rangeColumns"].strip(), (
+            f"{label}: mobile investigation range controls did not collapse to one column: {metrics}"
+        )
+
+    page.get_by_role("tab", name="מבצעי").click()
+    page.get_by_role("button", name="החלפה").first.wait_for(state="visible", timeout=10000)
 
 
 def verify_viewport(page: Page, *, width: int, height: int, label: str) -> None:
@@ -170,6 +202,7 @@ def verify_viewport(page: Page, *, width: int, height: int, label: str) -> None:
 
     page.keyboard.press("Escape")
     dialog.wait_for(state="hidden", timeout=5000)
+    verify_investigation_shell(page, width=width, height=height, label=label)
 
 
 def run_browser_regression() -> None:
@@ -188,7 +221,7 @@ def run_browser_regression() -> None:
                     assert_local_hebrew_canvas(page)
                     verify_viewport(page, width=390, height=844, label="mobile-390")
                     browser.close()
-                print("PASS UI-01 + REP-01 canvas: desktop/mobile operator and template dialog have no page overflow; SVG text has no stroke; offline Chromium renders RTL Hebrew to a local JPEG page")
+                print("PASS UI-01 + REP-01: desktop/mobile operator, template dialog and single-range investigation workspace have no page overflow; mobile investigation collapses to one column; offline Chromium renders RTL Hebrew to a local JPEG page")
             except Exception:
                 log_file.flush()
                 log_file.seek(0)
