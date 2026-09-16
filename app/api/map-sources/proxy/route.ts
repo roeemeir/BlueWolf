@@ -41,7 +41,7 @@ function cacheKey(sourceId: string, params: URLSearchParams) {
   return `${sourceId}|${safe}`;
 }
 
-function cachedResponse(tile: NonNullable<Awaited<ReturnType<typeof readLocalMapTile>>>, sourceId: string, state: "hit" | "stale") {
+function cachedResponse(tile: NonNullable<Awaited<ReturnType<typeof readLocalMapTile>>>, sourceId: string, state: "stale") {
   return new Response(tile.body, {
     status: 200,
     headers: {
@@ -88,10 +88,12 @@ export async function GET(request: Request) {
       );
     }
 
+    // Credential validation deliberately happens before the cache lookup. If a
+    // private source token is removed, cached private imagery is revoked too.
+    const token = await localMapSourceSecret(source);
+    const secured = applyMapSourceToken(upstream, source, token);
     const existing = await readLocalMapTile(key);
     try {
-      const token = await localMapSourceSecret(source);
-      const secured = applyMapSourceToken(upstream, source, token);
       const response = await fetch(secured.url, {
         method: "GET",
         headers: secured.headers,
