@@ -3,6 +3,7 @@
 import { useWorkspace } from "./app-context";
 import { DeveloperView } from "./developer-view";
 import { InfluxGovernanceWorkbench } from "./influx-governance-workbench";
+import { MapSourceGovernanceWorkbench } from "./map-source-governance-workbench";
 import { QaTruthWorkbench } from "./qa-truth-workbench";
 import { RouteBankWktWorkbench } from "./route-bank-wkt-workbench";
 import { SoTemplateGovernanceWorkbench } from "./so-template-governance-workbench";
@@ -37,6 +38,7 @@ export function DeveloperGovernanceWorkbench() {
     <RouteBankWktWorkbench key={`route-bank-${revision}`} />
     <VehicleRangeWorkbench />
     <InfluxGovernanceWorkbench />
+    <MapSourceGovernanceWorkbench />
     <WorkspaceRecoveryWorkbench />
     <QaTruthWorkbench />
     <div className="protected-legacy-developer">
