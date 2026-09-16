@@ -53,7 +53,11 @@ export type WmtsScreenTile = {
   height: number;
 };
 
-type XmlBlock = { attrs: string; body: string };
+type XmlNode = { name: string; attrs: Record<string, string>; children: XmlNode[]; text: string };
+
+function localName(name: string) {
+  return name.split(":").at(-1) ?? name;
+}
 
 function decodeXml(value: string) {
   return value
@@ -64,36 +68,75 @@ function decodeXml(value: string) {
     .replaceAll("&amp;", "&");
 }
 
-function blocks(xml: string, name: string): XmlBlock[] {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`<(?:(?:[\\w.-]+):)?${escaped}\\b([^>]*)>([\\s\\S]*?)<\\/(?:(?:[\\w.-]+):)?${escaped}\\s*>`, "gi");
-  return Array.from(xml.matchAll(re), (match) => ({ attrs: match[1] ?? "", body: match[2] ?? "" }));
+function parseAttributes(raw: string) {
+  const attrs: Record<string, string> = {};
+  const re = /([^\s=/>]+)\s*=\s*(["'])(.*?)\2/g;
+  for (const match of raw.matchAll(re)) attrs[localName(match[1])] = decodeXml(match[3]);
+  return attrs;
 }
 
-function elements(xml: string, name: string) {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`<(?:(?:[\\w.-]+):)?${escaped}\\b([^>]*)\\/?\\s*>`, "gi");
-  return Array.from(xml.matchAll(re), (match) => match[1] ?? "");
+function parseXml(xml: string): XmlNode {
+  if (/<!DOCTYPE/i.test(xml)) throw new Error("WMTS Capabilities DOCTYPE is not accepted");
+  const root: XmlNode = { name: "#document", attrs: {}, children: [], text: "" };
+  const stack = [root];
+  const tokens = xml.match(/<!\[CDATA\[[\s\S]*?\]\]>|<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<[^>]+>|[^<]+/g) ?? [];
+  for (const token of tokens) {
+    if (token.startsWith("<?") || token.startsWith("<!--")) continue;
+    if (token.startsWith("<![CDATA[")) {
+      stack.at(-1)!.text += token.slice(9, -3);
+      continue;
+    }
+    if (token.startsWith("</")) {
+      const closing = localName(token.slice(2, -1).trim());
+      if (stack.length === 1 || stack.at(-1)!.name !== closing) throw new Error(`WMTS XML closing tag mismatch: ${closing}`);
+      stack.pop();
+      continue;
+    }
+    if (token.startsWith("<")) {
+      const selfClosing = /\/\s*>$/.test(token);
+      const inner = token.slice(1, selfClosing ? token.lastIndexOf("/") : -1).trim();
+      const space = inner.search(/\s/);
+      const rawName = space < 0 ? inner : inner.slice(0, space);
+      const node: XmlNode = {
+        name: localName(rawName),
+        attrs: parseAttributes(space < 0 ? "" : inner.slice(space + 1)),
+        children: [],
+        text: "",
+      };
+      stack.at(-1)!.children.push(node);
+      if (!selfClosing) stack.push(node);
+      continue;
+    }
+    stack.at(-1)!.text += token;
+  }
+  if (stack.length !== 1) throw new Error("WMTS XML is not balanced");
+  const documentRoot = root.children.find((node) => node.name === "Capabilities");
+  if (!documentRoot) throw new Error("response is not a WMTS Capabilities document");
+  return documentRoot;
 }
 
-function attr(attrs: string, name: string) {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`(?:^|\\s)(?:[\\w.-]+:)?${escaped}\\s*=\\s*(["'])([\\s\\S]*?)\\1`, "i");
-  const match = attrs.match(re);
-  return match ? decodeXml(match[2].trim()) : undefined;
+function child(node: XmlNode, name: string) {
+  return node.children.find((item) => item.name === name);
 }
 
-function text(xml: string, name: string) {
-  const block = blocks(xml, name)[0];
-  if (!block) return undefined;
-  const value = decodeXml(block.body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+function children(node: XmlNode, name: string) {
+  return node.children.filter((item) => item.name === name);
+}
+
+function descendants(node: XmlNode, name: string): XmlNode[] {
+  return node.children.flatMap((item) => [...(item.name === name ? [item] : []), ...descendants(item, name)]);
+}
+
+function nodeText(node: XmlNode | undefined) {
+  if (!node) return undefined;
+  const value = decodeXml(`${node.text} ${node.children.map((item) => nodeText(item) ?? "").join(" ")}`.replace(/\s+/g, " ").trim());
   return value || undefined;
 }
 
-function texts(xml: string, name: string) {
-  return blocks(xml, name)
-    .map((block) => decodeXml(block.body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()))
-    .filter(Boolean);
+function requiredText(node: XmlNode | undefined, label: string) {
+  const value = nodeText(node);
+  if (!value) throw new Error(`WMTS ${label} is missing`);
+  return value;
 }
 
 function finiteNumber(value: string | undefined, label: string) {
@@ -121,73 +164,66 @@ function unique(values: string[]) {
 
 export function parseWmtsCapabilities(xml: string): WmtsCapabilitiesCatalog {
   if (typeof xml !== "string" || !xml.trim()) throw new Error("WMTS GetCapabilities response is empty");
-  const rootMatch = xml.match(/<(?:(?:[\w.-]+):)?Capabilities\b([^>]*)>/i);
-  if (!rootMatch) throw new Error("response is not a WMTS Capabilities document");
-  const version = attr(rootMatch[1] ?? "", "version") ?? "1.0.0";
-  const contents = blocks(xml, "Contents")[0]?.body;
+  const root = parseXml(xml);
+  const contents = child(root, "Contents");
   if (!contents) throw new Error("WMTS Capabilities does not contain Contents");
 
-  const layers: WmtsLayer[] = blocks(contents, "Layer").map((layerBlock) => {
-    const identifier = text(layerBlock.body, "Identifier");
-    if (!identifier) throw new Error("WMTS layer is missing Identifier");
-    const styles = blocks(layerBlock.body, "Style").map((styleBlock) => ({
-      identifier: text(styleBlock.body, "Identifier") ?? "default",
-      title: text(styleBlock.body, "Title"),
-      isDefault: /^true$|^1$/i.test(attr(styleBlock.attrs, "isDefault") ?? ""),
+  const layers: WmtsLayer[] = children(contents, "Layer").map((layerNode) => {
+    const identifier = requiredText(child(layerNode, "Identifier"), "layer Identifier");
+    const styles = children(layerNode, "Style").map((styleNode) => ({
+      identifier: nodeText(child(styleNode, "Identifier")) ?? "default",
+      title: nodeText(child(styleNode, "Title")),
+      isDefault: /^true$|^1$/i.test(styleNode.attrs.isDefault ?? ""),
     }));
-    const tileMatrixSets = blocks(layerBlock.body, "TileMatrixSetLink")
-      .map((link) => text(link.body, "TileMatrixSet"))
+    const tileMatrixSets = children(layerNode, "TileMatrixSetLink")
+      .map((link) => nodeText(child(link, "TileMatrixSet")))
       .filter((value): value is string => Boolean(value));
-    const resourceUrls = elements(layerBlock.body, "ResourceURL").flatMap((attrs) => {
-      const template = attr(attrs, "template");
+    const resourceUrls = children(layerNode, "ResourceURL").flatMap((resourceNode) => {
+      const template = resourceNode.attrs.template;
       if (!template) return [];
-      return [{ format: attr(attrs, "format"), resourceType: attr(attrs, "resourceType"), template }];
+      return [{ format: resourceNode.attrs.format, resourceType: resourceNode.attrs.resourceType, template }];
     });
     return {
       identifier,
-      title: text(layerBlock.body, "Title"),
+      title: nodeText(child(layerNode, "Title")),
       styles: styles.length ? styles : [{ identifier: "default", isDefault: true }],
-      formats: unique(texts(layerBlock.body, "Format")),
+      formats: unique(children(layerNode, "Format").map((item) => nodeText(item) ?? "")),
       tileMatrixSets: unique(tileMatrixSets),
       resourceUrls,
     };
   });
 
-  const tileMatrixSets: WmtsTileMatrixSet[] = blocks(contents, "TileMatrixSet").map((setBlock) => {
-    const identifier = text(setBlock.body, "Identifier");
-    const supportedCrs = text(setBlock.body, "SupportedCRS");
-    if (!identifier || !supportedCrs) throw new Error("WMTS TileMatrixSet is missing Identifier or SupportedCRS");
-    const matrices = blocks(setBlock.body, "TileMatrix").map((matrixBlock) => {
-      const matrixId = text(matrixBlock.body, "Identifier");
-      if (!matrixId) throw new Error(`WMTS TileMatrixSet ${identifier} contains a matrix without Identifier`);
-      return {
-        identifier: matrixId,
-        scaleDenominator: finiteNumber(text(matrixBlock.body, "ScaleDenominator"), "ScaleDenominator"),
-        topLeftCorner: parseTopLeft(text(matrixBlock.body, "TopLeftCorner")),
-        tileWidth: positiveInteger(text(matrixBlock.body, "TileWidth"), "TileWidth"),
-        tileHeight: positiveInteger(text(matrixBlock.body, "TileHeight"), "TileHeight"),
-        matrixWidth: positiveInteger(text(matrixBlock.body, "MatrixWidth"), "MatrixWidth"),
-        matrixHeight: positiveInteger(text(matrixBlock.body, "MatrixHeight"), "MatrixHeight"),
-      };
-    });
+  const tileMatrixSets: WmtsTileMatrixSet[] = children(contents, "TileMatrixSet").map((setNode) => {
+    const identifier = requiredText(child(setNode, "Identifier"), "TileMatrixSet Identifier");
+    const supportedCrs = requiredText(child(setNode, "SupportedCRS"), `TileMatrixSet ${identifier} SupportedCRS`);
+    const matrices = children(setNode, "TileMatrix").map((matrixNode) => ({
+      identifier: requiredText(child(matrixNode, "Identifier"), `TileMatrixSet ${identifier} matrix Identifier`),
+      scaleDenominator: finiteNumber(nodeText(child(matrixNode, "ScaleDenominator")), "ScaleDenominator"),
+      topLeftCorner: parseTopLeft(nodeText(child(matrixNode, "TopLeftCorner"))),
+      tileWidth: positiveInteger(nodeText(child(matrixNode, "TileWidth")), "TileWidth"),
+      tileHeight: positiveInteger(nodeText(child(matrixNode, "TileHeight")), "TileHeight"),
+      matrixWidth: positiveInteger(nodeText(child(matrixNode, "MatrixWidth")), "MatrixWidth"),
+      matrixHeight: positiveInteger(nodeText(child(matrixNode, "MatrixHeight")), "MatrixHeight"),
+    }));
+    if (!matrices.length) throw new Error(`WMTS TileMatrixSet ${identifier} contains no TileMatrix definitions`);
     return {
       identifier,
-      title: text(setBlock.body, "Title"),
+      title: nodeText(child(setNode, "Title")),
       supportedCrs,
-      wellKnownScaleSet: text(setBlock.body, "WellKnownScaleSet"),
+      wellKnownScaleSet: nodeText(child(setNode, "WellKnownScaleSet")),
       matrices,
     };
   });
 
-  const getTileKvpUrls = blocks(xml, "Operation")
-    .filter((operation) => (attr(operation.attrs, "name") ?? "").toLowerCase() === "gettile")
-    .flatMap((operation) => elements(operation.body, "Get").map((attrs) => attr(attrs, "href")).filter((value): value is string => Boolean(value)));
+  const getTileKvpUrls = descendants(root, "Operation")
+    .filter((operation) => (operation.attrs.name ?? "").toLowerCase() === "gettile")
+    .flatMap((operation) => descendants(operation, "Get").map((getNode) => getNode.attrs.href).filter((value): value is string => Boolean(value)));
 
   if (!layers.length) throw new Error("WMTS Capabilities contains no layers");
   if (!tileMatrixSets.length) throw new Error("WMTS Capabilities contains no TileMatrixSets");
   return {
-    version,
-    serviceTitle: text(blocks(xml, "ServiceIdentification")[0]?.body ?? "", "Title"),
+    version: root.attrs.version ?? "1.0.0",
+    serviceTitle: nodeText(child(child(root, "ServiceIdentification") ?? root, "Title")),
     getTileKvpUrls: unique(getTileKvpUrls),
     layers,
     tileMatrixSets,
@@ -210,7 +246,7 @@ export function compatibleMatrixSets(catalog: WmtsCapabilitiesCatalog, layer: Wm
 
 export function defaultWmtsLayerSelections(catalog: WmtsCapabilitiesCatalog): WmtsLayerSelection[] {
   const rows: WmtsLayerSelection[] = [];
-  catalog.layers.forEach((layer, index) => {
+  catalog.layers.forEach((layer) => {
     const matrixSet = compatibleMatrixSets(catalog, layer)[0];
     if (!matrixSet) return;
     const style = layer.styles.find((item) => item.isDefault)?.identifier ?? layer.styles[0]?.identifier ?? "default";
@@ -219,7 +255,7 @@ export function defaultWmtsLayerSelections(catalog: WmtsCapabilitiesCatalog): Wm
       style,
       format: layer.formats.find((item) => item.toLowerCase().startsWith("image/")) ?? layer.formats[0] ?? "image/png",
       tileMatrixSet: matrixSet.identifier,
-      enabled: index === 0,
+      enabled: rows.length === 0,
       order: rows.length,
       opacity: 1,
     });
@@ -255,7 +291,7 @@ export function wmtsResourceTemplate(layer: WmtsLayer, format: string) {
 function mercatorMeters(latitude: number, longitude: number) {
   const clamped = Math.max(-85.05112878, Math.min(85.05112878, latitude));
   const x = longitude * 20037508.342789244 / 180;
-  const y = Math.log(Math.tan((90 + clamped) * Math.PI / 360)) / (Math.PI / 180) * 20037508.342789244 / 180;
+  const y = 6378137 * Math.log(Math.tan(Math.PI / 4 + clamped * Math.PI / 360));
   return { x, y };
 }
 
