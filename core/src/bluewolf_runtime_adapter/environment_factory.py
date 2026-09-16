@@ -314,11 +314,24 @@ def _poll_config(config: Mapping[str, Any], join_tolerance_seconds: int) -> Live
 
 
 def _sample_archive(config: Mapping[str, Any]) -> JoinedSampleArchive | None:
+    """Resolve the durable joined-sample archive path at deployment scope.
+
+    ``BLUEWOLF_SAMPLE_ARCHIVE_PATH`` deliberately wins over the JSON path so a
+    Linux PVC or Windows data directory can own storage placement without
+    changing the portable algorithm/config document.  If neither deployment nor
+    JSON enables the archive the historical transport-only behavior remains.
+    Retention is owned by ``JoinedSampleArchive`` through deployment env vars.
+    """
+
+    deployment_path = os.environ.get("BLUEWOLF_SAMPLE_ARCHIVE_PATH", "").strip()
     raw = config.get("archive")
     if raw is None:
-        return None
+        return None if not deployment_path else JoinedSampleArchive(deployment_path)
     archive = _object(raw, "archive")
-    path = _text(archive.get("path"), "archive.path")
+    configured_path = _optional_text(archive.get("path"), "archive.path")
+    path = deployment_path or configured_path
+    if not path:
+        raise ValueError("archive.path or BLUEWOLF_SAMPLE_ARCHIVE_PATH is required when archive is enabled")
     return JoinedSampleArchive(path)
 
 
