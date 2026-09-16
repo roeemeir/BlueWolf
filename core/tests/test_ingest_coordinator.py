@@ -92,7 +92,7 @@ class IngestCoordinatorTests(unittest.TestCase):
         self.assertEqual(session.state, 1)
         self.assertEqual(coordinator.cursor.last_processed_utc, result.window.end_time_utc)
         self.assertTrue(result.server_awake)
-        self.assertEqual(coordinator.cursor.next_due_utc, START + timedelta(seconds=5))
+        self.assertEqual(coordinator.cursor.next_due_utc, START + timedelta(seconds=3))
         self.assertEqual(reader.calls[0]["server_tag_value"], "srv-1")
         self.assertEqual(result.core_result.processed_until_utc, result.window.end_time_utc)
         self.assertIs(result.archive_result, archive_result)
@@ -105,7 +105,7 @@ class IngestCoordinatorTests(unittest.TestCase):
             coordinator.poll_once(START)
         self.assertEqual(coordinator.session.state, 4)
         self.assertIsNone(coordinator.cursor.last_processed_utc)
-        self.assertEqual(coordinator.cursor.next_due_utc, START + timedelta(seconds=5))
+        self.assertEqual(coordinator.cursor.next_due_utc, START + timedelta(seconds=3))
 
     def test_partial_core_failure_rolls_session_back(self):
         session = FakeSession(state=7, fail=True)
@@ -128,7 +128,7 @@ class IngestCoordinatorTests(unittest.TestCase):
             coordinator.poll_once(START)
         self.assertEqual(coordinator.session.state, 2)
         self.assertIsNone(coordinator.cursor.last_processed_utc)
-        self.assertEqual(coordinator.cursor.next_due_utc, START + timedelta(seconds=5))
+        self.assertEqual(coordinator.cursor.next_due_utc, START + timedelta(seconds=3))
 
     def test_archive_failure_rolls_core_back_and_keeps_watermark(self):
         session = FakeSession(state=5)
@@ -141,7 +141,7 @@ class IngestCoordinatorTests(unittest.TestCase):
         self.assertIsNot(coordinator.session, session)
         self.assertEqual(coordinator.session.state, 5)
         self.assertIsNone(coordinator.cursor.last_processed_utc)
-        self.assertEqual(coordinator.cursor.next_due_utc, START + timedelta(seconds=5))
+        self.assertEqual(coordinator.cursor.next_due_utc, START + timedelta(seconds=3))
         self.assertEqual(len(archive.calls), 1)
 
     def test_correction_signal_is_exposed_without_implicit_core_replay(self):
@@ -166,7 +166,7 @@ class IngestCoordinatorTests(unittest.TestCase):
         coordinator = self.build(reader=reader, session=session, archive=archive)
         first = coordinator.poll_once(START)
         assert first is not None
-        second = coordinator.poll_once(START + timedelta(seconds=4))
+        second = coordinator.poll_once(START + timedelta(seconds=2))
         self.assertIsNone(second)
         self.assertEqual(len(reader.calls), 1)
         self.assertEqual(len(archive.calls), 1)
