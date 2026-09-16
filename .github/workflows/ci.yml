@@ -166,8 +166,8 @@ jobs:
         run: |
           test "$(docker image inspect bluewolf-runtime:ci --format '{{.Config.User}}')" = "10001:10001"
           test "$(docker image inspect bluewolf-runtime:ci --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^BLUEWOLF_CODE_SHA=' | cut -d= -f2-)" = "${GITHUB_SHA}"
-          test "$(docker image inspect bluewolf-runtime:ci --format '{{index .Config.Labels \"org.opencontainers.image.revision\"}}')" = "${GITHUB_SHA}"
-          test "$(docker image inspect bluewolf-runtime:ci --format '{{index .Config.Labels \"io.bluewolf.provenance.code-sha\"}}')" = "${GITHUB_SHA}"
+          test "$(docker image inspect bluewolf-runtime:ci --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "${GITHUB_SHA}"
+          test "$(docker image inspect bluewolf-runtime:ci --format '{{index .Config.Labels "io.bluewolf.provenance.code-sha"}}')" = "${GITHUB_SHA}"
       - name: Smoke runtime-owned provenance and real Core QA endpoint
         run: |
           docker run -d --name bluewolf-runtime-ci \
