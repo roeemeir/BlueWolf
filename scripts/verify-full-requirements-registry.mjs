@@ -1,10 +1,11 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SOURCE_STATUSES = ["yes", "partial", "no", "unspecified"];
 const CURRENT_STATUSES = new Set(["yes", "partial", "no"]);
 const EXTERNAL_AUDIT_SCHEMA_VERSION = "bluewolf.current-head-audit.v1";
+const EXPLICIT_GAP_PREFIX = "Explicit audit gap:";
 
 export function expandExpectedIds(registry) {
   const ids = [];
@@ -41,6 +42,29 @@ export function validateExternalAuditEnvelope(auditEnvelope, registry, { expecte
   if (expectedHead && auditEnvelope.headSha !== expectedHead) errors.push(`external audit headSha=${auditEnvelope.headSha} does not match expected head ${expectedHead}`);
   if (typeof auditEnvelope.reviewedAt !== "string" || !auditEnvelope.reviewedAt.trim()) errors.push("external audit reviewedAt is required");
   if (!auditEnvelope.requirements || typeof auditEnvelope.requirements !== "object" || Array.isArray(auditEnvelope.requirements)) errors.push("external audit requirements must be an object");
+  return errors;
+}
+
+export async function verifyAuditEvidencePaths(auditRequirements, root = process.cwd()) {
+  const errors = [];
+  const rootPath = path.resolve(root);
+  for (const [id, row] of Object.entries(auditRequirements ?? {})) {
+    for (const field of ["implementationLocation", "acceptanceEvidence"]) {
+      for (const value of row?.[field] ?? []) {
+        if (typeof value !== "string" || !value.trim() || value.startsWith(EXPLICIT_GAP_PREFIX)) continue;
+        const resolved = path.resolve(rootPath, value);
+        if (resolved !== rootPath && !resolved.startsWith(`${rootPath}${path.sep}`)) {
+          errors.push(`${id}: ${field} path escapes repository: ${value}`);
+          continue;
+        }
+        try {
+          await access(resolved);
+        } catch {
+          errors.push(`${id}: ${field} path does not exist: ${value}`);
+        }
+      }
+    }
+  }
   return errors;
 }
 
@@ -129,7 +153,7 @@ export function validateFullRegistry(registry, releaseScope = null, { strictRele
 export async function verifyFullRegistryFiles(
   registryPath,
   releaseScopePath = null,
-  { strictRelease = false, auditPath = null, expectedHead = null } = {},
+  { strictRelease = false, auditPath = null, expectedHead = null, root = process.cwd() } = {},
 ) {
   const registry = JSON.parse(await readFile(registryPath, "utf8"));
   const releaseScope = releaseScopePath ? JSON.parse(await readFile(releaseScopePath, "utf8")) : null;
@@ -137,6 +161,7 @@ export async function verifyFullRegistryFiles(
   if (auditPath) {
     const auditEnvelope = JSON.parse(await readFile(auditPath, "utf8"));
     envelopeErrors.push(...validateExternalAuditEnvelope(auditEnvelope, registry, { expectedHead }));
+    if (strictRelease) envelopeErrors.push(...await verifyAuditEvidencePaths(auditEnvelope.requirements, root));
     registry.audit = {
       ...(registry.audit ?? {}),
       externalSchemaVersion: auditEnvelope.schemaVersion,
