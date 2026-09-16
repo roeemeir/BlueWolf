@@ -8,7 +8,7 @@ on:
 
 jobs:
   frozen-requirements:
-    name: BW-QA-007 — frozen requirements gate
+    name: BW-QA-007 / PROC-01 — frozen requirements and 142/142 audit gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,3 +17,5 @@ jobs:
           node-version: "24"
       - name: Verify frozen release scope
         run: node scripts/verify-release-scope.mjs docs/release-scope-2026-09-15.json
+      - name: Verify full current-head requirements audit
+        run: node scripts/verify-full-requirements-registry.mjs docs/full-requirements-registry.json docs/release-scope-2026-09-15.json --release
