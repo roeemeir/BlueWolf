@@ -1,0 +1,29 @@
+name: Blue Wolf BW-OFF-010 Map Sources
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: bluewolf-off10-map-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  private-map-sources:
+    name: BW-OFF-010 — WMS WMTS private map proxy
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Validate map source contracts, secret isolation, proxy and projection
+        run: node --test tests/map-source-config.test.mjs tests/map-source-proxy.test.mjs tests/operational-map-projection.test.mjs tests/map-source-ui.test.mjs
+      - name: TypeScript check
+        run: npx tsc --noEmit
+      - name: Offline build
+        run: npm run build:offline
