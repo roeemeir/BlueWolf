@@ -22,7 +22,8 @@ test('BW-OFF-010 operational map renders independently selectable discovered lay
   assert.match(map, /OperationalBasemap/);
   assert.match(map, /createOperationalProjection/);
   assert.match(map, /data-wmts-layer-toggle/);
-  assert.match(map, /data-requirements="OP-02 OP-04 BW-OFF-010"/);
+  const requirements = map.match(/data-requirements="([^"]+)"/)?.[1]?.split(/\s+/) ?? [];
+  for (const requirement of ['OP-02', 'OP-04', 'BW-OFF-010']) assert.ok(requirements.includes(requirement), `${requirement} must remain declared on operational map`);
   assert.match(basemap, /\/api\/map-sources\/proxy/);
   assert.match(basemap, /data-map-source-kind="wms"/);
   assert.match(basemap, /data-wmts-layer/);
