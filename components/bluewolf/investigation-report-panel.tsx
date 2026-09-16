@@ -5,7 +5,7 @@ import { Download, FileChartColumn, ShieldCheck, TriangleAlert } from "lucide-re
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { buildInvestigationPdfWithLifecycle } from "@/lib/investigation-pdf-lifecycle";
+import { buildInvestigationReleasePdf } from "@/lib/investigation-pdf-release";
 import { normalizeInvestigationReportData } from "@/lib/investigation-report-data";
 import { useWorkspace } from "./app-context";
 import { InvestigationLifecyclePanel } from "./investigation-lifecycle-panel";
@@ -76,28 +76,28 @@ export function InvestigationReportPanel({ server }: { server: string }) {
       }
       if (response.headers.get("x-bluewolf-report-source") !== "core-event-archive") throw new Error("מקור הדוח לא אומת כ-Core event archive");
       const envelope = normalizeInvestigationReportData(payload);
-      const pdf = await buildInvestigationPdfWithLifecycle(envelope.report);
+      const pdf = await buildInvestigationReleasePdf(envelope.report);
       if (pdf.byteLength < 64) throw new Error("PDF report is unexpectedly empty");
       downloadPdf(pdf, envelope.report.generatedAt);
       setReport({ kind: "complete", codeVersion: envelope.codeVersion, configVersion: envelope.configVersion });
-      toast.success("דוח PDF בעברית הופק מנתוני Core ובאותה גרסת תוצאה שננעלה בהחלפה רטרואקטיבית");
+      toast.success("דוח PDF בעברית הופק מנתוני Core עם שכבות WMTS ברירת־המחדל או engineering grid אופליין");
     } catch (error) { setReport({ kind: "error", detail: error instanceof Error ? error.message : "PDF report failed" }); }
   };
 
   return <>
     <InvestigationLifecyclePanel server={server} />
     <InvestigationRetroactivePanel server={server} />
-    <section className="glass-panel" dir="rtl" data-requirements="REP-01 REP-03 REP-04 OP-04 BW-REP-008 BW-REP-009 BW-REP-011" style={{ padding: 16, marginBottom: 16 }}>
+    <section className="glass-panel" dir="rtl" data-requirements="REP-01 REP-03 REP-04 OP-04 BW-REP-008 BW-REP-009 BW-REP-011 BW-OFF-010" style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 16, flexWrap: "wrap" }}><div><p className="eyebrow">Engineering PDF</p><h3>דוח תחקור לטווח</h3><p className="card-hint">הדוח נטען מארכיון ה-Core ומבצע recomputation אמיתי. override רטרואקטיבי כולל code/config/template provenance מחייב; mismatch עוצר את הדוח ולא מערבב גרסאות.</p></div><FileChartColumn /></div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(190px,1fr) minmax(190px,1fr) auto", gap: 10, alignItems: "end", marginTop: 12 }}>
         <label style={{ display: "grid", gap: 5 }}><span>מתאריך ושעה</span><input type="datetime-local" value={from} onChange={(event) => { setFrom(event.target.value); setReport({ kind: "idle" }); }} /></label>
         <label style={{ display: "grid", gap: 5 }}><span>עד תאריך ושעה</span><input type="datetime-local" value={to} onChange={(event) => { setTo(event.target.value); setReport({ kind: "idle" }); }} /></label>
         <Button onClick={generate} disabled={report.kind === "running"}><Download />{report.kind === "running" ? "מפיק PDF…" : "הפק PDF לטווח"}</Button>
       </div>
-      <p className="card-hint">טווח ריק = כל האירועים השמורים. אין `window.print()`, CDN או fallback ל-demo; אירוע ללא provenance עוצר את הדוח.</p>
+      <p className="card-hint">טווח ריק = כל האירועים השמורים. שכבות WMTS ברירת־המחדל נטענות רק דרך ה־proxy/cache המקומי; ללא רקע זמין הדוח משתמש ב־engineering grid. אין `window.print()`, CDN או fallback ל-demo.</p>
       {report.kind === "running" && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}><ShieldCheck /><span>מבצע recomputation ומרנדר PDF מקומי. אין אחוז התקדמות ללא telemetry אמיתי.</span></div>}
       {report.kind === "error" && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}><TriangleAlert /><span>{report.detail}</span></div>}
-      {report.kind === "complete" && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}><ShieldCheck /><span>PDF RTL + lifecycle אומת · code {report.codeVersion.slice(0, 12)} · config {report.configVersion.slice(0, 12)}</span></div>}
+      {report.kind === "complete" && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}><ShieldCheck /><span>PDF RTL + lifecycle + WMTS defaults אומת · code {report.codeVersion.slice(0, 12)} · config {report.configVersion.slice(0, 12)}</span></div>}
     </section>
   </>;
 }
