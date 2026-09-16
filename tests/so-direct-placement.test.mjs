@@ -12,6 +12,7 @@ const {
   generateUniqueSoOrders,
   soSmilePoses,
   soPhasesForRoute,
+  placeSoPosition,
   placeSoVehicle,
   toggleSoVehicleDirection,
   deriveSoRelations,
@@ -44,37 +45,47 @@ test('SO-02 exposes half slots for single and quarter slots for double', () => {
   assert.deepEqual([...soPhasesForRoute('double')], [0, 0.25, 0.5, 0.75]);
 });
 
-test('SO placement is independent of vehicle type and clicking existing vehicle can reverse direction', () => {
+test('SO placement is vehicle-type neutral and clicking an existing position can reverse direction', () => {
   const chain = ['single', 'double'];
-  const first = placeSoVehicle([], chain, 0, 0.5, 'storm');
+  const first = placeSoPosition([], chain, 0, 0.5);
   assert.equal(first.ok, true);
-  const second = placeSoVehicle(first.placements, chain, 1, 0.25, 'lightning');
+  assert.deepEqual(first.placements[0], { routeIndex: 0, phase: 0.5, direction: 'forward' });
+  assert.equal('typeId' in first.placements[0], false);
+
+  const second = placeSoPosition(first.placements, chain, 1, 0.25);
   assert.equal(second.ok, true);
-  const invalid = placeSoVehicle(second.placements, chain, 0, 0.25, 'thunder');
+  const invalid = placeSoPosition(second.placements, chain, 0, 0.25);
   assert.deepEqual(invalid, { ok: false, reason: 'invalid-phase' });
   const reversed = toggleSoVehicleDirection(second.placements, 1, 0.25);
   assert.equal(reversed.find((item) => item.routeIndex === 1)?.direction, 'reverse');
   assert.equal(validateSoPlacements(chain, reversed), null);
 });
 
+test('legacy placeSoVehicle accepts a type argument but never persists it', () => {
+  const result = placeSoVehicle([], ['double'], 0, 0.25, 'storm');
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.placements, [{ routeIndex: 0, phase: 0.25, direction: 'forward' }]);
+});
+
 test('SO relations are derived from semantic quarter placement and direction', () => {
   const chain = ['double', 'double', 'double'];
   const placements = [
-    { routeIndex: 0, phase: 0, typeId: 'storm', direction: 'forward' },
-    { routeIndex: 1, phase: 0, typeId: 'lightning', direction: 'forward' },
-    { routeIndex: 2, phase: 0.5, typeId: 'thunder', direction: 'forward' },
+    { routeIndex: 0, phase: 0, direction: 'forward' },
+    { routeIndex: 1, phase: 0, direction: 'forward' },
+    { routeIndex: 2, phase: 0.5, direction: 'forward' },
   ];
   assert.deepEqual(deriveSoRelations(chain, placements), ['same', 'opposite']);
-  const mixed = [...placements, { routeIndex: 1, phase: 0.25, typeId: 'storm', direction: 'forward' }];
+  const mixed = [...placements, { routeIndex: 1, phase: 0.25, direction: 'forward' }];
   assert.equal(deriveSoRelations(chain, mixed)[0], 'mixed');
 });
 
-test('SO direct identity keeps non-equivalent placements distinct even when chain is identical', () => {
+test('SO direct identity ignores legacy vehicle type but preserves placement and direction', () => {
   const chain = ['double', 'double'];
   const first = [{ routeIndex: 0, phase: 0, typeId: 'storm', direction: 'forward' }];
+  const samePlacementDifferentType = [{ routeIndex: 0, phase: 0, typeId: 'lightning', direction: 'forward' }];
   const second = [{ routeIndex: 0, phase: 0.25, typeId: 'storm', direction: 'forward' }];
   const third = [{ routeIndex: 0, phase: 0, typeId: 'storm', direction: 'reverse' }];
+  assert.equal(directSoPlacementKey(chain, first), directSoPlacementKey(chain, samePlacementDifferentType));
   assert.notEqual(directSoPlacementKey(chain, first), directSoPlacementKey(chain, second));
   assert.notEqual(directSoPlacementKey(chain, first), directSoPlacementKey(chain, third));
-  assert.equal(directSoPlacementKey(chain, first), directSoPlacementKey(chain, [...first]));
 });
