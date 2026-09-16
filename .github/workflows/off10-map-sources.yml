@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
   private-map-sources:
-    name: BW-OFF-010 — WMS WMTS private map proxy
+    name: BW-OFF-010 — generic WMTS discovery, private proxy and offline cache
     runs-on: ubuntu-latest
     env:
       NEXT_TELEMETRY_DISABLED: "1"
@@ -21,8 +21,8 @@ jobs:
           node-version: "24"
           cache: npm
       - run: npm ci
-      - name: Validate map source contracts, secret isolation, proxy and projection
-        run: node --test tests/map-source-config.test.mjs tests/map-source-proxy.test.mjs tests/operational-map-projection.test.mjs tests/map-source-ui.test.mjs
+      - name: Validate GetCapabilities, named matrices, layer defaults, secret isolation, proxy and projection
+        run: node --test tests/wmts-capabilities.test.mjs tests/map-source-config.test.mjs tests/map-source-proxy.test.mjs tests/operational-map-projection.test.mjs tests/map-source-ui.test.mjs
       - name: TypeScript check
         run: npx tsc --noEmit
       - name: Offline build
