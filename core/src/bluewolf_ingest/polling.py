@@ -18,7 +18,7 @@ import math
 @dataclass(frozen=True, slots=True)
 class LivePollConfig:
     logical_grid_seconds: int = 1
-    active_poll_seconds: int = 5
+    active_poll_seconds: int = 3
     idle_probe_seconds: int = 300
     join_tolerance_seconds: int = 5
     bootstrap_history_seconds: int = 2400
