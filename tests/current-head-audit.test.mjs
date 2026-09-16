@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { buildCurrentHeadAudit, CURRENT_HEAD_AUDIT_SCHEMA_VERSION } from '../scripts/build-current-head-audit.mjs';
-import { validateExternalAuditEnvelope, validateFullRegistry } from '../scripts/verify-full-requirements-registry.mjs';
+import { validateExternalAuditEnvelope, validateFullRegistry, verifyAuditEvidencePaths } from '../scripts/verify-full-requirements-registry.mjs';
 
 async function fixture() {
   const registry = JSON.parse(await readFile('docs/full-requirements-registry.json', 'utf8'));
@@ -26,6 +26,7 @@ test('PROC-01 builder produces one conservative current-head row for all 142 req
     if (row.implementation === 'yes') assert.equal(row.verified, true, `${id}: yes must be verified`);
     else assert.equal(typeof row.gap, 'string', `${id}: partial/no requires gap`);
   }
+  assert.deepEqual(await verifyAuditEvidencePaths(audit.requirements), []);
 });
 
 test('PROC-01 exact-head validation rejects a recycled audit from another commit', async () => {
