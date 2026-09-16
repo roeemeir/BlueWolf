@@ -51,9 +51,9 @@ function changeLabel(change: EventLifecycleChange) {
 }
 
 type LifecycleState =
-  | { kind: "loading" }
-  | { kind: "error"; detail: string }
-  | { kind: "ready"; events: InvestigationEventIndex[] };
+  | { kind: "loading"; server: string }
+  | { kind: "error"; server: string; detail: string }
+  | { kind: "ready"; server: string; events: InvestigationEventIndex[] };
 
 async function loadLifecycleEvents(server: string) {
   const response = await fetch(`/api/investigation/events?serverId=${encodeURIComponent(server)}`, { cache: "no-store" });
@@ -90,26 +90,38 @@ function LifecycleEvent({ event }: { event: InvestigationEventIndex }) {
 }
 
 export function InvestigationLifecyclePanel({ server }: { server: string }) {
-  const [state, setState] = useState<LifecycleState>({ kind: "loading" });
+  const [state, setState] = useState<LifecycleState>({ kind: "loading", server });
+
   const refresh = async () => {
-    setState({ kind: "loading" });
+    setState({ kind: "loading", server });
     try {
-      setState({ kind: "ready", events: await loadLifecycleEvents(server) });
+      setState({ kind: "ready", server, events: await loadLifecycleEvents(server) });
     } catch (error) {
-      setState({ kind: "error", detail: error instanceof Error ? error.message : "Lifecycle archive unavailable" });
+      setState({ kind: "error", server, detail: error instanceof Error ? error.message : "Lifecycle archive unavailable" });
     }
   };
 
-  useEffect(() => { void refresh(); }, [server]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let cancelled = false;
+    loadLifecycleEvents(server).then(
+      (events) => { if (!cancelled) setState({ kind: "ready", server, events }); },
+      (error: unknown) => {
+        if (!cancelled) setState({ kind: "error", server, detail: error instanceof Error ? error.message : "Lifecycle archive unavailable" });
+      },
+    );
+    return () => { cancelled = true; };
+  }, [server]);
+
+  const displayState: LifecycleState = state.server === server ? state : { kind: "loading", server };
 
   return <section className="glass-panel" dir="rtl" data-requirements="REP-03 REP-04" style={{ padding: 16, marginBottom: 16 }}>
     <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start", flexWrap: "wrap" }}>
       <div><p className="eyebrow">Event Lifecycle Evidence</p><h3>פתיחה, סיום, התראות והמלצות</h3><p className="card-hint">המידע מגיע מ־EventAlertEngine ונשמר ב־SQLite לצד event evidence. `finalizing` פירושו שהאירוע הסתיים תפעולית אך חלון ה־late-data טרם נסגר.</p></div>
-      <Button variant="outline" onClick={refresh} disabled={state.kind === "loading"}><RefreshCw />רענן</Button>
+      <Button variant="outline" onClick={refresh} disabled={displayState.kind === "loading"}><RefreshCw />רענן</Button>
     </div>
-    {state.kind === "loading" && <div className="empty-state" style={{ padding: 20 }}><History /><strong>טוען lifecycle evidence…</strong><span>אין progress מומצא.</span></div>}
-    {state.kind === "error" && <div className="empty-state" style={{ padding: 20 }}><AlertTriangle /><strong>Lifecycle archive לא זמין</strong><span>{state.detail}</span></div>}
-    {state.kind === "ready" && state.events.length === 0 && <div className="empty-state" style={{ padding: 20 }}><Activity /><strong>אין אירועים שמורים</strong><span>לא מוצג lifecycle demo.</span></div>}
-    {state.kind === "ready" && state.events.length > 0 && <div style={{ display: "grid", gap: 10, marginTop: 12 }}>{state.events.map((event) => <LifecycleEvent key={event.eventId} event={event} />)}</div>}
+    {displayState.kind === "loading" && <div className="empty-state" style={{ padding: 20 }}><History /><strong>טוען lifecycle evidence…</strong><span>אין progress מומצא.</span></div>}
+    {displayState.kind === "error" && <div className="empty-state" style={{ padding: 20 }}><AlertTriangle /><strong>Lifecycle archive לא זמין</strong><span>{displayState.detail}</span></div>}
+    {displayState.kind === "ready" && displayState.events.length === 0 && <div className="empty-state" style={{ padding: 20 }}><Activity /><strong>אין אירועים שמורים</strong><span>לא מוצג lifecycle demo.</span></div>}
+    {displayState.kind === "ready" && displayState.events.length > 0 && <div style={{ display: "grid", gap: 10, marginTop: 12 }}>{displayState.events.map((event) => <LifecycleEvent key={event.eventId} event={event} />)}</div>}
   </section>;
 }
