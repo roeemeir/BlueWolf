@@ -5,8 +5,8 @@ import type { SoRouteKind } from "@/lib/bluewolf";
  *
  * Geometry is deliberately independent of vehicle type. The same transformed
  * centerline is consumed by the template generator, previews and live map.
- * A Double is one continuous elongated hippodrome; it is never composed from
- * two overlapping capsules and therefore has no internal U-turn.
+ * A Double is one continuous closed route with an exact 30° axis break; it has
+ * no internal U-turn seam and does not fall back to an elongated straight capsule.
  */
 export type SoPoint = { x: number; y: number };
 export type SoPointWithHeading = SoPoint & { heading: number };
@@ -35,6 +35,8 @@ export type SoGeometryOptions = {
   doubleHalfLeg?: number;
   samplesPerTurn?: number;
 };
+
+export const DOUBLE_HIPPODROME_BREAK_DEG = 30;
 
 export const SO_DIRECT_PHASES: Record<SoRouteKind, readonly number[]> = {
   single: [0, 0.5],
@@ -69,7 +71,64 @@ function transform(point: SoPoint, pose: SoSmilePose, center: SoPoint): SoPoint 
   return { x: center.x + pose.offsetX + rotated.x, y: center.y + pose.offsetY + rotated.y };
 }
 
-/** Closed clockwise hippodrome polyline with straight legs and only outer turns. */
+function singleHippodromePoints(radius: number, halfLeg: number, samples: number): SoPoint[] {
+  const points: SoPoint[] = [{ x: -halfLeg, y: -radius }, { x: halfLeg, y: -radius }];
+  for (let index = 1; index <= samples; index += 1) {
+    const angle = -Math.PI / 2 + index * Math.PI / samples;
+    points.push({ x: halfLeg + Math.cos(angle) * radius, y: Math.sin(angle) * radius });
+  }
+  points.push({ x: -halfLeg, y: radius });
+  // Closing is left to SVG Z / the sampler, so the initial point is not duplicated.
+  for (let index = 1; index < samples; index += 1) {
+    const angle = Math.PI / 2 + index * Math.PI / samples;
+    points.push({ x: -halfLeg + Math.cos(angle) * radius, y: Math.sin(angle) * radius });
+  }
+  return points;
+}
+
+function bentDoubleHippodromePoints(radius: number, segmentLength: number, samples: number): SoPoint[] {
+  const halfBreak = DOUBLE_HIPPODROME_BREAK_DEG / 2 * Math.PI / 180;
+  const tangentLeft = { x: Math.cos(halfBreak), y: Math.sin(halfBreak) };
+  const tangentRight = { x: Math.cos(halfBreak), y: -Math.sin(halfBreak) };
+  const normalLeft = { x: -tangentLeft.y, y: tangentLeft.x };
+  const normalRight = { x: -tangentRight.y, y: tangentRight.x };
+  const leftEnd = { x: -segmentLength * tangentLeft.x, y: -segmentLength * tangentLeft.y };
+  const joint = { x: 0, y: 0 };
+  const rightEnd = { x: segmentLength * tangentRight.x, y: segmentLength * tangentRight.y };
+  const offset = (point: SoPoint, normal: SoPoint, amount: number): SoPoint => ({ x: point.x + normal.x * amount, y: point.y + normal.y * amount });
+
+  // Upper/outer leg. The two offset pieces meet at the central 30° break.
+  const points: SoPoint[] = [
+    offset(leftEnd, normalLeft, radius),
+    offset(joint, normalLeft, radius),
+    offset(joint, normalRight, radius),
+    offset(rightEnd, normalRight, radius),
+  ];
+
+  // Right outer turn: +normal -> -normal through the forward tangent.
+  const rightNormalAngle = Math.atan2(normalRight.y, normalRight.x);
+  for (let index = 1; index <= samples; index += 1) {
+    const angle = rightNormalAngle - index * Math.PI / samples;
+    points.push({ x: rightEnd.x + Math.cos(angle) * radius, y: rightEnd.y + Math.sin(angle) * radius });
+  }
+
+  // Lower/return leg back through the same physical break without an internal U-turn.
+  points.push(
+    offset(joint, normalRight, -radius),
+    offset(joint, normalLeft, -radius),
+    offset(leftEnd, normalLeft, -radius),
+  );
+
+  // Left outer turn. Omit the final point because SVG Z closes to the first point.
+  const negativeLeftNormalAngle = Math.atan2(-normalLeft.y, -normalLeft.x);
+  for (let index = 1; index < samples; index += 1) {
+    const angle = negativeLeftNormalAngle - index * Math.PI / samples;
+    points.push({ x: leftEnd.x + Math.cos(angle) * radius, y: leftEnd.y + Math.sin(angle) * radius });
+  }
+  return points;
+}
+
+/** Closed clockwise SO polyline. Single is a capsule; Double has an exact 30° internal axis break. */
 export function localHippodromePoints(
   kind: SoRouteKind,
   {
@@ -79,22 +138,10 @@ export function localHippodromePoints(
     samplesPerTurn = 18,
   }: Pick<SoGeometryOptions, "radius" | "singleHalfLeg" | "doubleHalfLeg" | "samplesPerTurn"> = {},
 ): SoPoint[] {
-  const halfLeg = kind === "double" ? doubleHalfLeg : singleHalfLeg;
   const samples = Math.max(6, Math.round(samplesPerTurn));
-  const points: SoPoint[] = [{ x: -halfLeg, y: -radius }, { x: halfLeg, y: -radius }];
-
-  for (let index = 1; index <= samples; index += 1) {
-    const angle = -Math.PI / 2 + index * Math.PI / samples;
-    points.push({ x: halfLeg + Math.cos(angle) * radius, y: Math.sin(angle) * radius });
-  }
-  points.push({ x: -halfLeg, y: radius });
-
-  // Closing is left to SVG Z / the sampler, so the initial point is not duplicated.
-  for (let index = 1; index < samples; index += 1) {
-    const angle = Math.PI / 2 + index * Math.PI / samples;
-    points.push({ x: -halfLeg + Math.cos(angle) * radius, y: Math.sin(angle) * radius });
-  }
-  return points;
+  return kind === "double"
+    ? bentDoubleHippodromePoints(radius, doubleHalfLeg, samples)
+    : singleHippodromePoints(radius, singleHalfLeg, samples);
 }
 
 export function pointsToClosedPath(points: readonly SoPoint[]) {
