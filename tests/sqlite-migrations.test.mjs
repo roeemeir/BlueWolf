@@ -45,7 +45,10 @@ test('BW-OFF-012 upgrades a legacy workspace without losing state, revision or a
     assert.equal(workspace.revision, 3);
     assert.deepEqual(JSON.parse(String(workspace.state)), { legacy: true, value: 42 });
     const audit = db.prepare('SELECT category,action,detail FROM audit_entries WHERE workspace_id=?').all('legacy');
-    assert.deepEqual(audit, [{ category: 'legacy', action: 'save', detail: 'before migrations' }]);
+    assert.equal(audit.length, 1);
+    assert.equal(audit[0].category, 'legacy');
+    assert.equal(audit[0].action, 'save');
+    assert.equal(audit[0].detail, 'before migrations');
     const version = db.prepare('SELECT revision,state,category,action FROM workspace_versions WHERE workspace_id=?').get('legacy');
     assert.equal(version.revision, 3);
     assert.deepEqual(JSON.parse(String(version.state)), { legacy: true, value: 42 });
