@@ -2,6 +2,7 @@ import type { LiveRuntimeHistoryGroup, LiveRuntimeHistoryPoint } from "@/lib/liv
 import type { ScoreTracePoint } from "@/lib/score-trace";
 
 export const OPERATOR_CURSOR_TOLERANCE_MS = 10_000;
+export const OPERATOR_CURSOR_EVENT = "bluewolf:operator-time-cursor" as const;
 
 export type OperatorCursorVehicle = {
   vehicleId: number;
@@ -19,6 +20,9 @@ export type OperatorCursorFrame = {
   groups: LiveRuntimeHistoryGroup[];
   vehicles: OperatorCursorVehicle[];
 };
+
+type OperatorCursorDetail = { serverId: string; observedAt: string | null };
+const CURSOR_BY_SERVER = new Map<string, string | null>();
 
 function finiteTime(value: string) {
   const timeMs = Date.parse(value);
@@ -94,4 +98,26 @@ export function resolveOperatorCursorFrame(
 export function traceUpToCursor<T extends ScoreTracePoint>(trace: readonly T[], cursorTimeMs: number | null): T[] {
   if (cursorTimeMs === null || !Number.isFinite(cursorTimeMs)) return trace.map((row) => ({ ...row }));
   return trace.filter((row) => row.timeMs <= cursorTimeMs).map((row) => ({ ...row }));
+}
+
+/** Client-only ephemeral bus. It deliberately does not persist a cursor across restart/session. */
+export function publishOperatorCursor(serverId: string, observedAt: string | null) {
+  CURSOR_BY_SERVER.set(serverId, observedAt);
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent<OperatorCursorDetail>(OPERATOR_CURSOR_EVENT, { detail: { serverId, observedAt } }));
+}
+
+export function currentOperatorCursor(serverId: string) {
+  return CURSOR_BY_SERVER.get(serverId) ?? null;
+}
+
+export function subscribeOperatorCursor(serverId: string, listener: (observedAt: string | null) => void) {
+  if (typeof window === "undefined") return () => undefined;
+  const handler = (event: Event) => {
+    const detail = (event as CustomEvent<OperatorCursorDetail>).detail;
+    if (!detail || detail.serverId !== serverId) return;
+    listener(detail.observedAt);
+  };
+  window.addEventListener(OPERATOR_CURSOR_EVENT, handler);
+  return () => window.removeEventListener(OPERATOR_CURSOR_EVENT, handler);
 }
