@@ -101,8 +101,13 @@ class AdaptiveRouteChangeTests(unittest.TestCase):
 
     def test_material_geometry_and_period_change_is_detected(self) -> None:
         config = DetectionConfig()
+        self.assertEqual(config.geometry_change_ratio, 0.10)
         old_route, _ = _detected_circle(radius_m=100, period_s=120)
-        new_route, _ = _detected_circle(radius_m=140, period_s=180)
+        # BW-CORE-009 product acceptance: a geometry shift just above ten
+        # percent must be material without requiring the older twenty-percent
+        # default. Period is changed independently so this case also keeps the
+        # period-change path covered.
+        new_route, _ = _detected_circle(radius_m=112, period_s=180)
 
         delta = compare_routes(old_route, new_route, config)
 
@@ -110,7 +115,7 @@ class AdaptiveRouteChangeTests(unittest.TestCase):
         self.assertIn("long_axis", delta.reasons)
         self.assertIn("short_axis", delta.reasons)
         self.assertIn("period", delta.reasons)
-        self.assertGreaterEqual(delta.long_axis_ratio, 0.20)
+        self.assertGreaterEqual(delta.long_axis_ratio, 0.10)
         self.assertGreaterEqual(delta.period_ratio, 0.20)
 
     def test_small_refit_drift_does_not_create_route_change(self) -> None:
