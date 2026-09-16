@@ -1,5 +1,7 @@
 import type { InfluxFieldMapping, InfluxSettings } from "./bluewolf";
 
+export const MAX_NOMINAL_LIVE_LATENCY_SECONDS = 10;
+
 const RUNTIME_METRICS: Record<string, string | null> = {
   vehicleNumber: null,
   uniqueVehicleId: "vehicle_identifier",
@@ -39,6 +41,24 @@ function text(value: unknown, name: string) {
 function finitePositive(value: unknown, name: string) {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) throw new Error(`${name} must be positive`);
   return value;
+}
+
+export function nominalLiveLatencySeconds(influx: InfluxSettings, uiRefreshSeconds: number) {
+  const joinToleranceSeconds = finitePositive(influx.joinToleranceSeconds, "influx.joinToleranceSeconds");
+  const activePollSeconds = finitePositive(influx.activePollSeconds, "influx.activePollSeconds");
+  const refreshSeconds = finitePositive(uiRefreshSeconds, "settings.uiRefreshSeconds");
+  return joinToleranceSeconds + activePollSeconds + refreshSeconds;
+}
+
+export function validateLiveLatencyBudget(influx: InfluxSettings, uiRefreshSeconds: number) {
+  const total = nominalLiveLatencySeconds(influx, uiRefreshSeconds);
+  if (total > MAX_NOMINAL_LIVE_LATENCY_SECONDS) {
+    throw new Error(
+      `BW-DATA-010 live latency budget exceeds ${MAX_NOMINAL_LIVE_LATENCY_SECONDS}s: ` +
+      `${influx.joinToleranceSeconds}s join + ${influx.activePollSeconds}s poll + ${uiRefreshSeconds}s UI = ${total}s`,
+    );
+  }
+  return total;
 }
 
 function mappedScalar(value: string): string | number | boolean {
