@@ -138,18 +138,21 @@ test('JPEG page extractor preserves every Canvas page from the established PDF r
   assert.deepEqual(Array.from(extracted[1].jpeg), Array.from(second));
 });
 
-test('REP-03/04 UI and PDF remain archive-backed and contain no inferred demo lifecycle', async () => {
+test('REP-03/04 UI and release PDF remain archive-backed and contain no inferred demo lifecycle', async () => {
   const panel = await readFile('components/bluewolf/investigation-lifecycle-panel.tsx', 'utf8');
   const reportPanel = await readFile('components/bluewolf/investigation-report-panel.tsx', 'utf8');
-  const pdf = await readFile('lib/investigation-pdf-lifecycle.ts', 'utf8');
+  const lifecycle = await readFile('lib/investigation-pdf-lifecycle.ts', 'utf8');
+  const release = await readFile('lib/investigation-pdf-release.ts', 'utf8');
   assert.match(panel, /data-requirements="REP-03 REP-04"/);
   assert.match(panel, /\/api\/investigation\/events/);
   assert.match(panel, /Lifecycle לא קיים בארכיון/);
   assert.match(panel, /אינה מסיקה שהוא פעיל/);
   assert.match(reportPanel, /InvestigationLifecyclePanel/);
-  assert.match(reportPanel, /buildInvestigationPdfWithLifecycle/);
+  assert.match(reportPanel, /buildInvestigationReleasePdf/);
   assert.match(reportPanel, /REP-03 REP-04/);
-  assert.match(pdf, /finalized_time_utc/);
+  assert.match(release, /buildInvestigationPdfWithLifecycle/);
+  assert.match(release, /buildInvestigationWmtsMapPages/);
+  assert.match(lifecycle, /finalized_time_utc/);
   assert.doesNotMatch(panel, /buildEvents|getServerScenario/);
-  assert.doesNotMatch(pdf, /window\.print|fetch\(/);
+  assert.doesNotMatch(lifecycle, /window\.print|fetch\(/);
 });
