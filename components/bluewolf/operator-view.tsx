@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getServerScenario, type DataMode, type DemoGroup, type SyncTemplate, type VehicleType } from "@/lib/bluewolf";
 import { normalizeEventRecompute } from "@/lib/investigation-contract";
-import { getRuntimeGroups, type LiveRuntimeVehicle } from "@/lib/live-runtime";
+import { getRuntimeGroups } from "@/lib/live-runtime";
 import { formatKnotsFromKmh, formatKnotsFromMps } from "@/lib/speed-units";
 import { useWorkspace } from "./app-context";
 import { OperationalLiveMap } from "./operational-live-map";
@@ -20,8 +20,6 @@ import { ScoreRing, TimelineChart, VehicleIconGlyph, type GroupKey, type ScoreLa
 
 const scoreTone = (score: number) => score >= 80 ? "good" : score < 50 ? "low" : "medium";
 const scoreLabel = (score: number) => score >= 80 ? "טוב" : score < 50 ? "נמוך" : "בינוני";
-
-type RuntimeDisplayGroup = Omit<DemoGroup, "members"> & { members: LiveRuntimeVehicle[] };
 
 function TypeGlyph({ type, color }: { type?: VehicleType; color: string }) { return <svg className="member-type-icon" viewBox="-15 -15 30 30" aria-hidden="true"><VehicleIconGlyph icon={type?.icon ?? "rover"} color={color} /></svg>; }
 
@@ -35,10 +33,12 @@ function GroupCard({ group, selected, vehicleTypes, templateName, onSelect, onSe
   </article>;
 }
 
-function VehicleDetail({ group, id, vehicleTypes, onClose }: { group: RuntimeDisplayGroup; id: number; vehicleTypes: VehicleType[]; onClose: () => void }) {
+function VehicleDetail({ group, id, vehicleTypes, onClose }: { group: DemoGroup; id: number; vehicleTypes: VehicleType[]; onClose: () => void }) {
   const vehicle = group.members.find((item) => item.id === id) ?? group.members[0]; const type = vehicleTypes.find((item) => item.id === vehicle.typeId); const color = group.color;
-  const speedLabel = vehicle.speedMps !== undefined ? "מהירות נצפית" : "מהירות עבודה";
-  const speedValue = vehicle.speedMps !== undefined ? formatKnotsFromMps(vehicle.speedMps) : type ? formatKnotsFromKmh(type.workSpeedKmh) : "אין נתון";
+  const observedSpeed = (vehicle as { speedMps?: unknown }).speedMps;
+  const speedMps = typeof observedSpeed === "number" && Number.isFinite(observedSpeed) && observedSpeed >= 0 ? observedSpeed : undefined;
+  const speedLabel = speedMps !== undefined ? "מהירות נצפית" : "מהירות עבודה";
+  const speedValue = speedMps !== undefined ? formatKnotsFromMps(speedMps) : type ? formatKnotsFromKmh(type.workSpeedKmh) : "אין נתון";
   return <section className="vehicle-detail v04-vehicle-detail glass-panel"><header><div className="vehicle-detail-identity"><TypeGlyph type={type} color={color} /><div><strong>רכב {id}</strong><p>{type?.name} · צבע קבוצה {group.id}</p></div></div><Button variant="ghost" size="icon-sm" onClick={onClose}><X /></Button></header><div className="vehicle-score-row"><ScoreRing value={vehicle.score} color={color} size="large" /><div><span>הסיבה העיקרית</span><strong>{group.key === "so" && vehicle.score < group.total ? "תזמון פנייה" : group.key === "si" ? "יחס זוויתי" : "ביצוע תקין"}</strong><p>הצבע במצב חי מייצג קבוצה בלבד; סוג הרכב מוצג באמצעות האייקון.</p></div></div><dl><div><dt>סנכרון</dt><dd>{vehicle.sync}</dd></div><div><dt>נתיב</dt><dd>{vehicle.route}</dd></div><div><dt>{speedLabel}</dt><dd>{speedValue}</dd></div><div><dt>פאזה</dt><dd>{Math.round(vehicle.phase * 100)}%</dd></div><div><dt>אמינות</dt><dd>{vehicle.confidence}%</dd></div></dl></section>;
 }
 
