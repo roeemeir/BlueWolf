@@ -1,5 +1,5 @@
 import type { InfluxSettings, VehicleType } from "./bluewolf";
-import { validateInfluxSettings } from "./influx-runtime-config";
+import { validateInfluxSettings, validateLiveLatencyBudget } from "./influx-runtime-config";
 import { normalizeMapSources } from "./map-source-config";
 import { formatRouteWkt, parseRouteWkt } from "./route-wkt";
 import { validateVehicleIdRanges } from "./vehicle-id-ranges";
@@ -45,6 +45,17 @@ function validateInflux(state: JsonObject) {
   validateInfluxSettings(state.influx as unknown as InfluxSettings);
 }
 
+function validateLatencyBudget(state: JsonObject) {
+  if (state.influx === undefined || state.settings === undefined) return;
+  if (!isObject(state.influx)) throw new Error("influx must be an object");
+  if (!isObject(state.settings)) throw new Error("settings must be an object");
+  if (state.settings.uiRefreshSeconds === undefined) return;
+  validateLiveLatencyBudget(
+    state.influx as unknown as InfluxSettings,
+    Number(state.settings.uiRefreshSeconds),
+  );
+}
+
 function validateMapSources(state: JsonObject) {
   if (state.mapServers === undefined) return;
   state.mapServers = normalizeMapSources(state.mapServers).map((source) => ({
@@ -73,6 +84,9 @@ function validateMapSources(state: JsonObject) {
  * WKT geometry is parsed and normalized before it can become persisted truth.
  * IN-01 is validated here as well so labels cannot be saved independently from
  * the actual stream columns and value transformations consumed by the runtime.
+ * BW-DATA-010 is enforced across join tolerance, active polling and UI refresh
+ * so a saved operational configuration cannot silently exceed the 10s nominal
+ * live-display latency budget.
  * BW-OFF-010 map source metadata is normalized here, while map tokens are
  * deliberately rejected from workspace JSON and live only in local server-side
  * secret storage.
@@ -83,6 +97,7 @@ export function normalizeAndValidateWorkspaceState(value: unknown): unknown {
   normalizeRoutes(state);
   validateVehicleRanges(state);
   validateInflux(state);
+  validateLatencyBudget(state);
   validateMapSources(state);
   return state;
 }
