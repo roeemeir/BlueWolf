@@ -73,6 +73,7 @@ jobs:
             cat /tmp/cloudflared.log
             exit 1
           fi
+          echo "$url" > /tmp/bluewolf-qa-url.txt
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "## Blue Wolf QA Preview" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -81,6 +82,13 @@ jobs:
           echo "- Storage: local SQLite only" >> "$GITHUB_STEP_SUMMARY"
           echo "- Runtime secrets: none" >> "$GITHUB_STEP_SUMMARY"
           echo "BLUEWOLF_QA_URL=$url"
+      - name: Publish QA URL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bluewolf-qa-url
+          path: /tmp/bluewolf-qa-url.txt
+          if-no-files-found: error
+          retention-days: 1
       - name: Keep preview alive
         run: |
           server_pid=$(cat /tmp/bluewolf-server.pid)
