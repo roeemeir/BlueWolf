@@ -9,12 +9,19 @@ The archive stores every changed revision of one canonical joined sample while
 keeping a compact latest table for window reads. Identical re-observations are
 no-ops. SQLite is used from the Python standard library so the same file works
 for Windows and the single-writer OpenShift runtime without a new dependency.
+
+BW-OFF-009 volume management is opt-in at the class boundary and deployment-
+configurable through ``BLUEWOLF_ARCHIVE_RETENTION_DAYS`` and
+``BLUEWOLF_ARCHIVE_PRUNE_INTERVAL_SECONDS``.  Direct unit/replay use without a
+retention policy keeps the historical behavior.  A configured runtime prunes
+both latest rows and their revision history from the same cutoff, so revisions
+cannot grow forever behind an apparently bounded latest table.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import json
 import os
@@ -103,6 +110,19 @@ def _sample_from_row(row: sqlite3.Row) -> VehicleSample:
     )
 
 
+def _positive_int_env(name: str, default: int | None, *, minimum: int = 1) -> int | None:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if value < minimum:
+        raise ValueError(f"{name} must be >= {minimum}")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class SampleArchiveWriteResult:
     inserted: int
@@ -116,6 +136,13 @@ class SampleArchiveWriteResult:
 
 
 @dataclass(frozen=True, slots=True)
+class SampleArchivePruneResult:
+    cutoff_utc: datetime
+    latest_deleted: int
+    revisions_deleted: int
+
+
+@dataclass(frozen=True, slots=True)
 class ArchivedSampleRevision:
     server_id: int
     vehicle_identifier: int
@@ -126,12 +153,37 @@ class ArchivedSampleRevision:
 
 
 class JoinedSampleArchive:
-    """SQLite archive with deterministic revision semantics."""
+    """SQLite archive with deterministic revision semantics and optional retention."""
 
-    def __init__(self, path: str | os.PathLike[str]) -> None:
+    def __init__(
+        self,
+        path: str | os.PathLike[str],
+        *,
+        retention_days: int | None = None,
+        prune_interval_seconds: int | None = None,
+    ) -> None:
         self.path = Path(path).expanduser().resolve(strict=False)
         if not str(self.path):
             raise ValueError("sample archive path is required")
+        if retention_days is None:
+            retention_days = _positive_int_env("BLUEWOLF_ARCHIVE_RETENTION_DAYS", None)
+        if retention_days is not None and (isinstance(retention_days, bool) or retention_days < 1):
+            raise ValueError("archive retention_days must be a positive integer")
+        if prune_interval_seconds is None:
+            prune_interval_seconds = _positive_int_env(
+                "BLUEWOLF_ARCHIVE_PRUNE_INTERVAL_SECONDS",
+                3600 if retention_days is not None else None,
+                minimum=60,
+            )
+        if retention_days is not None and prune_interval_seconds is None:
+            prune_interval_seconds = 3600
+        if prune_interval_seconds is not None and (
+            isinstance(prune_interval_seconds, bool) or prune_interval_seconds < 60
+        ):
+            raise ValueError("archive prune_interval_seconds must be an integer >= 60")
+        self.retention_days = retention_days
+        self.prune_interval_seconds = prune_interval_seconds
+        self._last_prune_at_utc: datetime | None = None
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
@@ -198,6 +250,42 @@ class JoinedSampleArchive:
                 ON joined_sample_latest(server_id, sample_time_utc, vehicle_identifier)
                 """
             )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS joined_sample_revisions_retention_idx
+                ON joined_sample_revisions(sample_time_utc, server_id, vehicle_identifier)
+                """
+            )
+
+    @staticmethod
+    def _prune_connection(connection: sqlite3.Connection, cutoff_utc: datetime) -> SampleArchivePruneResult:
+        cutoff = _iso(cutoff_utc)
+        revisions = connection.execute(
+            "DELETE FROM joined_sample_revisions WHERE sample_time_utc < ?",
+            (cutoff,),
+        ).rowcount
+        latest = connection.execute(
+            "DELETE FROM joined_sample_latest WHERE sample_time_utc < ?",
+            (cutoff,),
+        ).rowcount
+        return SampleArchivePruneResult(_utc(cutoff_utc), max(0, latest), max(0, revisions))
+
+    def prune_before(self, cutoff_utc: datetime) -> SampleArchivePruneResult:
+        cutoff = _utc(cutoff_utc)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            result = self._prune_connection(connection, cutoff)
+        return result
+
+    def _prune_if_due(self, connection: sqlite3.Connection, recorded_at_utc: datetime) -> None:
+        if self.retention_days is None:
+            return
+        now = _utc(recorded_at_utc)
+        interval = self.prune_interval_seconds or 3600
+        if self._last_prune_at_utc is not None and (now - self._last_prune_at_utc).total_seconds() < interval:
+            return
+        self._prune_connection(connection, now - timedelta(days=self.retention_days))
+        self._last_prune_at_utc = now
 
     def record_batch(
         self,
@@ -205,7 +293,8 @@ class JoinedSampleArchive:
         *,
         recorded_at_utc: datetime,
     ) -> SampleArchiveWriteResult:
-        recorded_at = _iso(recorded_at_utc)
+        recorded_at_datetime = _utc(recorded_at_utc)
+        recorded_at = _iso(recorded_at_datetime)
         ordered = sorted(
             samples,
             key=lambda sample: (
@@ -291,6 +380,7 @@ class JoinedSampleArchive:
                         payload_json,
                     ),
                 )
+            self._prune_if_due(connection, recorded_at_datetime)
 
         return SampleArchiveWriteResult(
             inserted=inserted,
@@ -394,5 +484,6 @@ __all__ = [
     "ARCHIVE_SCHEMA_VERSION",
     "ArchivedSampleRevision",
     "JoinedSampleArchive",
+    "SampleArchivePruneResult",
     "SampleArchiveWriteResult",
 ]
