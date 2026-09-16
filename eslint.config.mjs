@@ -28,11 +28,12 @@ const eslintConfig = defineConfig([
       "components/bluewolf/visuals.tsx",
       "components/bluewolf/so-governed-visuals.tsx",
       "components/bluewolf/operator-view.tsx",
+      "components/bluewolf/operational-live-map.tsx",
+      "components/bluewolf/operational-timeline.tsx",
     ],
     rules: {
-      // The simulation maps record a deterministic navigation frame when the
-      // external server/tick input changes. OperatorView also mirrors the
-      // externally owned Core event-evidence lifecycle into UI availability
+      // These components mirror externally-owned navigation state (server/tick,
+      // Core event evidence, and the shared operator time cursor) into local UI
       // state. Keep the exception scoped to those synchronization effects.
       "react-hooks/set-state-in-effect": "off",
     },
