@@ -1,5 +1,6 @@
 import type { InfluxSettings, VehicleType } from "./bluewolf";
 import { validateInfluxSettings } from "./influx-runtime-config";
+import { normalizeMapSources } from "./map-source-config";
 import { formatRouteWkt, parseRouteWkt } from "./route-wkt";
 import { validateVehicleIdRanges } from "./vehicle-id-ranges";
 
@@ -44,12 +45,37 @@ function validateInflux(state: JsonObject) {
   validateInfluxSettings(state.influx as unknown as InfluxSettings);
 }
 
+function validateMapSources(state: JsonObject) {
+  if (state.mapServers === undefined) return;
+  state.mapServers = normalizeMapSources(state.mapServers).map((source) => ({
+    id: source.id,
+    name: source.name,
+    kind: source.kind,
+    baseUrl: source.baseUrl,
+    urlTemplate: source.baseUrl,
+    attribution: source.attribution,
+    enabled: source.enabled,
+    isDefault: source.isDefault,
+    layer: source.layer,
+    style: source.style,
+    format: source.format,
+    version: source.version,
+    crs: source.crs,
+    tileMatrixSet: source.tileMatrixSet,
+    tokenMode: source.tokenMode,
+    tokenQueryParam: source.tokenQueryParam,
+  }));
+}
+
 /**
  * Server-side canonicalization/validation before either SQLite or D1 persistence.
  * Legacy non-WKT route sentinels remain readable during migration, while every
  * WKT geometry is parsed and normalized before it can become persisted truth.
  * IN-01 is validated here as well so labels cannot be saved independently from
  * the actual stream columns and value transformations consumed by the runtime.
+ * BW-OFF-010 map source metadata is normalized here, while map tokens are
+ * deliberately rejected from workspace JSON and live only in local server-side
+ * secret storage.
  */
 export function normalizeAndValidateWorkspaceState(value: unknown): unknown {
   if (!isObject(value)) throw new Error("workspace state must be an object");
@@ -57,5 +83,6 @@ export function normalizeAndValidateWorkspaceState(value: unknown): unknown {
   normalizeRoutes(state);
   validateVehicleRanges(state);
   validateInflux(state);
+  validateMapSources(state);
   return state;
 }
