@@ -1,18 +1,11 @@
 "use client";
 
+import type { RecomputedRoute } from "@/lib/investigation-contract";
+import type { LiveMapTemplateAssignment } from "@/lib/live-map-evidence";
 import { getRuntimeGroups, getRuntimeTrace, type LiveRuntimeVehicle } from "@/lib/live-runtime";
-import { traceScoreColor, traceSegments } from "@/lib/score-trace";
+import { filterTraceWindow, traceScoreColor, traceSegments } from "@/lib/score-trace";
 import type { VehicleType } from "@/lib/bluewolf";
 import { VehicleIconGlyph } from "./visuals";
-
-type PositionedVehicle = {
-  groupId: string;
-  groupName: string;
-  color: string;
-  vehicle: LiveRuntimeVehicle;
-  x: number;
-  y: number;
-};
 
 type RawPosition = {
   groupId: string;
@@ -22,6 +15,9 @@ type RawPosition = {
   latitude: number;
   longitude: number;
 };
+
+type GeoPoint = { latitude: number; longitude: number };
+type ScreenPoint = { x: number; y: number };
 
 const VIEW_WIDTH = 1000;
 const VIEW_HEIGHT = 570;
@@ -43,38 +39,28 @@ function projectedPositions(serverId: string): RawPosition[] {
   }));
 }
 
-function fitToViewport(rows: RawPosition[]): PositionedVehicle[] {
-  if (rows.length === 0) return [];
+function viewportProjector(rows: readonly GeoPoint[]) {
+  if (rows.length === 0) return (_latitude: number, _longitude: number): ScreenPoint => ({ x: VIEW_WIDTH / 2, y: VIEW_HEIGHT / 2 });
   const midLatitude = rows.reduce((sum, row) => sum + row.latitude, 0) / rows.length;
   const longitudeScale = Math.max(0.15, Math.cos(midLatitude * Math.PI / 180));
-  const local = rows.map((row) => ({
-    ...row,
-    localX: row.longitude * longitudeScale,
-    localY: row.latitude,
-  }));
-  const minX = Math.min(...local.map((row) => row.localX));
-  const maxX = Math.max(...local.map((row) => row.localX));
-  const minY = Math.min(...local.map((row) => row.localY));
-  const maxY = Math.max(...local.map((row) => row.localY));
+  const local = rows.map((row) => ({ x: row.longitude * longitudeScale, y: row.latitude }));
+  const minX = Math.min(...local.map((row) => row.x));
+  const maxX = Math.max(...local.map((row) => row.x));
+  const minY = Math.min(...local.map((row) => row.y));
+  const maxY = Math.max(...local.map((row) => row.y));
   const centerX = (minX + maxX) / 2;
   const centerY = (minY + maxY) / 2;
   const rawSpanX = Math.max(maxX - minX, EPS);
   const rawSpanY = Math.max(maxY - minY, EPS);
-  // A single vehicle or a very tight formation still needs a useful viewport.
   const spanX = Math.max(rawSpanX * 1.24, rawSpanY * 0.35, 1e-5);
   const spanY = Math.max(rawSpanY * 1.24, rawSpanX * 0.35, 1e-5);
   const usableWidth = VIEW_WIDTH - 2 * MARGIN_X;
   const usableHeight = VIEW_HEIGHT - 2 * MARGIN_Y;
   const scale = Math.min(usableWidth / spanX, usableHeight / spanY);
-
-  return local.map((row) => ({
-    groupId: row.groupId,
-    groupName: row.groupName,
-    color: row.color,
-    vehicle: row.vehicle,
-    x: VIEW_WIDTH / 2 + (row.localX - centerX) * scale,
-    y: VIEW_HEIGHT / 2 - (row.localY - centerY) * scale,
-  }));
+  return (latitude: number, longitude: number) => ({
+    x: VIEW_WIDTH / 2 + (longitude * longitudeScale - centerX) * scale,
+    y: VIEW_HEIGHT / 2 - (latitude - centerY) * scale,
+  });
 }
 
 function TypeIcon({ type, color }: { type?: VehicleType; color: string }) {
@@ -87,7 +73,15 @@ export function OperationalLiveMap({
   selectedVehicle,
   vehicleTypes,
   showGrid,
-  showTrace,
+  showObservedTrace,
+  showScoreTrace,
+  showDetectedRoute,
+  showGroups,
+  showTemplate,
+  traceWindowMinutes,
+  routeEvidence = [],
+  templateAssignments = [],
+  activeTemplateId,
   onSelectGroup,
   onSelectVehicle,
 }: {
@@ -96,21 +90,34 @@ export function OperationalLiveMap({
   selectedVehicle: number | null;
   vehicleTypes: VehicleType[];
   showGrid: boolean;
-  showTrace: boolean;
+  showObservedTrace: boolean;
+  showScoreTrace: boolean;
+  showDetectedRoute: boolean;
+  showGroups: boolean;
+  showTemplate: boolean;
+  traceWindowMinutes: number;
+  routeEvidence?: RecomputedRoute[];
+  templateAssignments?: LiveMapTemplateAssignment[];
+  activeTemplateId?: string;
   onSelectGroup: (groupId: string) => void;
   onSelectVehicle: (vehicleId: number, groupId: string) => void;
 }) {
   const current = projectedPositions(serverId);
-  const history = getRuntimeTrace(serverId);
-  const rows = history.map(point => ({ groupId: point.groupId, groupName: "", color: "", vehicle: { id: point.vehicleId } as LiveRuntimeVehicle, latitude: point.latitude, longitude: point.longitude }));
-  const projected = fitToViewport([...rows, ...current]);
-  const points = projected.slice(rows.length);
-  const segments = traceSegments(history.map((point, index) => ({ ...point, x: projected[index].x, y: projected[index].y })));
-
+  const history = filterTraceWindow(getRuntimeTrace(serverId), traceWindowMinutes);
+  const routePoints = routeEvidence.flatMap((route) => route.centerline);
+  const project = viewportProjector([
+    ...history.map((point) => ({ latitude: point.latitude, longitude: point.longitude })),
+    ...current,
+    ...routePoints,
+  ]);
+  const projectedHistory = history.map((point) => ({ ...point, ...project(point.latitude, point.longitude) }));
+  const segments = traceSegments(projectedHistory);
+  const points = current.map((row) => ({ ...row, ...project(row.latitude, row.longitude) }));
   const typeById = (id: string) => vehicleTypes.find((type) => type.id === id);
   const groupCount = new Set(points.map((point) => point.groupId)).size;
+  const assignmentByVehicle = new Map(templateAssignments.map((assignment) => [assignment.vehicleIdentifier, assignment]));
 
-  return <svg className="map-svg v04-live-map engineering" viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`} role="img" aria-label="מפת מיקומים מבצעית של רכבי Blue Wolf">
+  return <svg className="map-svg v04-live-map engineering" viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`} role="img" aria-label="מפת מיקומים מבצעית של רכבי Blue Wolf" data-requirements="OP-02">
     <defs>
       <pattern id={`operational-grid-${serverId}`} width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" className="v04-grid-line" /></pattern>
     </defs>
@@ -119,11 +126,18 @@ export function OperationalLiveMap({
     {showGrid && <rect width={VIEW_WIDTH} height={VIEW_HEIGHT} fill={`url(#operational-grid-${serverId})`} />}
     <g className="v04-map-labels">
       <text x="38" y="45">CORE · WGS84 LIVE</text>
-      <text x="38" y="68">Auto-fit · {groupCount} קבוצות · {points.length} רכבים עם מיקום תקף</text>
+      <text x="38" y="68">Auto-fit · {groupCount} קבוצות · {points.length} רכבים עם מיקום תקף · עקבה {traceWindowMinutes} דק׳</text>
     </g>
-    {points.length === 0 && <g className="v04-map-labels"><text x={VIEW_WIDTH / 2} y={VIEW_HEIGHT / 2} textAnchor="middle">אין כרגע מיקום WGS84 תקף ב־runtime snapshot</text><text x={VIEW_WIDTH / 2} y={VIEW_HEIGHT / 2 + 28} textAnchor="middle">לא מוצג מיקום משוער מפאזה או מגאומטריית demo</text></g>}
-    {showTrace && <g className="score-trace">{segments.map(([a, b]) => <line key={`${b.vehicleId}:${b.timeMs}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} style={{ stroke: traceScoreColor(b.sync) }}><title>רכב {b.vehicleId} · סנכרון {b.sync === null ? "אין מידע" : Math.round(b.sync)} · {new Date(b.timeMs).toLocaleTimeString("he-IL")}</title></line>)}</g>}
-    <g className="v04-vehicles">
+    {points.length === 0 && routeEvidence.length === 0 && <g className="v04-map-labels"><text x={VIEW_WIDTH / 2} y={VIEW_HEIGHT / 2} textAnchor="middle">אין כרגע מיקום WGS84 או route evidence תקף</text><text x={VIEW_WIDTH / 2} y={VIEW_HEIGHT / 2 + 28} textAnchor="middle">לא מוצג מיקום משוער מפאזה או מגאומטריית demo</text></g>}
+    {showDetectedRoute && <g className="v04-detected-routes">{routeEvidence.map((route) => {
+      const coordinates = route.centerline.map((point) => project(point.latitude, point.longitude));
+      if (coordinates.length < 2) return null;
+      const closed = [...coordinates, coordinates[0]];
+      return <polyline key={route.routeInstanceId} points={closed.map((point) => `${point.x},${point.y}`).join(" ")} fill="none" stroke="var(--muted-foreground)" strokeWidth="2.5" strokeDasharray="10 5"><title>{route.routeId} · {route.subtype} · quality {route.detectionQuality.toFixed(2)}</title></polyline>;
+    })}</g>}
+    {showObservedTrace && <g className="observed-trace">{segments.map(([a, b]) => <line key={`observed:${b.vehicleId}:${b.timeMs}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#7b8790" strokeWidth="2" opacity=".58"><title>עקבה נצפית · רכב {b.vehicleId} · {new Date(b.timeMs).toLocaleTimeString("he-IL")}</title></line>)}</g>}
+    {showScoreTrace && <g className="score-trace">{segments.map(([a, b]) => <line key={`score:${b.vehicleId}:${b.timeMs}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} style={{ stroke: traceScoreColor(b.sync) }}><title>רכב {b.vehicleId} · סנכרון {b.sync === null ? "אין מידע" : Math.round(b.sync)} · {new Date(b.timeMs).toLocaleTimeString("he-IL")}</title></line>)}</g>}
+    {showGroups && <g className="v04-vehicles">
       {points.map((point) => {
         const selected = point.groupId === selectedGroupId && point.vehicle.id === selectedVehicle;
         const heading = point.vehicle.headingDeg ?? 0;
@@ -137,11 +151,16 @@ export function OperationalLiveMap({
           <g className="v04-id-label" transform="translate(0 28)"><rect x="-19" y="-9" width="38" height="18" rx="9" /><text y="4" textAnchor="middle">{point.vehicle.id}</text></g>
         </g>;
       })}
-    </g>
+    </g>}
+    {showTemplate && <g className="v04-template-assignment-layer">{points.map((point) => {
+      const assignment = assignmentByVehicle.get(point.vehicle.id);
+      if (!assignment) return null;
+      return <g key={`template:${point.vehicle.id}`} transform={`translate(${point.x + 18} ${point.y - 22})`}><rect x="0" y="-18" width="116" height="24" rx="10" fill="var(--map-card)" opacity=".9" /><text x="8" y="0" textAnchor="start" stroke="none">{assignment.slotId} · φ {Math.round(assignment.expectedPhase * 100)}%</text></g>;
+    })}{activeTemplateId && <text x={VIEW_WIDTH - 42} y="45" textAnchor="end" stroke="none">Template: {activeTemplateId}</text>}</g>}
     <g className="v04-map-scale"><text x="42" y="535">WGS84 · תצוגה יחסית auto-fit</text><text x="955" y="535" textAnchor="end">LIVE CORE</text></g>
   </svg>;
 }
 
 export const operationalMapInternals = {
-  fitToViewport,
+  viewportProjector,
 };
