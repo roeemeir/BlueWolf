@@ -27,7 +27,7 @@ def _parse_utc(value: object) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _navigation_heading(sample: VehicleSample) -> float | None:
+def _velocity_components(sample: VehicleSample) -> tuple[float, float] | None:
     east = sample.velocity_east_mps
     north = sample.velocity_north_mps
     if east is None or north is None:
@@ -36,10 +36,26 @@ def _navigation_heading(sample: VehicleSample) -> float | None:
     north_f = float(north)
     if not math.isfinite(east_f) or not math.isfinite(north_f):
         return None
+    return east_f, north_f
+
+
+def _navigation_heading(sample: VehicleSample) -> float | None:
+    velocity = _velocity_components(sample)
+    if velocity is None:
+        return None
+    east_f, north_f = velocity
     if math.hypot(east_f, north_f) <= 1e-12:
         return None
     # Navigation convention: north=0, east=90, clockwise positive.
     return math.degrees(math.atan2(east_f, north_f)) % 360.0
+
+
+def _ground_speed_mps(sample: VehicleSample) -> float | None:
+    velocity = _velocity_components(sample)
+    if velocity is None:
+        return None
+    east_f, north_f = velocity
+    return math.hypot(east_f, north_f)
 
 
 def _sample_index(
@@ -87,6 +103,9 @@ def _enrich_group(
         heading = _navigation_heading(sample)
         if heading is not None:
             member["headingDeg"] = heading
+        speed_mps = _ground_speed_mps(sample)
+        if speed_mps is not None:
+            member["speedMps"] = speed_mps
 
 
 def enrich_runtime_snapshot_positions(
