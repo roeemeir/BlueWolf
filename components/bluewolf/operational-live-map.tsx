@@ -129,7 +129,7 @@ export function OperationalLiveMap({
   const evidence = eventEvidence?.eventId === activeEventId && eventEvidence.templateId === activeTemplateId ? eventEvidence : null;
   const current = projectedPositions(serverId);
   const history = filterTraceWindow(getRuntimeTrace(serverId), traceWindowMinutes);
-  const routeEvidence = evidence?.routes ?? [];
+  const routeEvidence = evidence?.routes ?? selectedRuntimeGroup?.detectedRoutes ?? [];
   const templateAssignments = evidence?.assignments ?? [];
   const routePoints = routeEvidence.flatMap((route) => route.centerline);
   const project = viewportProjector([
@@ -152,7 +152,7 @@ export function OperationalLiveMap({
       <button type="button" className={showTemplate ? "active" : ""} onClick={() => setShowTemplate((value) => !value)}>תבנית</button>
       <span aria-label="חלון עקבה">חלון:</span>
       {TRACE_WINDOWS.map((minutes) => <button type="button" key={minutes} className={traceWindowMinutes === minutes ? "active" : ""} onClick={() => setTraceWindowMinutes(minutes)}>{minutes} דק׳</button>)}
-      {!evidence && activeEventId && <span className="card-hint">route/template evidence טרם זמין — לא מוצגת השלמה משוערת</span>}
+      {!evidence && activeEventId && <span className="card-hint">שיוכי template מפורטים טרם זמינים; נתיב חי מוצג רק אם הגיע ישירות מה־Core.</span>}
     </div>
     <svg className="map-svg v04-live-map engineering" viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`} role="img" aria-label="מפת מיקומים מבצעית של רכבי Blue Wolf">
       <defs>
@@ -193,7 +193,7 @@ export function OperationalLiveMap({
         const assignment = assignmentByVehicle.get(point.vehicle.id);
         if (!assignment) return null;
         return <g key={`template:${point.vehicle.id}`} transform={`translate(${point.x + 18} ${point.y - 22})`}><rect x="0" y="-18" width="116" height="24" rx="10" fill="var(--map-card)" opacity=".9" /><text x="8" y="0" textAnchor="start" stroke="none">{assignment.slotId} · φ {Math.round(assignment.expectedPhase * 100)}%</text></g>;
-      })}{evidence?.templateId && <text x={VIEW_WIDTH - 42} y="45" textAnchor="end" stroke="none">Template: {evidence.templateId}</text>}</g>}
+      })}{activeTemplateId && <text x={VIEW_WIDTH - 42} y="45" textAnchor="end" stroke="none">Template: {activeTemplateId}</text>}</g>}
       <g className="v04-map-scale"><text x="42" y="535">WGS84 · תצוגה יחסית auto-fit</text><text x="955" y="535" textAnchor="end">LIVE CORE</text></g>
     </svg>
   </div>;
