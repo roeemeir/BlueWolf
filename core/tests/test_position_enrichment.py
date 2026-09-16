@@ -58,12 +58,12 @@ def _snapshot(observed_at: datetime):
 
 
 class RuntimePositionEnrichmentTests(unittest.TestCase):
-    def test_uses_exact_group_timestamp_and_navigation_heading(self) -> None:
+    def test_uses_exact_group_timestamp_heading_and_ground_speed(self) -> None:
         snapshot = _snapshot(START)
         enriched = enrich_runtime_snapshot_positions(
             snapshot,
             (
-                _sample(START, latitude=12.0, longitude=34.0, east=1.0, north=0.0),
+                _sample(START, latitude=12.0, longitude=34.0, east=3.0, north=4.0),
                 _sample(
                     START + timedelta(seconds=5),
                     latitude=13.0,
@@ -76,9 +76,11 @@ class RuntimePositionEnrichmentTests(unittest.TestCase):
         member = enriched["groupList"][0]["members"][0]
         self.assertEqual(member["latitude"], 12.0)
         self.assertEqual(member["longitude"], 34.0)
-        self.assertAlmostEqual(member["headingDeg"], 90.0)
+        self.assertAlmostEqual(member["headingDeg"], 36.86989764584402)
+        self.assertAlmostEqual(member["speedMps"], 5.0)
         legacy = enriched["groups"]["so"]["members"][0]
         self.assertEqual(legacy["latitude"], 12.0)
+        self.assertAlmostEqual(legacy["speedMps"], 5.0)
 
     def test_does_not_backfill_from_newer_or_older_sample(self) -> None:
         snapshot = _snapshot(START)
@@ -93,8 +95,9 @@ class RuntimePositionEnrichmentTests(unittest.TestCase):
         self.assertNotIn("latitude", member)
         self.assertNotIn("longitude", member)
         self.assertNotIn("headingDeg", member)
+        self.assertNotIn("speedMps", member)
 
-    def test_zero_speed_omits_heading_but_keeps_position(self) -> None:
+    def test_zero_speed_omits_heading_but_keeps_zero_speed_and_position(self) -> None:
         snapshot = _snapshot(START)
         enriched = enrich_runtime_snapshot_positions(
             snapshot,
@@ -104,6 +107,17 @@ class RuntimePositionEnrichmentTests(unittest.TestCase):
         self.assertEqual(member["latitude"], 12.0)
         self.assertEqual(member["longitude"], 34.0)
         self.assertNotIn("headingDeg", member)
+        self.assertEqual(member["speedMps"], 0.0)
+
+    def test_missing_velocity_component_does_not_invent_speed(self) -> None:
+        snapshot = _snapshot(START)
+        enriched = enrich_runtime_snapshot_positions(
+            snapshot,
+            (_sample(START, latitude=12.0, longitude=34.0, east=1.0, north=None),),
+        )
+        member = enriched["groupList"][0]["members"][0]
+        self.assertNotIn("headingDeg", member)
+        self.assertNotIn("speedMps", member)
 
     def test_position_producer_commits_once_only_after_enrichment(self) -> None:
         class RecordingStore:
@@ -138,6 +152,7 @@ class RuntimePositionEnrichmentTests(unittest.TestCase):
         self.assertEqual(member["latitude"], 12.0)
         self.assertEqual(member["longitude"], 34.0)
         self.assertAlmostEqual(member["headingDeg"], 90.0)
+        self.assertAlmostEqual(member["speedMps"], 1.0)
         self.assertIs(result.snapshot, committed)
 
 
