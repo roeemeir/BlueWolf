@@ -5,11 +5,16 @@ export { soPhasesForRoute, soSmilePoses, type SoSmilePose } from "@/lib/so-geome
 
 export type SoDirection = "forward" | "reverse";
 
+/**
+ * SO template semantics are deliberately vehicle-type neutral.
+ * `typeId` is accepted only as legacy metadata so persisted v1 templates can
+ * still be read; new authoring never writes or compares it.
+ */
 export type SoDirectPlacement = {
   routeIndex: number;
   phase: number;
-  typeId: string;
   direction: SoDirection;
+  typeId?: string;
 };
 
 function key(chain: readonly SoRouteKind[]) {
@@ -24,7 +29,7 @@ export function canonicalSoOrderKey(chain: readonly SoRouteKind[]) {
 
 export function directSoPlacementKey(chain: readonly SoRouteKind[], placements: readonly SoDirectPlacement[]) {
   const placementKey = placements
-    .map((item) => `${item.routeIndex}:${normalizePhase(item.phase)}:${item.typeId}:${item.direction}`)
+    .map((item) => `${item.routeIndex}:${normalizePhase(item.phase)}:${item.direction}`)
     .sort()
     .join("|");
   return `${key(chain)}|${placementKey}`;
@@ -57,25 +62,34 @@ function normalizePhase(value: number) {
   return Math.round(normalized * 1000) / 1000;
 }
 
-export function placeSoVehicle(
+export function placeSoPosition(
   placements: readonly SoDirectPlacement[],
   chain: readonly SoRouteKind[],
   routeIndex: number,
   phase: number,
-  typeId: string,
-): { ok: true; placements: SoDirectPlacement[] } | { ok: false; reason: "invalid-route" | "invalid-phase" | "slot-occupied" | "vehicle-type-required" } {
+): { ok: true; placements: SoDirectPlacement[] } | { ok: false; reason: "invalid-route" | "invalid-phase" | "slot-occupied" } {
   const kind = chain[routeIndex];
   if (!kind) return { ok: false, reason: "invalid-route" };
   const normalized = normalizePhase(phase);
   if (!SO_DIRECT_PHASES[kind].includes(normalized)) return { ok: false, reason: "invalid-phase" };
-  if (!typeId.trim()) return { ok: false, reason: "vehicle-type-required" };
   if (placements.some((item) => item.routeIndex === routeIndex && normalizePhase(item.phase) === normalized)) {
     return { ok: false, reason: "slot-occupied" };
   }
   return {
     ok: true,
-    placements: [...placements, { routeIndex, phase: normalized, typeId, direction: "forward" }],
+    placements: [...placements, { routeIndex, phase: normalized, direction: "forward" }],
   };
+}
+
+/** Backward-compatible alias for callers reading older code paths. Vehicle type is intentionally ignored. */
+export function placeSoVehicle(
+  placements: readonly SoDirectPlacement[],
+  chain: readonly SoRouteKind[],
+  routeIndex: number,
+  phase: number,
+  _legacyTypeId?: string,
+) {
+  return placeSoPosition(placements, chain, routeIndex, phase);
 }
 
 export function removeSoVehicle(placements: readonly SoDirectPlacement[], routeIndex: number, phase: number) {
@@ -124,7 +138,6 @@ export function validateSoPlacements(chain: readonly SoRouteKind[], placements: 
     if (!kind) return `SO placement references missing route ${placement.routeIndex}`;
     const phase = normalizePhase(placement.phase);
     if (!SO_DIRECT_PHASES[kind].includes(phase)) return `SO phase ${phase} is invalid for ${kind}`;
-    if (!placement.typeId.trim()) return "SO placement requires vehicle type";
     const slot = `${placement.routeIndex}:${phase}`;
     if (occupied.has(slot)) return `SO slot ${slot} is occupied more than once`;
     occupied.add(slot);
