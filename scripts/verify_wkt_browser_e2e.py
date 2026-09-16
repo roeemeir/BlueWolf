@@ -110,6 +110,7 @@ def seed_workspace():
 def open_workbench(page):
     page.goto(ORIGIN, wait_until="networkidle")
     page.get_by_role("tab", name="מפתחים").click()
+    page.get_by_role("tab", name="בנק נתיבים").click()
     page.get_by_test_id("route-wkt-workbench").wait_for(state="visible")
     page.get_by_test_id("route-wkt-input").wait_for(state="visible")
 
@@ -142,6 +143,13 @@ def route_client_point(page, route_id: str):
         "WKT path has no usable client-space point"
     )
     return point
+
+
+def reopen_workbench_after_reload(page):
+    page.reload(wait_until="networkidle")
+    page.get_by_role("tab", name="מפתחים").click()
+    page.get_by_role("tab", name="בנק נתיבים").click()
+    page.get_by_test_id("route-wkt-input").wait_for(state="visible")
 
 
 def run_browser_regression():
@@ -184,17 +192,13 @@ def run_browser_regression():
                     save_wkt(page)
                     persisted_after_drag = input_box.input_value()
 
-                    page.reload(wait_until="networkidle")
-                    page.get_by_role("tab", name="מפתחים").click()
-                    page.get_by_test_id("route-wkt-input").wait_for(state="visible")
+                    reopen_workbench_after_reload(page)
                     assert page.get_by_test_id("route-wkt-input").input_value() == persisted_after_drag
 
                     stop_server(process)
                     process = None
                     process = start_server(sqlite_path, log_file)
-                    page.reload(wait_until="networkidle")
-                    page.get_by_role("tab", name="מפתחים").click()
-                    page.get_by_test_id("route-wkt-input").wait_for(state="visible")
+                    reopen_workbench_after_reload(page)
                     restored_wkt = page.get_by_test_id("route-wkt-input").input_value()
                     assert restored_wkt == persisted_after_drag, (
                         "WKT changed across offline process restart:\n"
