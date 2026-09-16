@@ -116,12 +116,13 @@ class DetectionConfig:
     closure_direction_error_deg: float = 30
     closure_minimum_phase: float = 0.80
 
-    # Existing-route change lifecycle. The 20% values decide whether two
-    # confirmed fits are materially different. Period-only replacements also
+    # Existing-route change lifecycle. BW-CORE-009 freezes approximately 10%
+    # as the product default for material geometry change. Period remains an
+    # independently configurable 20% default. Period-only replacements also
     # require that the candidate evidence window is dominated by the new speed
     # regime, preventing a 50/50 old/new window from becoming an intermediate
     # period and causing replacement chatter.
-    geometry_change_ratio: float = 0.20
+    geometry_change_ratio: float = 0.10
     period_change_ratio: float = 0.20
     replacement_min_new_speed_support_fraction: float = 0.75
     replacement_speed_decision_margin: float = 0.04
