@@ -61,3 +61,18 @@ test('OP-02 Core map exposes independent truth layers and uses Core evidence, ne
   assert.doesNotMatch(source, /buildSoSmileGeometry/);
   assert.doesNotMatch(source, /getServerScenario/);
 });
+
+test('OP-02 SIM exposes observed trace, score trace, route, group and template layers with 30/60/90 windows', async () => {
+  const map = await readFile('components/bluewolf/so-governed-visuals.tsx', 'utf8');
+  const operator = await readFile('components/bluewolf/operator-view.tsx', 'utf8');
+  assert.match(map, /SIM_TRACE_RETENTION_MINUTES = 90/);
+  assert.match(map, /SIM_TRACE_WINDOWS = \[30, 60, 90\]/);
+  assert.match(map, /observedLayer/);
+  assert.match(map, /routeLayer/);
+  assert.match(map, /groupLayer/);
+  assert.match(map, /showTrace && <g className="score-trace"/);
+  assert.match(map, /showRelations && selectedGroup === "so"/);
+  assert.match(map, /showRelations && selectedGroup === "si"/);
+  assert.match(operator, /showRelations=\{showRelations\}/);
+  assert.match(operator, /showTrace=\{showTrace\}/);
+});
