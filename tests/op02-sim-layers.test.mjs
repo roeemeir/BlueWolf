@@ -19,8 +19,12 @@ test('OP-02 SIM exposes observed trace, route and group toggles with 30/60/90 wi
 
 test('OP-02 SIM keeps observed trace and score-colored trace as separate layers', async () => {
   const source = await readFile('components/bluewolf/so-governed-visuals.tsx', 'utf8');
-  assert.match(source, /className="observed-trace"/);
-  assert.match(source, /className="score-trace"/);
-  assert.match(source, /traceScoreColor\(point\.sync\)/);
-  assert.doesNotMatch(source, /observed-trace[^]*traceScoreColor\(point\.sync\)/);
+  const observedStart = source.indexOf('className="observed-trace"');
+  const scoreStart = source.indexOf('className="score-trace"');
+  assert.ok(observedStart >= 0 && scoreStart > observedStart, 'both trace layers must be present and separate');
+  const observedBlock = source.slice(observedStart, scoreStart);
+  const scoreEnd = source.indexOf('showRelations &&', scoreStart);
+  const scoreBlock = source.slice(scoreStart, scoreEnd > scoreStart ? scoreEnd : source.length);
+  assert.doesNotMatch(observedBlock, /traceScoreColor/);
+  assert.match(scoreBlock, /traceScoreColor\(point\.sync\)/);
 });
