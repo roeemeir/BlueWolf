@@ -26,6 +26,7 @@ import math
 from types import MappingProxyType
 from typing import Callable, Mapping
 
+from bluewolf_core.event_route_evidence import snapshot_closed_route
 from bluewolf_core.grouping import RouteGroup
 from bluewolf_core.live_so_event_runtime import LiveSOEventRuntime, TemplateComparisonDimension
 from bluewolf_core.live_so_scoring import LiveSOMemberInput
@@ -134,6 +135,34 @@ def _utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         raise ValueError("runtime publication time must be timezone-aware")
     return value.astimezone(UTC)
+
+
+def _detected_route_payload(members: tuple[LiveSOMemberInput, ...]) -> list[dict[str, object]]:
+    """Serialize only routes already confirmed by Core for the live group."""
+    unique: dict[str, object] = {}
+    for member in members:
+        previous = unique.get(member.route_instance_id)
+        if previous is not None and previous != member.route:
+            raise ValueError("one live route instance maps to conflicting confirmed routes")
+        unique[member.route_instance_id] = member.route
+
+    output: list[dict[str, object]] = []
+    for route_instance_id, route in sorted(unique.items()):
+        evidence = snapshot_closed_route(route_instance_id, route)  # type: ignore[arg-type]
+        output.append({
+            "routeInstanceId": evidence.route_instance_id,
+            "routeId": evidence.route_id,
+            "family": evidence.family,
+            "subtype": evidence.subtype,
+            "topology": evidence.topology,
+            "direction": evidence.direction,
+            "detectionQuality": evidence.detection_quality,
+            "centerline": [
+                {"latitude": point.latitude_deg, "longitude": point.longitude_deg}
+                for point in evidence.centerline_wgs84
+            ],
+        })
+    return output
 
 
 class LiveRuntimeProducer:
@@ -266,9 +295,6 @@ class LiveRuntimeProducer:
         for ended in sorted(self._structurally_active_groups - active_ids):
             self.runtime.end_group(ended, poll.window.end_time_utc, reason="structural_group_ended")
         self._structurally_active_groups = active_ids
-        # A poll is also the runtime's trusted forward clock.  Advancing here is
-        # essential when there are no active SO groups: pending-ended events must
-        # still emit EVENT_CLOSED after their late-data finalization window.
         self.runtime.advance_events(poll.window.end_time_utc)
 
         sample_index = self._sample_index(poll.samples, self.server_id)
@@ -320,6 +346,7 @@ class LiveRuntimeProducer:
                 color=binding.color,
             )
             payload = one["groups"]["so"]
+            payload["detectedRoutes"] = _detected_route_payload(members)
             group_payloads.append((group.group_id, _utc(observed_at), binding.arena, payload))
 
         if not group_payloads:
