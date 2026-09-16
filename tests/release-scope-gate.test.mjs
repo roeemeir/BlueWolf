@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { validateFullRegistry } from '../scripts/verify-full-requirements-registry.mjs';
 import { validateReleaseScope, verifyEvidencePaths } from '../scripts/verify-release-scope.mjs';
 
 function requirement(overrides = {}) {
@@ -21,6 +22,19 @@ function manifest(requirements, overrides = {}) {
     scopeApprovedByUser: true,
     requirements,
     ...overrides,
+  };
+}
+
+function registryWithUnspecifiedSource(auditRequirements = {}) {
+  return {
+    schemaVersion: 'bluewolf.full-requirements-registry.v1',
+    requirementCount: 1,
+    idFamilies: [{ prefix: 'BW-OP', first: 1, last: 1, width: 3 }],
+    lateBindingIds: [],
+    sourceImplementation: { yes: [], partial: [], no: [], unspecified: ['BW-OP-001'] },
+    sourceImplementationApproval: { unspecified: ['BW-OP-001'] },
+    explicitAcceptanceCriteria: {},
+    audit: { requirements: auditRequirements },
   };
 }
 
@@ -71,4 +85,24 @@ test('release gate blocks duplicate ids, invalid approval status and missing evi
 test('release gate rejects missing repository evidence path', async () => {
   const errors = await verifyEvidencePaths(manifest([requirement({ evidence: ['does-not-exist.release-evidence'] })]));
   assert.ok(errors.some((item) => item.includes('evidence path does not exist')));
+});
+
+test('full-registry release audit lets a current-head audit resolve an unspecified historical source status', () => {
+  const registry = registryWithUnspecifiedSource({
+    'BW-OP-001': {
+      implementation: 'yes',
+      reviewedAtHead: 'abc123',
+      implementationLocation: ['components/bluewolf/operator-view.tsx'],
+      acceptanceEvidence: ['tests/op01-arena-presentation.test.mjs'],
+      verified: true,
+    },
+  });
+  const result = validateFullRegistry(registry, null, { strictRelease: true });
+  assert.deepEqual(result.errors, []);
+  assert.ok(result.warnings.some((item) => item.includes('source document lacks')));
+});
+
+test('full-registry release audit still blocks an unspecified source requirement when current-head audit is missing', () => {
+  const result = validateFullRegistry(registryWithUnspecifiedSource(), null, { strictRelease: true });
+  assert.ok(result.errors.some((item) => item.includes('missing current-head audit record')));
 });
