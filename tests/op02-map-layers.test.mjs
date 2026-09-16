@@ -45,13 +45,15 @@ test('OP-02 map template assignment is joined through Core navigation vehicle id
   assert.equal(mapped.assignments[0].expectedPhase, .25);
 });
 
-test('OP-02 Core map exposes independent truth layers and uses recompute evidence, never demo route synthesis', async () => {
+test('OP-02 Core map exposes independent truth layers and uses Core evidence, never demo route synthesis', async () => {
   const source = await readFile('components/bluewolf/operational-live-map.tsx', 'utf8');
   assert.match(source, /עקבה נצפית/);
   assert.match(source, /נתיב מזוהה/);
   assert.match(source, /קבוצות/);
   assert.match(source, /תבנית/);
   assert.match(source, /TRACE_WINDOWS = \[30, 60, 90\]/);
+  assert.match(source, /getRuntimeTrace\(serverId, TRACE_WINDOWS\.at\(-1\) \?\? 90\)/);
+  assert.match(source, /selectedRuntimeGroup\?\.detectedRoutes/);
   assert.match(source, /\/api\/investigation\/recompute/);
   assert.match(source, /normalizeEventRecompute/);
   assert.match(source, /extractLiveMapEventEvidence/);
