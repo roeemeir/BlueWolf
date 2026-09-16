@@ -25,21 +25,24 @@ function toWorkspaceSources(sources: OperationalMapSource[]) {
 export function MapSourceGovernanceWorkbench() {
   const { state, save } = useWorkspace();
   const sources = useMemo(() => normalizeMapSources(state.mapServers), [state.mapServers]);
-  const [selectedId, setSelectedId] = useState(() => sources.find((source) => source.isDefault)?.id ?? sources[0]?.id ?? "");
+  const initialSource = sources.find((source) => source.isDefault) ?? sources[0];
+  const [selectedId, setSelectedId] = useState(() => initialSource?.id ?? "");
   const selected = sources.find((source) => source.id === selectedId);
-  const [draft, setDraft] = useState<OperationalMapSource | null>(selected ?? sources[0] ?? null);
+  const [draft, setDraft] = useState<OperationalMapSource | null>(initialSource ?? null);
   const [token, setToken] = useState("");
   const [tokenConfigured, setTokenConfigured] = useState<boolean | null>(null);
 
-  useEffect(() => {
-    if (!selected) return;
-    setDraft(selected);
+  const selectSource = (source: OperationalMapSource) => {
+    setSelectedId(source.id);
+    setDraft(source);
     setToken("");
-  }, [selected]);
+    setTokenConfigured(null);
+  };
+
   useEffect(() => {
     let cancelled = false;
     async function loadStatus() {
-      if (!selected || selected.tokenMode === "none") { setTokenConfigured(selected ? true : null); return; }
+      if (!selected || selected.tokenMode === "none") return;
       try {
         const response = await fetch(`/api/map-sources/token?sourceId=${encodeURIComponent(selected.id)}`, { cache: "no-store" });
         const payload = await response.json() as { configured?: boolean };
@@ -73,7 +76,9 @@ export function MapSourceGovernanceWorkbench() {
       const defaultMap = withDefault.find((source) => source.isDefault && source.enabled)?.id ?? state.settings.defaultMap;
       const next = { ...state, mapServers: toWorkspaceSources(withDefault), settings: { ...state.settings, defaultMap } };
       if (await save(next, "map-source", "save-map-source", `saved ${draft.id} (${draft.kind})`)) {
-        setSelectedId(draft.id);
+        const saved = withDefault.find((source) => source.id === draft.id) ?? draft;
+        setSelectedId(saved.id);
+        setDraft(saved);
         toast.success("מקור המפה נשמר. token נשמר בנפרד בצד השרת.");
       }
     } catch (error) { toast.error(error instanceof Error ? error.message : "שמירת מקור המפה נכשלה"); }
@@ -97,7 +102,7 @@ export function MapSourceGovernanceWorkbench() {
   return <section className="glass-panel" dir="rtl" data-requirements="BW-OFF-010 BW-OFF-012" style={{ padding: 16, marginBottom: 16 }}>
     <div className="section-toolbar"><div><p className="eyebrow">Offline GIS</p><h3>מקורות מפה פרטיים · XYZ / WMS / WMTS</h3><p className="card-hint">ה־token לעולם אינו נשמר ב־Workspace ואינו נשלח לדפדפן בעת טעינת מפה; ה־proxy המקומי מזריק אותו רק לבקשת upstream.</p></div><div className="toolbar-actions"><Button variant="outline" size="sm" onClick={() => addSource("wms")}><Plus />WMS</Button><Button variant="outline" size="sm" onClick={() => addSource("wmts")}><Plus />WMTS</Button></div></div>
     <div style={{ display: "grid", gridTemplateColumns: "minmax(180px,.7fr) minmax(0,2fr)", gap: 14, marginTop: 12 }}>
-      <div style={{ display: "grid", gap: 7, alignContent: "start" }}>{sources.map((source) => <button type="button" key={source.id} onClick={() => setSelectedId(source.id)} className={selectedId === source.id ? "active" : ""} style={{ textAlign: "right", padding: 10, borderRadius: 10 }}><strong>{source.name}</strong><div className="card-hint">{source.kind.toUpperCase()} · {source.id}</div></button>)}</div>
+      <div style={{ display: "grid", gap: 7, alignContent: "start" }}>{sources.map((source) => <button type="button" key={source.id} onClick={() => selectSource(source)} className={selectedId === source.id ? "active" : ""} style={{ textAlign: "right", padding: 10, borderRadius: 10 }}><strong>{source.name}</strong><div className="card-hint">{source.kind.toUpperCase()} · {source.id}</div></button>)}</div>
       {draft ? <div style={{ display: "grid", gap: 10 }}>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}><div><Label>שם</Label><Input value={draft.name} onChange={(event) => patch("name", event.target.value)} /></div><div><Label>סוג</Label><Select value={draft.kind} onValueChange={(value) => patch("kind", value as MapSourceKind)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="xyz">XYZ</SelectItem><SelectItem value="wms">WMS</SelectItem><SelectItem value="wmts">WMTS</SelectItem></SelectContent></Select></div></div>
         <div><Label>URL פנימי / פרטי</Label><Input value={draft.baseUrl} onChange={(event) => patch("baseUrl", event.target.value)} dir="ltr" /></div>
