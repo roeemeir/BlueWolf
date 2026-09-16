@@ -64,6 +64,36 @@ const MIGRATIONS: readonly LocalSchemaMigration[] = [
       `);
     },
   },
+  {
+    id: "003-scoped-settings",
+    apply(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS workspace_scopes (
+          workspace_id TEXT NOT NULL,
+          scope_type TEXT NOT NULL CHECK(scope_type IN ('server','group')),
+          scope_id TEXT NOT NULL,
+          state TEXT NOT NULL,
+          revision INTEGER NOT NULL,
+          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY(workspace_id, scope_type, scope_id)
+        );
+        CREATE TABLE IF NOT EXISTS workspace_scope_versions (
+          workspace_id TEXT NOT NULL,
+          scope_type TEXT NOT NULL CHECK(scope_type IN ('server','group')),
+          scope_id TEXT NOT NULL,
+          revision INTEGER NOT NULL,
+          state TEXT NOT NULL,
+          category TEXT NOT NULL,
+          action TEXT NOT NULL,
+          detail TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY(workspace_id, scope_type, scope_id, revision)
+        );
+        CREATE INDEX IF NOT EXISTS workspace_scope_versions_recent
+          ON workspace_scope_versions(workspace_id, scope_type, scope_id, revision DESC);
+      `);
+    },
+  },
 ] as const;
 
 function ensureMigrationLedger(db: DatabaseSync) {
