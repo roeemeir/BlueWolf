@@ -7,6 +7,7 @@ const vite = await createServer({ appType: 'custom', configFile: false, root, re
 after(async () => { await vite.close(); });
 
 const {
+  DOUBLE_HIPPODROME_BREAK_DEG,
   buildSoSmileGeometry,
   localHippodromePoints,
   minimumRouteGap,
@@ -47,12 +48,20 @@ test('GEO-01 neighboring routes keep a real gap and are not endpoint-connected',
   assert.ok(minimumRouteGap(routes[1], routes[2]) > 1);
 });
 
-test('SO Double is one continuous outer-turn route with no internal U-turn seam', () => {
+test('SO Double is one continuous route with an exact 30 degree central break and no internal U-turn seam', () => {
+  assert.equal(DOUBLE_HIPPODROME_BREAK_DEG, 30);
   const single = localHippodromePoints('single');
   const double = localHippodromePoints('double');
   const singleX = Math.max(...single.map((point) => point.x)) - Math.min(...single.map((point) => point.x));
   const doubleX = Math.max(...double.map((point) => point.x)) - Math.min(...double.map((point) => point.x));
   assert.ok(doubleX > singleX * 1.5);
+
+  const firstLeg = { x: double[1].x - double[0].x, y: double[1].y - double[0].y };
+  const secondLeg = { x: double[3].x - double[2].x, y: double[3].y - double[2].y };
+  const firstHeading = Math.atan2(firstLeg.y, firstLeg.x) * 180 / Math.PI;
+  const secondHeading = Math.atan2(secondLeg.y, secondLeg.x) * 180 / Math.PI;
+  assert.ok(Math.abs(Math.abs(firstHeading - secondHeading) - 30) < 1e-9);
+
   const unique = new Set(double.map((point) => `${point.x.toFixed(5)}:${point.y.toFixed(5)}`));
   assert.equal(unique.size, double.length);
 });
