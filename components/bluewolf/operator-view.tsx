@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getServerScenario, type DataMode, type DemoGroup, type SyncTemplate, type VehicleType } from "@/lib/bluewolf";
+import { normalizeEventRecompute } from "@/lib/investigation-contract";
 import { getRuntimeGroups, type LiveRuntimeVehicle } from "@/lib/live-runtime";
 import { formatKnotsFromKmh, formatKnotsFromMps } from "@/lib/speed-units";
 import { useWorkspace } from "./app-context";
@@ -50,7 +51,39 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
   const { state, save } = useWorkspace(); const scenario = getServerScenario(serverId); const groups = getRuntimeGroups(serverId); const preferredGroup = groups.find((group) => group.key === "so") ?? groups[0] ?? scenario.groups.so; const [arena, setArena] = useState(state.arenas[0] ?? "זירה א׳"); const [selectedGroupId, setSelectedGroupId] = useState(preferredGroup.id); const [selectedVehicle, setSelectedVehicle] = useState<number | null>(null); const [running, setRunning] = useState(true); const [tick, setTick] = useState(0); const [countdown, setCountdown] = useState(5); const [showTrace, setShowTrace] = useState(false); const [showRelations, setShowRelations] = useState(true); const [layers, setLayers] = useState<ScoreLayer[]>(["sync"]); const [cursor, setCursor] = useState(92); const [templateDialog, setTemplateDialog] = useState(false); const [muted, setMuted] = useState(false); const [mapProfile, setMapProfile] = useState(state.settings.defaultMap); const mapRef = useRef<HTMLDivElement>(null); const influxConfigured = Boolean(state.influx.url.trim() && state.influx.token.trim());
   useEffect(() => { if (!running || (dataMode === "influx" && !influxConfigured)) return; const timer = window.setInterval(() => setCountdown((value) => { if (value <= 1) { setTick((current) => current + 1); return 5; } return value - 1; }), 1000); return () => window.clearInterval(timer); }, [running, dataMode, influxConfigured]);
   const selected = groups.find((group) => group.id === selectedGroupId) ?? preferredGroup; const overrideKey = `${serverId}:${selected.id}`; const activeTemplateId = state.activeTemplateOverrides[overrideKey] ?? selected.templateId; const templateFor = (group: DemoGroup) => { const id = state.activeTemplateOverrides[`${serverId}:${group.id}`] ?? group.templateId; return state.templates.find((item) => item.id === id) ?? state.templates.find((item) => item.family === group.family); }; const groupForFamily = (key: GroupKey) => groups.find((group) => group.key === key) ?? scenario.groups[key]; const templateValues = { si: templateFor(groupForFamily("si"))?.values ?? [120, 120, 120], so: templateFor(groupForFamily("so"))?.values ?? [2, 0] }; const activeAlertGroup = groups.find((group) => group.alert); const activeAlert = activeAlertGroup?.alert;
-  const chooseTemplate = async (id: string, mode: "now" | "event-start") => { const next = { ...state, activeTemplateOverrides: { ...state.activeTemplateOverrides, [overrideKey]: id }, templateApplications: { ...state.templateApplications, [overrideKey]: { templateId: id, mode, appliedAt: new Date().toISOString() } } }; await save(next, "operator", "template-override", `${selected.id} → ${id} · ${mode}`); setTemplateDialog(false); toast.success(mode === "event-start" ? "התבנית הוחלה מתחילת האירוע והאירוע חושב מחדש" : "התבנית הוחלה מעכשיו"); };
+  const chooseTemplate = async (id: string, mode: "now" | "event-start") => {
+    let recomputeRunId: string | null = null;
+    if (mode === "event-start") {
+      const eventId = "event" in selected ? selected.event?.id : undefined;
+      if (!eventId) {
+        toast.error("אין event evidence פעיל לקבוצה; התבנית לא נשמרה מתחילת האירוע");
+        return;
+      }
+      try {
+        const response = await fetch("/api/investigation/recompute", {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({ eventId, templateId: id, scenarioId: `operator:${eventId}:${Date.now()}` }),
+        });
+        const payload: unknown = await response.json();
+        if (!response.ok) {
+          const detail = payload && typeof payload === "object" && "error" in payload ? String((payload as { error: unknown }).error) : `recompute failed (${response.status})`;
+          throw new Error(detail);
+        }
+        const recomputed = normalizeEventRecompute(payload);
+        if (recomputed.eventId !== eventId || recomputed.templateId !== id) throw new Error("recompute provenance does not match selected event/template");
+        recomputeRunId = recomputed.runId;
+      } catch (error) {
+        toast.error(error instanceof Error ? `חישוב האירוע נכשל: ${error.message}` : "חישוב האירוע נכשל");
+        return;
+      }
+    }
+    const next = { ...state, activeTemplateOverrides: { ...state.activeTemplateOverrides, [overrideKey]: id }, templateApplications: { ...state.templateApplications, [overrideKey]: { templateId: id, mode, appliedAt: new Date().toISOString() } } };
+    await save(next, "operator", "template-override", `${selected.id} → ${id} · ${mode}${recomputeRunId ? ` · run ${recomputeRunId}` : ""}`);
+    setTemplateDialog(false);
+    toast.success(mode === "event-start" ? "התבנית נשמרה לאחר חישוב מחדש אמיתי מתחילת האירוע" : "התבנית הוחלה מעכשיו");
+  };
   const enterFullscreen = async () => { try { await mapRef.current?.requestFullscreen(); } catch { toast.info("הדפדפן חסם מסך מלא"); } };
   const toggleLayer = (layer: ScoreLayer) => setLayers((current) => current.includes(layer) ? (current.length === 1 ? current : current.filter((item) => item !== layer)) : [...current, layer]);
   const chooseFamilyGroup = (key: GroupKey) => groups.find((group) => group.key === key) ?? scenario.groups[key];
