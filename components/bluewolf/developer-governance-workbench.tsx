@@ -2,6 +2,7 @@
 
 import { useWorkspace } from "./app-context";
 import { DeveloperView } from "./developer-view";
+import { GtScenarioWorkbench } from "./gt-scenario-workbench";
 import { InfluxGovernanceWorkbench } from "./influx-governance-workbench";
 import { MapSourceGovernanceWorkbench } from "./map-source-governance-workbench";
 import { QaTruthWorkbench } from "./qa-truth-workbench";
@@ -36,6 +37,7 @@ export function DeveloperGovernanceWorkbench() {
     <TemplateGovernanceWorkbench />
     <SoTemplateGovernanceWorkbench />
     <RouteBankWktWorkbench key={`route-bank-${revision}`} />
+    <GtScenarioWorkbench />
     <VehicleRangeWorkbench />
     <InfluxGovernanceWorkbench />
     <MapSourceGovernanceWorkbench />
