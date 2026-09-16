@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const SOURCE_STATUSES = ["yes", "partial", "no", "unspecified"];
 const CURRENT_STATUSES = new Set(["yes", "partial", "no"]);
+const EXTERNAL_AUDIT_SCHEMA_VERSION = "bluewolf.current-head-audit.v1";
 
 export function expandExpectedIds(registry) {
   const ids = [];
@@ -28,6 +29,19 @@ function duplicates(values) {
     seen.add(value);
   }
   return [...duplicate].sort();
+}
+
+export function validateExternalAuditEnvelope(auditEnvelope, registry, { expectedHead = null } = {}) {
+  const errors = [];
+  if (!auditEnvelope || typeof auditEnvelope !== "object" || Array.isArray(auditEnvelope)) return ["external audit must be an object"];
+  if (auditEnvelope.schemaVersion !== EXTERNAL_AUDIT_SCHEMA_VERSION) errors.push("unsupported external audit schemaVersion");
+  const expected = expandExpectedIds(registry);
+  if (auditEnvelope.requirementCount !== expected.length) errors.push(`external audit requirementCount=${auditEnvelope.requirementCount} but registry expects ${expected.length}`);
+  if (typeof auditEnvelope.headSha !== "string" || !auditEnvelope.headSha.trim()) errors.push("external audit headSha is required");
+  if (expectedHead && auditEnvelope.headSha !== expectedHead) errors.push(`external audit headSha=${auditEnvelope.headSha} does not match expected head ${expectedHead}`);
+  if (typeof auditEnvelope.reviewedAt !== "string" || !auditEnvelope.reviewedAt.trim()) errors.push("external audit reviewedAt is required");
+  if (!auditEnvelope.requirements || typeof auditEnvelope.requirements !== "object" || Array.isArray(auditEnvelope.requirements)) errors.push("external audit requirements must be an object");
+  return errors;
 }
 
 export function validateFullRegistry(registry, releaseScope = null, { strictRelease = false } = {}) {
@@ -87,9 +101,9 @@ export function validateFullRegistry(registry, releaseScope = null, { strictRele
   if (unspecified.length) warnings.push(`source document lacks implementation/approval status for: ${unspecified.join(", ")}`);
 
   if (strictRelease && audit && typeof audit === "object" && !Array.isArray(audit)) {
-    // A source-document status of "unspecified" is historical metadata, not a
-    // permanent release blocker. A complete current-head audit below is the
-    // authoritative resolution. Missing audit rows still fail explicitly.
+    // Source-document status is historical metadata. A complete current-head
+    // audit is authoritative for engineering verification, while explicit user
+    // implementation approval remains a separate release-scope gate.
     for (const id of expected) {
       const row = audit[id];
       if (!row || typeof row !== "object" || Array.isArray(row)) {
@@ -112,10 +126,32 @@ export function validateFullRegistry(registry, releaseScope = null, { strictRele
   return { errors, warnings, expectedCount: expected.length, auditedCount: audit && typeof audit === "object" && !Array.isArray(audit) ? Object.keys(audit).length : 0 };
 }
 
-export async function verifyFullRegistryFiles(registryPath, releaseScopePath = null, { strictRelease = false } = {}) {
+export async function verifyFullRegistryFiles(
+  registryPath,
+  releaseScopePath = null,
+  { strictRelease = false, auditPath = null, expectedHead = null } = {},
+) {
   const registry = JSON.parse(await readFile(registryPath, "utf8"));
   const releaseScope = releaseScopePath ? JSON.parse(await readFile(releaseScopePath, "utf8")) : null;
-  return validateFullRegistry(registry, releaseScope, { strictRelease });
+  const envelopeErrors = [];
+  if (auditPath) {
+    const auditEnvelope = JSON.parse(await readFile(auditPath, "utf8"));
+    envelopeErrors.push(...validateExternalAuditEnvelope(auditEnvelope, registry, { expectedHead }));
+    registry.audit = {
+      ...(registry.audit ?? {}),
+      externalSchemaVersion: auditEnvelope.schemaVersion,
+      headSha: auditEnvelope.headSha,
+      reviewedAt: auditEnvelope.reviewedAt,
+      requirements: auditEnvelope.requirements ?? {},
+    };
+  }
+  const result = validateFullRegistry(registry, releaseScope, { strictRelease });
+  return { ...result, errors: [...envelopeErrors, ...result.errors] };
+}
+
+function flagValue(name) {
+  const index = process.argv.indexOf(name);
+  return index >= 0 && process.argv[index + 1] ? process.argv[index + 1] : null;
 }
 
 const invoked = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
@@ -123,8 +159,11 @@ if (invoked) {
   const registryPath = path.resolve(process.argv[2] || "docs/full-requirements-registry.json");
   const releaseScopePath = path.resolve(process.argv[3] || "docs/release-scope-2026-09-15.json");
   const strictRelease = process.argv.includes("--release");
+  const auditArg = flagValue("--audit");
+  const expectedHead = flagValue("--head");
+  const auditPath = auditArg ? path.resolve(auditArg) : null;
   try {
-    const result = await verifyFullRegistryFiles(registryPath, releaseScopePath, { strictRelease });
+    const result = await verifyFullRegistryFiles(registryPath, releaseScopePath, { strictRelease, auditPath, expectedHead });
     for (const warning of result.warnings) console.warn(`WARN: ${warning}`);
     if (result.errors.length) {
       console.error(`REQUIREMENTS COVERAGE BLOCKED — ${result.expectedCount ?? "?"} expected, ${result.auditedCount ?? 0} audited:`);
