@@ -14,9 +14,12 @@ test('BW-UI-008 provides local audible alert and explicit mute windows', async (
   assert.match(source, /setMutedUntil\(null\)/);
 });
 
-test('BW-UI-008 mute is session-local and does not persist across restart', async () => {
+test('BW-UI-008 mute is session-local and is not written into Workspace state or save audit', async () => {
   const source = await readFile('components/bluewolf/operator-view.tsx', 'utf8');
   assert.match(source, /useState<MuteUntil>\(null\)/);
-  assert.doesNotMatch(source, /activeTemplateOverrides[^\n]*mutedUntil/);
-  assert.doesNotMatch(source, /await save\([^\n]*mute/);
+  const muteFunction = source.match(/const muteFor = \([\s\S]*?\n  };/)?.[0] ?? '';
+  assert.match(muteFunction, /setMutedUntil/);
+  assert.doesNotMatch(muteFunction, /\bsave\s*\(/);
+  assert.doesNotMatch(muteFunction, /activeTemplateOverrides|templateApplications|investigationEdits/);
+  assert.doesNotMatch(source, /mutedUntil\s*:/);
 });
