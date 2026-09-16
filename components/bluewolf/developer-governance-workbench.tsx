@@ -27,8 +27,6 @@ export function DeveloperGovernanceWorkbench() {
       .developer-template-tabs>[data-slot="tabs-list"]>[data-slot="tabs-trigger"]{min-width:120px;gap:7px}
       .developer-tab-intro{margin-bottom:12px;padding:14px 16px;border:1px solid var(--line);border-radius:16px;background:linear-gradient(145deg,var(--surface-strong),var(--surface));box-shadow:var(--shadow),inset 0 1px 0 var(--glass-edge)}
       .developer-tab-intro h2{margin:0;font-size:17px}.developer-tab-intro p{margin:5px 0 0;color:var(--text-soft);font-size:12px}
-      /* SO-01: vehicle type is an operational binding, not a template-authoring choice. */
-      [data-testid="so-direct-workbench"] [data-testid="so-vehicle-palette"]{display:none!important}
       .protected-legacy-developer .developer-nav nav>button:nth-child(2),
       .protected-legacy-developer .developer-nav nav>button:nth-child(3),
       .protected-legacy-developer .developer-nav nav>button:nth-child(4),
