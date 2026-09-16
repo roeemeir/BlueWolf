@@ -18,7 +18,8 @@ test('OP-04 event-start recomputes before persisting and wires one result into c
   assert.ok(recomputeIndex >= 0 && saveIndex > recomputeIndex, 'workspace override must only persist after recompute succeeds');
   assert.match(operator, /setRecomputeOverride\(recomputedResult\)/);
   assert.match(operator, /groupFromEventRecompute/);
-  assert.match(operator, /recomputeOverride=\{recomputeOverride\}/);
+  assert.match(operator, /activeRecomputeOverride/);
+  assert.match(operator, /recomputeOverride=\{activeRecomputeOverride\}/);
   assert.match(timeline, /historyWithEventRecompute/);
   assert.match(map, /traceWithEventRecompute/);
   assert.match(operator, /requiredCodeVersion: recomputedResult\.codeVersion/);
