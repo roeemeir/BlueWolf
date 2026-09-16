@@ -8,7 +8,13 @@ const vite = await createServer({ appType: "custom", configFile: false, root, re
 after(async () => { await vite.close(); });
 
 const { DEFAULT_WORKSPACE } = await vite.ssrLoadModule("/lib/bluewolf.ts");
-const { buildOperationalInfluxConfig, validateInfluxSettings } = await vite.ssrLoadModule("/lib/influx-runtime-config.ts");
+const {
+  MAX_NOMINAL_LIVE_LATENCY_SECONDS,
+  buildOperationalInfluxConfig,
+  nominalLiveLatencySeconds,
+  validateInfluxSettings,
+  validateLiveLatencyBudget,
+} = await vite.ssrLoadModule("/lib/influx-runtime-config.ts");
 
 function configuredInflux() {
   const influx = structuredClone(DEFAULT_WORKSPACE.influx);
@@ -89,6 +95,20 @@ test("IN-01 rejects ambiguous join columns and malformed special transformations
   const active = invalidTransform.mappings.find((item) => item.systemKey === "active");
   active.sourceValue = "";
   assert.throws(() => validateInfluxSettings(invalidTransform), /sourceValue/);
+});
+
+test("BW-DATA-010 default join + active poll + UI refresh fits the <=10s live latency budget", () => {
+  const total = nominalLiveLatencySeconds(DEFAULT_WORKSPACE.influx, DEFAULT_WORKSPACE.settings.uiRefreshSeconds);
+  assert.equal(MAX_NOMINAL_LIVE_LATENCY_SECONDS, 10);
+  assert.equal(DEFAULT_WORKSPACE.influx.joinToleranceSeconds, 5);
+  assert.equal(DEFAULT_WORKSPACE.influx.activePollSeconds, 3);
+  assert.equal(DEFAULT_WORKSPACE.settings.uiRefreshSeconds, 2);
+  assert.equal(total, 10);
+  assert.equal(validateLiveLatencyBudget(DEFAULT_WORKSPACE.influx, DEFAULT_WORKSPACE.settings.uiRefreshSeconds), 10);
+
+  const tooSlow = structuredClone(DEFAULT_WORKSPACE.influx);
+  tooSlow.activePollSeconds = 4;
+  assert.throws(() => validateLiveLatencyBudget(tooSlow, 2), /exceeds 10s/);
 });
 
 test("IN-01 active developer surface exposes all three join names and special value mapping", async () => {
