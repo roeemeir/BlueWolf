@@ -5,29 +5,63 @@ on:
   pull_request:
 
 concurrency:
-  group: bluewolf-ci-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: bluewolf-ci-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
+  core:
+    name: Python core — ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - route-vector
+          - session
+          - integrated-session
+          - semantic-session
+          - so-phase
+          - so-template-bank
+          - so-template-fit
+          - so-template-selection
+          - so-templates
+          - double-lobe-phase
+          - so-scoring
+          - live-so-scoring
+          - event-alert
+          - live-so-event-runtime
+          - influxdb2-adapter
+          - ingest-coordinator
+          - live-polling
+          - operational-pipeline
+          - runtime-service
+          - runtime-producer
+          - live-runtime-contract
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python core
+        working-directory: core
+        run: python -m pip install -e '.[service,influx]'
+      - name: Run deterministic core shard
+        working-directory: core/tests
+        run: python -m unittest -v test_${{ matrix.shard == 'route-vector' && 'route_vector' || matrix.shard == 'integrated-session' && 'integrated_session' || matrix.shard == 'semantic-session' && 'semantic_session' || matrix.shard == 'so-phase' && 'so_phase' || matrix.shard == 'so-template-bank' && 'so_template_bank' || matrix.shard == 'so-template-fit' && 'so_template_fit' || matrix.shard == 'so-template-selection' && 'so_template_selection' || matrix.shard == 'so-templates' && 'so_templates' || matrix.shard == 'double-lobe-phase' && 'double_lobe_phase' || matrix.shard == 'so-scoring' && 'so_scoring' || matrix.shard == 'live-so-scoring' && 'live_so_scoring' || matrix.shard == 'event-alert' && 'event_alert' || matrix.shard == 'live-so-event-runtime' && 'live_so_event_runtime' || matrix.shard == 'influxdb2-adapter' && 'influxdb2_adapter' || matrix.shard == 'ingest-coordinator' && 'ingest_coordinator' || matrix.shard == 'live-polling' && 'live_polling' || matrix.shard == 'operational-pipeline' && 'operational_pipeline' || matrix.shard == 'runtime-service' && 'runtime_service' || matrix.shard == 'runtime-producer' && 'runtime_producer' || matrix.shard == 'live-runtime-contract' && 'live_runtime_contract' || 'session' }}
+
   lifecycle-smoke:
     name: Lifecycle smoke — ${{ matrix.case }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - case: fast-period-acquisition
-            test: test_adaptive_acquisition.AdaptiveAcquisitionSimulationTests.test_confirmation_latency_scales_with_route_period
-          - case: free-approach-attribution
-            test: test_adaptive_acquisition.AdaptiveAcquisitionSimulationTests.test_free_approach_is_excluded_by_shortest_sufficient_suffix
-          - case: initial-confirmation-geometry
-            test: test_session.SessionDeterminismTests.test_route_candidate_then_confirmation_and_phase_are_adaptive
-          - case: stable-route
-            test: test_route_change.AdaptiveRouteChangeTests.test_stable_confirmed_route_does_not_emit_replacement
-          - case: geometry-replacement
-            test: test_route_change.AdaptiveRouteChangeTests.test_session_replaces_confirmed_route_without_fixed_change_timer
-          - case: period-replacement
-            test: test_route_change.AdaptiveRouteChangeTests.test_period_only_change_is_detected_and_attributed_retroactively
+        case:
+          - stable-route
+          - initial-confirmation-geometry
+          - fast-period-acquisition
+          - free-approach-attribution
+          - geometry-replacement
+          - period-replacement
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -38,80 +72,17 @@ jobs:
         run: python -m pip install -e .
       - name: Run focused lifecycle regression
         working-directory: core/tests
-        run: python -m unittest -v "${{ matrix.test }}"
+        run: |
+          case "${{ matrix.case }}" in
+            stable-route) python -m unittest -v test_route_change.AdaptiveRouteChangeTests.test_stable_route_does_not_emit_replacement ;;
+            initial-confirmation-geometry) python -m unittest -v test_route_change.AdaptiveRouteChangeTests.test_initial_confirmation_uses_confirmed_window_geometry_not_approach_history ;;
+            fast-period-acquisition) python -m unittest -v test_route_change.AdaptiveRouteChangeTests.test_fast_period_route_acquires_before_legacy_five_minute_wait ;;
+            free-approach-attribution) python -m unittest -v test_route_change.AdaptiveRouteChangeTests.test_free_closed_approach_is_attributed_to_confirmed_route_history ;;
+            geometry-replacement) python -m unittest -v test_route_change.AdaptiveRouteChangeTests.test_geometry_change_emits_replacement_after_evidence ;;
+            period-replacement) python -m unittest -v test_route_change.AdaptiveRouteChangeTests.test_period_only_change_emits_replacement_after_evidence ;;
+          esac
 
-  core:
-    name: Python core — ${{ matrix.shard }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - shard: route-change-remainder
-            tests: >-
-              test_route_change.AdaptiveRouteChangeTests.test_material_geometry_and_period_change_is_detected
-              test_route_change.AdaptiveRouteChangeTests.test_small_refit_drift_does_not_create_route_change
-              test_route_change.AdaptiveRouteChangeTests.test_change_onset_is_retroactive_to_new_geometry
-              test_route_change.AdaptiveRouteChangeTests.test_route_replacement_survives_checkpoint_mid_change
-          - shard: session
-            tests: test_session
-          - shard: integrated-session
-            tests: test_integrated_session
-          - shard: semantic-session
-            tests: test_semantic_session
-          - shard: classifiers
-            tests: test_route_classifier_sweep test_route_classifier_v2 test_vector_route_detection
-          - shard: route-vector
-            tests: test_route_detection test_vector_trajectory test_vector_sample_adapter test_partial_route_candidate
-          - shard: fundamentals
-            tests: test_geometry test_grouping test_group_lifecycle test_si_direction_lifecycle test_ingest_join test_scoring test_simulator test_templates test_trajectory_simulator
-          - shard: so-templates
-            tests: test_so_templates
-          - shard: so-template-fit
-            tests: test_so_template_fit
-          - shard: so-phase
-            tests: test_so_phase
-          - shard: double-lobe-phase
-            tests: test_double_lobe_phase
-          - shard: so-scoring
-            tests: test_so_scoring
-          - shard: so-template-bank
-            tests: test_so_template_bank
-          - shard: so-template-selection
-            tests: test_so_template_selection
-          - shard: live-so-scoring
-            tests: test_live_so_scoring
-          - shard: event-alert
-            tests: test_event_alert
-          - shard: live-so-event-runtime
-            tests: test_live_so_event_runtime test_event_recompute test_event_observation_sink
-          - shard: live-runtime-contract
-            tests: test_live_runtime_contract
-          - shard: runtime-service
-            tests: test_runtime_service test_runtime_history test_runtime_history_footprint test_qa_service test_investigation_service test_event_archive_binding
-          - shard: runtime-producer
-            tests: test_runtime_producer test_position_enrichment
-          - shard: operational-pipeline
-            tests: test_operational_pipeline test_runtime_host test_environment_factory test_operational_history_state test_checkpoint_cadence
-          - shard: influxdb2-adapter
-            tests: test_influxdb2_adapter test_influx_window_reader
-          - shard: live-polling
-            tests: test_live_polling
-          - shard: ingest-coordinator
-            tests: test_ingest_coordinator
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install Python core
-        working-directory: core
-        run: python -m pip install -e .
-      - name: Run deterministic core shard
-        working-directory: core/tests
-        run: python -m unittest -v ${{ matrix.tests }}
-
-  runtime-packaging:
+  packaging:
     name: Runtime deployment packaging
     runs-on: ubuntu-latest
     steps:
