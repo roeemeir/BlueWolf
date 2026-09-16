@@ -1,9 +1,9 @@
 name: Blue Wolf QA Quick Tunnel
 
 on:
-  push:
+  pull_request:
     branches:
-      - work/requirements-governance-2026-09-15
+      - main
     paths:
       - .github/workflows/qa-quick-tunnel.yml
 
