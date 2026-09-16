@@ -49,8 +49,11 @@ function parsedHttpUrl(raw: string, label: string) {
 function mapBaseUrl(value: unknown, kind: MapSourceKind, label: string) {
   const raw = text(value, label);
   if (kind === "xyz") {
-    for (const placeholder of ["{z}", "{x}", "{y}"]) if (!raw.includes(placeholder)) throw new Error(`${label} XYZ template must include ${placeholder}`);
+    // Validate scheme/host/credentials before placeholder completeness.  A URL
+    // containing user-info is a secret-handling violation regardless of whether
+    // the XYZ template is otherwise well-formed.
     parsedHttpUrl(raw.replaceAll("{z}", "0").replaceAll("{x}", "0").replaceAll("{y}", "0"), label);
+    for (const placeholder of ["{z}", "{x}", "{y}"]) if (!raw.includes(placeholder)) throw new Error(`${label} XYZ template must include ${placeholder}`);
     return raw;
   }
   return parsedHttpUrl(raw, label).toString();
