@@ -18,7 +18,7 @@ test('developer mode is tabbed and template authoring is split into SI and SO ta
   assert.match(source, /className="developer-template-tabs"/);
   assert.match(source, /TabsTrigger value="si"/);
   assert.match(source, /TabsTrigger value="so"/);
-  assert.match(source, /TabsContent value="si"><TemplateGovernanceWorkbench/);
+  assert.match(source, /TabsContent value="si"><SiTemplateGovernanceWorkbench/);
   assert.match(source, /TabsContent value="so"><SoTemplateGovernanceWorkbench/);
   assert.match(source, /data-testid="so-vehicle-palette"/);
   assert.match(source, /display:none!important/);
