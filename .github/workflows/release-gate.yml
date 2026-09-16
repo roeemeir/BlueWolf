@@ -15,7 +15,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-      - name: Verify frozen release scope
-        run: node scripts/verify-release-scope.mjs docs/release-scope-2026-09-15.json
+      - name: Build conservative current-head audit
+        run: |
+          mkdir -p build
+          node scripts/build-current-head-audit.mjs \
+            docs/full-requirements-registry.json \
+            build/current-head-requirements-audit.json \
+            --head "$GITHUB_SHA"
       - name: Verify full current-head requirements audit
-        run: node scripts/verify-full-requirements-registry.mjs docs/full-requirements-registry.json docs/release-scope-2026-09-15.json --release
+        run: |
+          node scripts/verify-full-requirements-registry.mjs \
+            docs/full-requirements-registry.json \
+            docs/release-scope-2026-09-15.json \
+            --release \
+            --audit build/current-head-requirements-audit.json \
+            --head "$GITHUB_SHA"
+      - name: Verify frozen release scope and explicit user implementation approval
+        run: node scripts/verify-release-scope.mjs docs/release-scope-2026-09-15.json
