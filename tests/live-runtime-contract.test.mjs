@@ -118,7 +118,7 @@ test("groupList preserves multiple SO groups without family-key overwrite", () =
   assert.equal(bluewolf.getServerScenario("1").groups.so.id, "SO-1");
 });
 
-test("runtime group API preserves operational WGS84 position and normalized heading", () => {
+test("runtime group API preserves operational WGS84 position, heading and observed speed", () => {
   const group = {
     key: "so",
     id: "SO-map",
@@ -148,6 +148,7 @@ test("runtime group API preserves operational WGS84 position and normalized head
         latitude: 32.081,
         longitude: 34.781,
         headingDeg: 370,
+        speedMps: 5,
       },
     ],
   };
@@ -169,9 +170,28 @@ test("runtime group API preserves operational WGS84 position and normalized head
   assert.equal(vehicle.latitude, 32.081);
   assert.equal(vehicle.longitude, 34.781);
   assert.equal(vehicle.headingDeg, 10);
+  assert.equal(vehicle.speedMps, 5);
   assert.equal(vehicle.scoreValid, true);
   runtime.restoreSimulationScenario("1");
   assert.ok(runtime.getRuntimeGroups("1").every((item) => item.members.every((member) => member.scoreValid === true)));
+});
+
+test("runtime rejects invalid observed speed instead of normalizing it", () => {
+  const member = { id: 303, typeId: "storm", score: 88, sync: 86, route: 94, confidence: 97, phase: 0.25, scoreValid: true, speedMps: -1 };
+  const group = {
+    key: "so", id: "SO-speed", family: "SO", name: "SO speed", subtitle: "Python Core",
+    total: 88, sync: 86, route: 94, confidence: 97, color: "#4378e8", templateId: "tpl-so-h",
+    reason: "valid", success: "valid", scoreValid: true, observedAt: "2026-09-09T12:00:00.000Z", members: [member],
+  };
+  const payload = {
+    schemaVersion: runtime.LIVE_RUNTIME_SCHEMA_VERSION,
+    serverId: "1",
+    observedAt: "2026-09-09T12:00:00.000Z",
+    source: { kind: "python-core", health: "healthy" },
+    groups: { so: group },
+    groupList: [group],
+  };
+  assert.throws(() => runtime.normalizeLiveRuntimeSnapshot(payload, "1"), /invalid runtime group/);
 });
 
 test("groupList rejects duplicate group ids", () => {
