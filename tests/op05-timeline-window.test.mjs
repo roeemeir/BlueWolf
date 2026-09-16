@@ -32,10 +32,12 @@ test('OP-05 explicit filter is independent of map selection', () => {
   assert.equal(timeline.groupVisible('g2', ['g1']), false);
 });
 
-test('operational timeline exposes data-time controls and never derives filter from selectedGroupId', async () => {
+test('operational timeline exposes data-time controls, display-only smoothing and never derives filter from selectedGroupId', async () => {
   const source = await readFile('components/bluewolf/operational-timeline.tsx', 'utf8');
   assert.match(source, /OPERATOR_TIMELINE_WINDOWS/);
-  assert.match(source, /filterByDataWindow\(rawHistory, windowMinutes\)/);
+  assert.match(source, /smoothRuntimeHistoryForDisplay\(rawHistory, smoothingSeconds\)/);
+  assert.match(source, /filterByDataWindow\(displayHistory, windowMinutes\)/);
+  assert.match(source, /BW-SYNC-013/);
   assert.match(source, /explicitGroupIds/);
   assert.match(source, /כל הקבוצות/);
   assert.match(source, /scoreLayerDasharray\(layer\)/);
