@@ -38,13 +38,22 @@ function optionalText(value: unknown) {
   return value.trim() || undefined;
 }
 
-function httpUrl(value: unknown, label: string) {
-  const raw = text(value, label);
+function parsedHttpUrl(raw: string, label: string) {
   let parsed: URL;
   try { parsed = new URL(raw); } catch { throw new Error(`${label} must be a valid URL`); }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error(`${label} must use http or https`);
   if (parsed.username || parsed.password) throw new Error(`${label} must not embed credentials`);
-  return parsed.toString();
+  return parsed;
+}
+
+function mapBaseUrl(value: unknown, kind: MapSourceKind, label: string) {
+  const raw = text(value, label);
+  if (kind === "xyz") {
+    for (const placeholder of ["{z}", "{x}", "{y}"]) if (!raw.includes(placeholder)) throw new Error(`${label} XYZ template must include ${placeholder}`);
+    parsedHttpUrl(raw.replaceAll("{z}", "0").replaceAll("{x}", "0").replaceAll("{y}", "0"), label);
+    return raw;
+  }
+  return parsedHttpUrl(raw, label).toString();
 }
 
 export function normalizeMapSource(value: unknown, index = 0): OperationalMapSource {
@@ -58,7 +67,7 @@ export function normalizeMapSource(value: unknown, index = 0): OperationalMapSou
   if (kindRaw !== "xyz" && kindRaw !== "wms" && kindRaw !== "wmts") throw new Error(`map source ${id} has unsupported kind`);
   const kind = kindRaw as MapSourceKind;
   const legacyUrl = row.baseUrl ?? row.urlTemplate;
-  const baseUrl = httpUrl(legacyUrl, `map source ${id} URL`);
+  const baseUrl = mapBaseUrl(legacyUrl, kind, `map source ${id} URL`);
   const tokenModeRaw = row.tokenMode ?? "none";
   if (tokenModeRaw !== "none" && tokenModeRaw !== "bearer" && tokenModeRaw !== "query") throw new Error(`map source ${id} has unsupported token mode`);
   const tokenMode = tokenModeRaw as MapTokenMode;
@@ -70,6 +79,8 @@ export function normalizeMapSource(value: unknown, index = 0): OperationalMapSou
   const tileMatrixSet = optionalText(row.tileMatrixSet);
   if ((kind === "wms" || kind === "wmts") && !layer) throw new Error(`map source ${id} requires a layer`);
   if (kind === "wmts" && !tileMatrixSet) throw new Error(`map source ${id} requires a tileMatrixSet`);
+  const crs = optionalText(row.crs) ?? (kind === "wms" ? "CRS:84" : undefined);
+  if (kind === "wms" && crs !== "CRS:84" && crs !== "EPSG:4326") throw new Error(`map source ${id} WMS currently supports CRS:84 or EPSG:4326`);
   return {
     id,
     name: text(row.name, `map source ${id} name`),
@@ -80,9 +91,9 @@ export function normalizeMapSource(value: unknown, index = 0): OperationalMapSou
     isDefault: row.isDefault === true,
     layer,
     style: optionalText(row.style) ?? "",
-    format: optionalText(row.format) ?? (kind === "xyz" ? "image/png" : "image/png"),
+    format: optionalText(row.format) ?? "image/png",
     version: optionalText(row.version) ?? (kind === "wms" ? "1.3.0" : kind === "wmts" ? "1.0.0" : undefined),
-    crs: optionalText(row.crs) ?? (kind === "wms" ? "CRS:84" : undefined),
+    crs,
     tileMatrixSet,
     tokenMode,
     tokenQueryParam,
@@ -121,16 +132,19 @@ export function buildWmsUpstreamUrl(source: OperationalMapSource, request: WmsPr
   const [minX, minY, maxX, maxY] = request.bbox.map((value, index) => finite(value, `bbox[${index}]`));
   if (!(minX < maxX && minY < maxY)) throw new Error("WMS bbox must have positive area");
   const url = new URL(source.baseUrl);
+  const version = source.version ?? "1.3.0";
+  const crs = source.crs ?? "CRS:84";
   url.searchParams.set("SERVICE", "WMS");
   url.searchParams.set("REQUEST", "GetMap");
-  url.searchParams.set("VERSION", source.version ?? "1.3.0");
+  url.searchParams.set("VERSION", version);
   url.searchParams.set("LAYERS", source.layer ?? "");
   url.searchParams.set("STYLES", source.style ?? "");
   url.searchParams.set("FORMAT", source.format ?? "image/png");
   url.searchParams.set("TRANSPARENT", "TRUE");
-  const crsKey = (source.version ?? "1.3.0").startsWith("1.3") ? "CRS" : "SRS";
-  url.searchParams.set(crsKey, source.crs ?? "CRS:84");
-  url.searchParams.set("BBOX", `${minX},${minY},${maxX},${maxY}`);
+  const crsKey = version.startsWith("1.3") ? "CRS" : "SRS";
+  url.searchParams.set(crsKey, crs);
+  const axisSwap = version.startsWith("1.3") && crs === "EPSG:4326";
+  url.searchParams.set("BBOX", axisSwap ? `${minY},${minX},${maxY},${maxX}` : `${minX},${minY},${maxX},${maxY}`);
   url.searchParams.set("WIDTH", String(positiveInteger(request.width, "WMS width")));
   url.searchParams.set("HEIGHT", String(positiveInteger(request.height, "WMS height")));
   return url;
@@ -160,9 +174,9 @@ export function buildXyzUpstreamUrl(source: OperationalMapSource, z: number, x: 
   for (const [value, label] of [[z, "z"], [x, "x"], [y, "y"]] as const) {
     if (!Number.isInteger(value) || value < 0) throw new Error(`XYZ ${label} must be a non-negative integer`);
   }
-  const raw = source.baseUrl.replace("{z}", String(z)).replace("{x}", String(x)).replace("{y}", String(y));
+  const raw = source.baseUrl.replaceAll("{z}", String(z)).replaceAll("{x}", String(x)).replaceAll("{y}", String(y));
   if (/\{[zxy]\}/.test(raw)) throw new Error("XYZ URL template is missing z/x/y placeholders");
-  return new URL(raw);
+  return parsedHttpUrl(raw, "XYZ tile URL");
 }
 
 export function applyMapSourceToken(url: URL, source: OperationalMapSource, token: string | null) {
