@@ -5,6 +5,7 @@ import { Database, FlaskConical, Map, Route, Settings2, Shapes, SlidersHorizonta
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWorkspace } from "./app-context";
 import { DeveloperView } from "./developer-view";
+import { GtProvenanceBanner } from "./gt-provenance-banner";
 import { GtScenarioWorkbench } from "./gt-scenario-workbench";
 import { InfluxGovernanceWorkbench } from "./influx-governance-workbench";
 import { MapSourceGovernanceWorkbench } from "./map-source-governance-workbench";
@@ -55,7 +56,7 @@ export function DeveloperGovernanceWorkbench() {
       </TabsContent>
 
       <TabsContent value="routes"><RouteBankWktWorkbench key={`route-bank-${revision}`} /></TabsContent>
-      <TabsContent value="gt"><GtScenarioWorkbench /></TabsContent>
+      <TabsContent value="gt"><GtProvenanceBanner /><GtScenarioWorkbench /></TabsContent>
       <TabsContent value="vehicles"><VehicleRangeWorkbench /></TabsContent>
       <TabsContent value="sources"><div className="developer-tab-intro"><h2>מקורות נתונים ומפות</h2><p>Influx וה־WMTS מנוהלים באותו אזור תשתיתי, בלי לערבב אותם עם עריכת תבניות ו־GT.</p></div><InfluxGovernanceWorkbench /><MapSourceGovernanceWorkbench /></TabsContent>
       <TabsContent value="system"><WorkspaceRecoveryWorkbench /><QaTruthWorkbench /><div className="protected-legacy-developer"><DeveloperView /></div></TabsContent>

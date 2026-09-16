@@ -1,4 +1,5 @@
 import { deleteLocalGtScenario, listLocalGtScenarios, readLocalGtScenario, writeLocalGtScenario } from "@/lib/sqlite-gt-scenarios";
+import { resolveRuntimeProvenance } from "@/lib/runtime-provenance-server";
 
 export const runtime = "nodejs";
 
@@ -11,6 +12,11 @@ function integer(value: string | null, fallback: number, min: number, max: numbe
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < min || parsed > max) throw new Error(`integer must be in [${min},${max}]`);
   return parsed;
+}
+
+function withServerProvenance(value: unknown, provenance: Awaited<ReturnType<typeof resolveRuntimeProvenance>>) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  return { ...(value as Record<string, unknown>), provenance };
 }
 
 export async function GET(request: Request) {
@@ -40,7 +46,13 @@ export async function PUT(request: Request) {
     const body = await request.json() as { scenario?: unknown; expectedRevision?: unknown };
     const expectedRevision = body.expectedRevision === undefined ? undefined : Number(body.expectedRevision);
     if (expectedRevision !== undefined && (!Number.isInteger(expectedRevision) || expectedRevision < 0)) throw new Error("expectedRevision is invalid");
-    const result = await writeLocalGtScenario(body.scenario, expectedRevision);
+    let provenance;
+    try {
+      provenance = await resolveRuntimeProvenance();
+    } catch (error) {
+      return Response.json({ error: error instanceof Error ? error.message : "runtime provenance is unavailable" }, { status: 503 });
+    }
+    const result = await writeLocalGtScenario(withServerProvenance(body.scenario, provenance), expectedRevision);
     const conflict = "conflict" in result && result.conflict === true;
     return Response.json(result, { status: conflict ? 409 : 200 });
   } catch (error) {

@@ -1,3 +1,5 @@
+import { normalizeCapturedRuntimeProvenance, type CapturedRuntimeProvenance } from "@/lib/runtime-provenance";
+
 export type GtScenarioFamily = "SI" | "SO";
 
 export type GtScenarioGroup = {
@@ -19,6 +21,7 @@ export type GtScenario = {
   groups: GtScenarioGroup[];
   notes: string;
   revision: number;
+  provenance?: CapturedRuntimeProvenance | null;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -95,6 +98,9 @@ export function normalizeGtScenario(value: unknown): GtScenario {
   });
   const revisionRaw = Number(row.revision ?? 0);
   if (!Number.isInteger(revisionRaw) || revisionRaw < 0) throw new Error("GT scenario revision is invalid");
+  const provenance = row.provenance === undefined || row.provenance === null
+    ? null
+    : normalizeCapturedRuntimeProvenance(row.provenance);
   return {
     id,
     name,
@@ -105,6 +111,7 @@ export function normalizeGtScenario(value: unknown): GtScenario {
     groups,
     notes: typeof row.notes === "string" ? row.notes.slice(0, 4_000) : "",
     revision: revisionRaw,
+    provenance,
     createdAt: typeof row.createdAt === "string" ? row.createdAt : undefined,
     updatedAt: typeof row.updatedAt === "string" ? row.updatedAt : undefined,
   };
@@ -121,6 +128,9 @@ export function gtScenarioSummary(scenario: GtScenario) {
     groupCount: scenario.groups.length,
     participantCount: scenario.groups.reduce((sum, group) => sum + group.participantIds.length, 0),
     revision: scenario.revision,
+    codeSha: scenario.provenance?.codeSha ?? null,
+    configVersion: scenario.provenance?.configVersion ?? null,
+    provenanceSource: scenario.provenance?.source ?? null,
     createdAt: scenario.createdAt ?? null,
     updatedAt: scenario.updatedAt ?? null,
   };
