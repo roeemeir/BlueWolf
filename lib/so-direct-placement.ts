@@ -87,8 +87,9 @@ export function placeSoVehicle(
   chain: readonly SoRouteKind[],
   routeIndex: number,
   phase: number,
-  _legacyTypeId?: string,
+  legacyTypeId?: string,
 ) {
+  void legacyTypeId;
   return placeSoPosition(placements, chain, routeIndex, phase);
 }
 
