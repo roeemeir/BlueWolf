@@ -4,7 +4,9 @@ param(
     [string]$StatePath = "",
     [int]$Port = 8080,
     [int]$StaleSeconds = 15,
-    [int]$ExpireSeconds = 60
+    [int]$ExpireSeconds = 60,
+    [int]$ArchiveRetentionDays = 30,
+    [int]$ArchivePruneIntervalSeconds = 3600
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,6 +41,12 @@ if ($Port -lt 1 -or $Port -gt 65535) {
 if ($StaleSeconds -le 0 -or $ExpireSeconds -le $StaleSeconds) {
     throw "ExpireSeconds must be greater than StaleSeconds and both must be positive."
 }
+if ($ArchiveRetentionDays -lt 1) {
+    throw "ArchiveRetentionDays must be at least 1 day."
+}
+if ($ArchivePruneIntervalSeconds -lt 60) {
+    throw "ArchivePruneIntervalSeconds must be at least 60 seconds."
+}
 if (-not [string]::IsNullOrWhiteSpace($StatePath) -and [string]::IsNullOrWhiteSpace($OperationalConfig)) {
     throw "StatePath requires OperationalConfig so checkpoint compatibility can be verified."
 }
@@ -48,6 +56,8 @@ $env:BLUEWOLF_RUNTIME_HOST = "0.0.0.0"
 $env:BLUEWOLF_RUNTIME_PORT = [string]$Port
 $env:BLUEWOLF_RUNTIME_STALE_SECONDS = [string]$StaleSeconds
 $env:BLUEWOLF_RUNTIME_EXPIRE_SECONDS = [string]$ExpireSeconds
+$env:BLUEWOLF_ARCHIVE_RETENTION_DAYS = [string]$ArchiveRetentionDays
+$env:BLUEWOLF_ARCHIVE_PRUNE_INTERVAL_SECONDS = [string]$ArchivePruneIntervalSeconds
 
 if (-not [string]::IsNullOrWhiteSpace($OperationalConfig)) {
     $ResolvedConfig = Resolve-Path $OperationalConfig -ErrorAction Stop
@@ -82,6 +92,7 @@ elseif (-not [string]::IsNullOrWhiteSpace($OperationalConfig)) {
     Write-Host "No StatePath supplied; persistence may still be enabled by persistence.path in runtime.json."
 }
 
+Write-Host "Sample archive retention: $ArchiveRetentionDays days; prune interval: $ArchivePruneIntervalSeconds seconds."
 Write-Host "Starting Blue Wolf runtime on port $Port (single process) · code $($InstalledCodeSha.Substring(0, [Math]::Min(12, $InstalledCodeSha.Length)))."
 & $RuntimeExe
 exit $LASTEXITCODE
