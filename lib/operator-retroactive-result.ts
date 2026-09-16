@@ -7,7 +7,7 @@ function latestScoredPoint(result: EventRecomputeResult) {
   return [...result.points].reverse().find((point) => point.group.valid && point.group.total !== null) ?? null;
 }
 
-export function groupFromEventRecompute(group: DemoGroup, result: EventRecomputeResult): DemoGroup {
+export function groupFromEventRecompute<T extends DemoGroup>(group: T, result: EventRecomputeResult): T {
   if (group.id !== result.groupId) return group;
   const point = latestScoredPoint(result);
   if (!point) return group;
@@ -34,7 +34,7 @@ export function groupFromEventRecompute(group: DemoGroup, result: EventRecompute
         route: score.route ?? vehicle.route,
       };
     }),
-  };
+  } as T;
 }
 
 export function historyWithEventRecompute(
