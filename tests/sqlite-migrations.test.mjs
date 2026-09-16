@@ -39,6 +39,8 @@ test('BW-OFF-012 upgrades a legacy workspace without losing state, revision or a
       '000-workspace-base',
       '001-workspace-version-history',
       '002-map-source-secrets',
+      '003-scoped-settings',
+      '004-map-tile-cache',
     ]);
 
     const workspace = db.prepare('SELECT state,revision FROM workspaces WHERE id=?').get('legacy');
@@ -61,6 +63,9 @@ test('BW-OFF-012 upgrades a legacy workspace without losing state, revision or a
     const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => String(row.name)));
     assert.ok(tables.has('workspace_versions'));
     assert.ok(tables.has('map_source_secrets'));
+    assert.ok(tables.has('workspace_scopes'));
+    assert.ok(tables.has('workspace_scope_versions'));
+    assert.ok(tables.has('map_tile_cache'));
   });
 });
 
@@ -74,9 +79,12 @@ test('BW-OFF-012 adopts databases that already carry the older 001/002 migration
       CREATE TABLE map_source_secrets (workspace_id TEXT NOT NULL, source_id TEXT NOT NULL, token TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(workspace_id,source_id));
       INSERT INTO local_schema_migrations(id) VALUES('001-workspace-version-history'),('002-map-source-secrets');
     `);
-    assert.deepEqual(migrations.applyLocalSchemaMigrations(db), ['000-workspace-base']);
+    assert.deepEqual(migrations.applyLocalSchemaMigrations(db), ['000-workspace-base', '003-scoped-settings', '004-map-tile-cache']);
     assert.deepEqual(migrations.applyLocalSchemaMigrations(db), []);
     const ledger = db.prepare('SELECT id FROM local_schema_migrations ORDER BY id').all().map((row) => String(row.id));
     assert.deepEqual(ledger, migrations.localSchemaMigrationIds());
+    const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => String(row.name)));
+    assert.ok(tables.has('workspace_scopes'));
+    assert.ok(tables.has('map_tile_cache'));
   });
 });
