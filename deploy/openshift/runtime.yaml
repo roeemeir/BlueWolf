@@ -36,6 +36,16 @@ spec:
               value: "15"
             - name: BLUEWOLF_RUNTIME_EXPIRE_SECONDS
               value: "60"
+            # The joined navigation archive is deployment-owned and resides on
+            # the same persistent volume as restart state.  Retention bounds
+            # both latest rows and revision history; tune explicitly if the
+            # target installation requires a longer forensic horizon.
+            - name: BLUEWOLF_SAMPLE_ARCHIVE_PATH
+              value: "/var/lib/bluewolf/joined-samples.sqlite3"
+            - name: BLUEWOLF_ARCHIVE_RETENTION_DAYS
+              value: "30"
+            - name: BLUEWOLF_ARCHIVE_PRUNE_INTERVAL_SECONDS
+              value: "3600"
             # The mounted JSON is deployment-owned. Start from
             # deploy/runtime/operational-config.example.json and replace all
             # example server, vehicle, template and Influx metadata explicitly.
