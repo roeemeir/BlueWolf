@@ -210,7 +210,9 @@ class LiveSIRuntimeProducer:
                     route_role=assignment.role_for(member_id),
                     route=route,
                     sample=sample,
-                    phase=frame.semantic_phase,
+                    # SI consumes the raw closed-route phase. semantic_phase is
+                    # SO-only and can legitimately be None for every SI frame.
+                    phase=frame.phase,
                     work_speed_mps=profile.work_speed_mps,
                 )
             )
