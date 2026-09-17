@@ -15,8 +15,8 @@ test('BW-OFF-010 empty/demo workspace gets Omniscale WMTS as Tel Aviv default wi
   assert.equal(migrated.mapServers[0].kind, 'wmts');
   assert.equal(migrated.mapServers[0].isDefault, true);
   assert.equal(migrated.mapServers[0].tokenMode, 'path');
-  assert.equal(migrated.mapServers[0].tokenPathPlaceholder, '{apiKey}');
-  assert.match(migrated.mapServers[0].baseUrl, /\/v2\/%7BapiKey%7D\/WMTSCapabilities\.xml$/i);
+  assert.equal(migrated.mapServers[0].tokenPathPlaceholder, '__BLUEWOLF_MAP_TOKEN__');
+  assert.match(migrated.mapServers[0].baseUrl, /\/v2\/__BLUEWOLF_MAP_TOKEN__\/WMTSCapabilities\.xml$/i);
   assert.doesNotMatch(JSON.stringify(migrated), /\/v2\/demo\//);
   const bounds = profile.telAvivDemoBounds();
   assert.ok(bounds.minLatitude < 32.0853 && bounds.maxLatitude > 32.0853);
