@@ -1,8 +1,14 @@
-import { applyMapSourceToken, buildWmtsCapabilitiesUrl } from "@/lib/map-source-config";
+import { applyMapSourceToken, buildWmtsCapabilitiesUrl, type OperationalMapSource } from "@/lib/map-source-config";
 import { localMapSource, localMapSourceSecret, localMapSourcesEnabled } from "@/lib/local-map-source-server";
 import { compatibleMatrixSets, defaultWmtsLayerSelections, parseWmtsCapabilities } from "@/lib/wmts-capabilities";
 
 const MAX_CAPABILITIES_BYTES = 8 * 1024 * 1024;
+
+function capabilitiesUrl(source: OperationalMapSource) {
+  const direct = new URL(source.baseUrl);
+  if (/\/WMTSCapabilities\.xml$/i.test(direct.pathname)) return direct;
+  return buildWmtsCapabilitiesUrl(source);
+}
 
 export async function GET(request: Request) {
   if (!localMapSourcesEnabled()) {
@@ -14,7 +20,7 @@ export async function GET(request: Request) {
     const source = await localMapSource(sourceId);
     if (source.kind !== "wmts") return Response.json({ error: "source is not WMTS" }, { status: 400 });
     const token = await localMapSourceSecret(source);
-    const secured = applyMapSourceToken(buildWmtsCapabilitiesUrl(source), source, token);
+    const secured = applyMapSourceToken(capabilitiesUrl(source), source, token);
     const response = await fetch(secured.url, {
       method: "GET",
       headers: secured.headers,
