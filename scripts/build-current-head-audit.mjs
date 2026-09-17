@@ -111,7 +111,6 @@ const MANUAL_REVERIFY_REQUIRED = new Set([
 ]);
 
 const VERIFIED = {
-  'BW-DATA-010': ['lib/influx-runtime-config.ts', 'tests/influx-runtime-config.test.mjs', '.github/workflows/in01-influx-config.yml'],
   'BW-DEV-002': ['components/bluewolf/route-bank-wkt-workbench.tsx', 'tests/route-bank-wkt.test.mjs'],
   'BW-DEV-003': ['components/bluewolf/route-bank-wkt-workbench.tsx', 'lib/route-bank-geometry.ts', 'scripts/verify_wkt_browser_e2e.py'],
   'BW-DEV-004': ['lib/vehicle-id-ranges.ts', 'tests/vehicle-id-ranges.test.mjs'],
