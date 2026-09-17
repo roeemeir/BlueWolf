@@ -2,8 +2,10 @@
   "schemaVersion": "bluewolf.full-requirements-registry.v1",
   "sourceDocument": {
     "driveFileId": "1pcjq50LchceDYsCqek_jqxkkRYbnef4l",
-    "title": "Blue_Wolf_Full_Specification_HE_v2_3.docx",
-    "sourceModifiedAt": "2026-09-15T21:56:03.851Z"
+    "title": "Blue_Wolf_Full_Specification_HE_v2_6.docx",
+    "sourceVersion": "2.6",
+    "sourceModifiedAt": "2026-09-17T02:12:25.514Z",
+    "lastSyncedHead": "c2eed6481d36256b276dc02461cf0d48a9c5549f"
   },
   "requirementCount": 142,
   "idFamilies": [
@@ -26,30 +28,32 @@
   ],
   "sourceImplementation": {
     "yes": [
-      "GEO-01", "GEO-02", "SI-01", "SI-02", "SO-01", "SO-02", "UI-01", "REP-01", "REP-02", "CFG-02", "BANK-01", "TEST-01",
       "BW-GOV-001", "BW-GOV-002", "BW-GOV-003", "BW-GOV-004", "BW-GOV-005", "BW-GOV-006", "BW-GOV-008", "BW-GOV-009",
       "BW-CORE-001", "BW-CORE-002", "BW-CORE-003", "BW-CORE-004", "BW-CORE-005", "BW-CORE-006", "BW-CORE-007", "BW-CORE-008", "BW-CORE-010", "BW-CORE-011", "BW-CORE-012", "BW-CORE-013", "BW-CORE-014", "BW-CORE-015", "BW-CORE-016", "BW-CORE-017", "BW-CORE-018",
-      "BW-SYNC-001", "BW-SYNC-002", "BW-SYNC-004", "BW-SYNC-006", "BW-SYNC-007", "BW-SYNC-008", "BW-SYNC-009", "BW-SYNC-010", "BW-SYNC-011",
+      "BW-SYNC-001", "BW-SYNC-002", "BW-SYNC-003", "BW-SYNC-004", "BW-SYNC-005", "BW-SYNC-006", "BW-SYNC-007", "BW-SYNC-008", "BW-SYNC-009", "BW-SYNC-010", "BW-SYNC-011",
       "BW-DATA-001", "BW-DATA-002", "BW-DATA-003", "BW-DATA-004", "BW-DATA-005", "BW-DATA-006", "BW-DATA-007", "BW-DATA-008", "BW-DATA-009",
       "BW-OFF-001", "BW-OFF-002", "BW-OFF-003", "BW-OFF-004", "BW-OFF-005", "BW-OFF-006", "BW-OFF-007", "BW-OFF-008",
-      "BW-DEV-001", "BW-DEV-002", "BW-DEV-003", "BW-DEV-004", "BW-DEV-005", "BW-DEV-006", "BW-DEV-007", "BW-DEV-009", "BW-DEV-010", "BW-DEV-011", "BW-DEV-012", "BW-DEV-013", "BW-DEV-014",
-      "BW-UI-001", "BW-UI-006", "BW-UI-009", "BW-UI-011", "BW-UI-015",
-      "BW-REP-001", "BW-REP-002", "BW-REP-003", "BW-REP-004", "BW-REP-005", "BW-REP-006", "BW-REP-007", "BW-REP-008", "BW-REP-009", "BW-REP-010", "BW-REP-011",
-      "BW-QA-001", "BW-QA-002", "BW-QA-003", "BW-QA-004", "BW-QA-005", "BW-QA-006", "BW-QA-007", "BW-QA-009", "BW-DOC-002"
+      "BW-DEV-002", "BW-DEV-003", "BW-DEV-004", "BW-DEV-005", "BW-DEV-006", "BW-DEV-007", "BW-DEV-008", "BW-DEV-009", "BW-DEV-010", "BW-DEV-011", "BW-DEV-012", "BW-DEV-013", "BW-DEV-014", "BW-DEV-015",
+      "BW-UI-001", "BW-UI-002", "BW-UI-003", "BW-UI-004", "BW-UI-006", "BW-UI-011", "BW-UI-015",
+      "BW-REP-002", "BW-REP-005", "BW-REP-006", "BW-REP-007", "BW-REP-009", "BW-REP-010", "BW-REP-011",
+      "BW-QA-001", "BW-QA-002", "BW-QA-003", "BW-QA-004", "BW-QA-005", "BW-QA-006", "BW-QA-007", "BW-QA-008", "BW-QA-009",
+      "BW-DOC-001", "BW-DOC-002", "BW-DOC-004", "BW-DOC-006",
+      "GEO-01", "GEO-02", "SI-02", "CFG-02", "IN-01", "BANK-01", "TEST-01", "ARCH-01"
     ],
     "partial": [
-      "REP-03", "REP-04", "CFG-01", "IN-01", "ARCH-01", "PROC-01",
-      "BW-GOV-007", "BW-GOV-010", "BW-CORE-009", "BW-SYNC-005", "BW-SYNC-012", "BW-SYNC-013", "BW-DATA-010",
-      "BW-OFF-009", "BW-OFF-011", "BW-OFF-012", "BW-DEV-008", "BW-DEV-015",
-      "BW-UI-002", "BW-UI-003", "BW-UI-004", "BW-UI-005", "BW-UI-007", "BW-UI-008", "BW-UI-010", "BW-UI-012", "BW-UI-013", "BW-UI-014",
-      "BW-QA-008", "BW-DOC-003", "BW-DOC-004", "BW-DOC-005"
+      "BW-GOV-007", "BW-GOV-010", "BW-CORE-009", "BW-SYNC-012", "BW-SYNC-013", "BW-DATA-010",
+      "BW-OFF-009", "BW-OFF-010", "BW-OFF-011", "BW-OFF-012", "BW-DEV-001",
+      "BW-UI-005", "BW-UI-007", "BW-UI-008", "BW-UI-009", "BW-UI-010", "BW-UI-012", "BW-UI-013", "BW-UI-014",
+      "BW-REP-001", "BW-REP-003", "BW-REP-004", "BW-REP-008", "BW-DOC-003", "BW-DOC-005",
+      "OP-01", "OP-02", "OP-04", "SI-01", "SO-01", "SO-02", "UI-01", "REP-01", "REP-02", "REP-03", "REP-04", "CFG-01", "PROC-01"
     ],
-    "no": ["BW-SYNC-003", "BW-OFF-010", "BW-DOC-001", "BW-DOC-006"],
-    "unspecified": ["OP-01", "OP-02", "OP-03", "OP-04", "OP-05"]
+    "no": [],
+    "unspecified": ["OP-03", "OP-05"]
   },
   "sourceImplementationApproval": {
     "default": "pending",
-    "unspecified": ["OP-01", "OP-02", "OP-03", "OP-04", "OP-05"]
+    "approved": ["BW-DOC-001"],
+    "unspecified": ["OP-03", "OP-05"]
   },
   "explicitAcceptanceCriteria": {
     "OP-01": "שינוי זירת נתיב אינו משנה תוצאות מבצעיות.",
@@ -63,7 +67,7 @@
     "REP-04": "השוואה למידע האירוע במקור ולגרף באותו טווח."
   },
   "audit": {
-    "policy": "Every requirement must be present. Implementation status comes from the Drive source until a current-head audit updates it. Implementation and acceptance evidence are separate; missing evidence is reported, never invented.",
+    "policy": "Every requirement must be present. Implementation status comes from the Drive Master Spec v2.6 until a current-head audit updates it. Implementation and acceptance evidence are separate; manual-QA failures remain partial until user re-verification; missing evidence is reported, never invented.",
     "requirements": {}
   }
 }
