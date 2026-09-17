@@ -1,4 +1,7 @@
-import type { OperationalMapSource } from "./map-source-config";
+import {
+  DEFAULT_MAP_TOKEN_PATH_PLACEHOLDER,
+  type OperationalMapSource,
+} from "./map-source-config";
 
 export const TEL_AVIV_DEMO_CENTER = Object.freeze({ latitude: 32.0853, longitude: 34.7818 });
 export const TEL_AVIV_DEMO_HALF_SPAN = Object.freeze({ latitude: 0.035, longitude: 0.055 });
@@ -6,16 +9,15 @@ export const TEL_AVIV_DEMO_HALF_SPAN = Object.freeze({ latitude: 0.035, longitud
 export const DEFAULT_PUBLIC_WMTS_SOURCE_ID = "omniscale-demo";
 
 /**
- * Public interoperability profile used only as the out-of-box QA/demo basemap.
- * `demo` is Omniscale's documented public test API key, so it is intentionally
- * part of the public capabilities URL and is not treated as a private secret.
- * Private/operational map-server credentials still use the SQLite secret store.
+ * Out-of-box QA/demo basemap. The workspace contains only a path-token
+ * placeholder; even the public Omniscale demo key is injected server-side via
+ * the same SQLite secret path used by operational/private map servers.
  */
 export const DEFAULT_PUBLIC_WMTS_SOURCE: OperationalMapSource = Object.freeze({
   id: DEFAULT_PUBLIC_WMTS_SOURCE_ID,
   name: "Omniscale OSM · תל אביב · WMTS QA",
   kind: "wmts",
-  baseUrl: "https://maps.omniscale.net/v2/demo/WMTSCapabilities.xml",
+  baseUrl: `https://maps.omniscale.net/v2/${DEFAULT_MAP_TOKEN_PATH_PLACEHOLDER}/WMTSCapabilities.xml`,
   attribution: "© Omniscale 2026 – Map data: OpenStreetMap (License ODbL)",
   enabled: true,
   isDefault: true,
@@ -25,7 +27,8 @@ export const DEFAULT_PUBLIC_WMTS_SOURCE: OperationalMapSource = Object.freeze({
   version: "1.0.0",
   crs: "EPSG:3857",
   tileMatrixSet: "EPSG:3857",
-  tokenMode: "none",
+  tokenMode: "path",
+  tokenPathPlaceholder: DEFAULT_MAP_TOKEN_PATH_PLACEHOLDER,
 });
 
 type JsonObject = Record<string, unknown>;
