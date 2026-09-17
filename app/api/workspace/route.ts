@@ -50,7 +50,7 @@ async function preparedLocalWorkspace(workspaceId: string) {
     "map-source",
     "default-wmts-tel-aviv",
     "migrated installation to Omniscale public WMTS QA default centered on Tel Aviv",
-    current.revision,
+    Number(current.revision ?? 0),
   );
   if (migrated.conflict) return readLocalWorkspace(workspaceId);
   return readLocalWorkspace(workspaceId);
