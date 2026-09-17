@@ -9,19 +9,19 @@ export const CURRENT_HEAD_AUDIT_SCHEMA_VERSION = 'bluewolf.current-head-audit.v1
 const FAMILY_REVIEW = {
   'BW-GOV': {
     implementationLocation: ['docs/full-requirements-registry.json', 'scripts/verify-full-requirements-registry.mjs', '.github/workflows/release-gate.yml'],
-    acceptanceEvidence: ['tests/full-requirements-registry.test.mjs', 'tests/release-scope-gate.test.mjs'],
+    acceptanceEvidence: ['tests/current-head-audit.test.mjs', 'tests/release-scope-gate.test.mjs'],
   },
   'BW-CORE': {
     implementationLocation: ['core/src/bluewolf_core', 'core/src/bluewolf_runtime_adapter'],
     acceptanceEvidence: ['core/tests'],
   },
   'BW-SYNC': {
-    implementationLocation: ['core/src/bluewolf_core', 'components/bluewolf/template-governance-workbench.tsx', 'components/bluewolf/so-template-governance-workbench.tsx'],
+    implementationLocation: ['core/src/bluewolf_core', 'components/bluewolf/si-template-governance-workbench.tsx', 'components/bluewolf/so-template-governance-workbench.tsx'],
     acceptanceEvidence: ['core/tests', 'tests/si-direct-placement.test.mjs', 'tests/so-direct-placement.test.mjs'],
   },
   'BW-DATA': {
     implementationLocation: ['core/src/bluewolf_runtime_adapter', 'app/api/live-runtime', 'lib/live-runtime.ts'],
-    acceptanceEvidence: ['core/tests/test_runtime_service.py', 'tests/live-runtime.test.mjs', 'tests/influx-runtime-config.test.mjs'],
+    acceptanceEvidence: ['core/tests/test_runtime_service.py', 'tests/live-runtime-contract.test.mjs', 'tests/influx-runtime-config.test.mjs'],
   },
   'BW-OFF': {
     implementationLocation: ['lib/sqlite-workspace.ts', 'lib/sqlite-migrations.ts', 'scripts/start-offline.mjs', 'app/api/map-sources'],
@@ -33,7 +33,7 @@ const FAMILY_REVIEW = {
   },
   'BW-UI': {
     implementationLocation: ['components/bluewolf/operator-view.tsx', 'components/bluewolf/operational-live-map.tsx', 'components/bluewolf/operational-timeline.tsx'],
-    acceptanceEvidence: ['tests/operator-ui.test.mjs', 'tests/operator-time-cursor.test.mjs', 'scripts/verify_ui_pdf_browser_e2e.py'],
+    acceptanceEvidence: ['tests/op02-map-layers.test.mjs', 'tests/operator-time-cursor.test.mjs', 'scripts/verify_ui_browser_e2e.py'],
   },
   'BW-REP': {
     implementationLocation: ['components/bluewolf/investigation-workspace.tsx', 'app/api/investigation/report/route.ts', 'lib/investigation-report-data.ts'],
@@ -41,7 +41,7 @@ const FAMILY_REVIEW = {
   },
   'BW-QA': {
     implementationLocation: ['scripts', 'tests', '.github/workflows'],
-    acceptanceEvidence: ['tests/release-scope-gate.test.mjs', 'tests/full-requirements-registry.test.mjs', '.github/workflows/ci.yml'],
+    acceptanceEvidence: ['tests/release-scope-gate.test.mjs', 'tests/current-head-audit.test.mjs', '.github/workflows/ci.yml'],
   },
   'BW-DOC': {
     implementationLocation: ['docs'],
@@ -52,15 +52,15 @@ const FAMILY_REVIEW = {
 const LATE_REVIEW = {
   OP: {
     implementationLocation: ['components/bluewolf/operator-view.tsx', 'components/bluewolf/operational-live-map.tsx', 'components/bluewolf/operational-timeline.tsx'],
-    acceptanceEvidence: ['tests/operator-ui.test.mjs', 'tests/operator-time-cursor-ui.test.mjs', '.github/workflows/operator-acceptance.yml'],
+    acceptanceEvidence: ['tests/op02-map-layers.test.mjs', 'tests/operator-time-cursor-ui.test.mjs', '.github/workflows/operator-acceptance.yml'],
   },
   GEO: {
     implementationLocation: ['lib/so-geometry.ts', 'components/bluewolf/so-governed-visuals.tsx'],
     acceptanceEvidence: ['tests/so-geometry.test.mjs'],
   },
   SI: {
-    implementationLocation: ['lib/si-direct-placement.ts', 'components/bluewolf/template-governance-workbench.tsx'],
-    acceptanceEvidence: ['tests/si-direct-placement.test.mjs', 'tests/si-direct-template-ui.test.mjs'],
+    implementationLocation: ['lib/si-direct-placement.ts', 'components/bluewolf/si-template-governance-workbench.tsx'],
+    acceptanceEvidence: ['tests/si-direct-placement.test.mjs', 'tests/si-direct-template-ui.test.mjs', 'tests/si-coordinate-template-ui.test.mjs'],
   },
   SO: {
     implementationLocation: ['lib/so-direct-placement.ts', 'lib/so-geometry.ts', 'components/bluewolf/so-template-governance-workbench.tsx'],
@@ -68,7 +68,7 @@ const LATE_REVIEW = {
   },
   UI: {
     implementationLocation: ['components/bluewolf/operator-view.tsx', 'components/bluewolf/investigation-workspace.tsx', 'app/globals.css'],
-    acceptanceEvidence: ['scripts/verify_ui_pdf_browser_e2e.py', '.github/workflows/ui-e2e.yml'],
+    acceptanceEvidence: ['scripts/verify_ui_browser_e2e.py', '.github/workflows/ui-e2e.yml'],
   },
   REP: {
     implementationLocation: ['components/bluewolf/investigation-workspace.tsx', 'lib/investigation-pdf-release.ts', 'app/api/investigation/report/route.ts'],
@@ -84,7 +84,7 @@ const LATE_REVIEW = {
   },
   BANK: {
     implementationLocation: ['components/bluewolf/route-bank-wkt-workbench.tsx', 'lib/route-bank-geometry.ts'],
-    acceptanceEvidence: ['tests/route-wkt.test.mjs', 'scripts/verify_wkt_browser_e2e.py'],
+    acceptanceEvidence: ['tests/route-bank-wkt.test.mjs', 'scripts/verify_wkt_browser_e2e.py'],
   },
   TEST: {
     implementationLocation: ['core/src/bluewolf_runtime_adapter/qa_runner.py', 'components/bluewolf/qa-truth-workbench.tsx'],
@@ -96,66 +96,80 @@ const LATE_REVIEW = {
   },
   PROC: {
     implementationLocation: ['docs/full-requirements-registry.json', 'scripts/build-current-head-audit.mjs', 'scripts/verify-full-requirements-registry.mjs', '.github/workflows/release-gate.yml'],
-    acceptanceEvidence: ['tests/full-requirements-registry.test.mjs', 'tests/release-scope-gate.test.mjs'],
+    acceptanceEvidence: ['tests/current-head-audit.test.mjs', 'tests/release-scope-gate.test.mjs'],
   },
 };
 
-// Only requirements with an explicit current-head implementation/test review are
-// promoted to yes here. Everything else remains partial/no even when the source
-// document historically said "yes". This prevents old status from becoming new
-// evidence merely by copying it forward.
+const MANUAL_REVERIFY_REQUIRED = new Set([
+  'OP-01', 'OP-02', 'OP-04',
+  'SI-01', 'SO-01', 'SO-02', 'UI-01',
+  'REP-01', 'REP-02', 'REP-03', 'REP-04',
+  'BW-DEV-001',
+  'BW-UI-009', 'BW-UI-010', 'BW-UI-012', 'BW-UI-014',
+  'BW-REP-001', 'BW-REP-003', 'BW-REP-004', 'BW-REP-008',
+  'BW-SYNC-013',
+]);
+
 const VERIFIED = {
-  'BW-DEV-002': ['components/bluewolf/route-bank-wkt-workbench.tsx', 'tests/route-wkt.test.mjs'],
+  'BW-DATA-010': ['lib/influx-runtime-config.ts', 'tests/influx-runtime-config.test.mjs', '.github/workflows/in01-influx-config.yml'],
+  'BW-DEV-002': ['components/bluewolf/route-bank-wkt-workbench.tsx', 'tests/route-bank-wkt.test.mjs'],
   'BW-DEV-003': ['components/bluewolf/route-bank-wkt-workbench.tsx', 'lib/route-bank-geometry.ts', 'scripts/verify_wkt_browser_e2e.py'],
   'BW-DEV-004': ['lib/vehicle-id-ranges.ts', 'tests/vehicle-id-ranges.test.mjs'],
   'BW-DEV-005': ['lib/workspace-validation.ts', 'tests/workspace-validation.test.mjs'],
+  'BW-DEV-008': ['lib/gt-scenario-contract.ts', 'lib/sqlite-gt-scenarios.ts', 'tests/gt-scenarios.test.mjs'],
   'BW-DEV-009': ['app/api/gt-scenarios/route.ts', 'lib/sqlite-gt-scenarios.ts', 'tests/gt-scenarios.test.mjs'],
   'BW-DEV-010': ['core/src/bluewolf_runtime_adapter/qa_runner.py', 'core/tests/test_qa_service.py'],
   'BW-DEV-011': ['lib/qa-contract.ts', 'tests/gt-provenance.test.mjs'],
   'BW-DEV-012': ['components/bluewolf/qa-truth-workbench.tsx', 'tests/qa-truth-contract.test.mjs'],
   'BW-DEV-013': ['core/src/bluewolf_runtime_adapter/qa_runner.py', 'core/tests/test_qa_service.py'],
   'BW-DEV-014': ['app/api/qa/run/route.ts', 'tests/qa-truth-contract.test.mjs'],
+  'BW-DEV-015': ['lib/sqlite-gt-scenarios.ts', 'tests/gt-scenarios.test.mjs'],
   'BW-OFF-004': ['lib/workspace-validation.ts', 'tests/workspace-wkt-api.test.mjs'],
   'BW-OFF-005': ['components/bluewolf/route-bank-wkt-workbench.tsx', 'scripts/verify_wkt_browser_e2e.py'],
   'BW-OFF-006': ['scripts/verify-offline-http.mjs', '.github/workflows/wkt-e2e.yml'],
   'BW-OFF-009': ['.github/workflows/off09-workday.yml', 'scripts/verify-offline-http.mjs'],
+  'BW-OFF-010': ['lib/wmts-capabilities.ts', 'app/api/map-sources/capabilities/route.ts', 'tests/wmts-capabilities.test.mjs', 'tests/map-source-ui.test.mjs', '.github/workflows/off10-map-sources.yml'],
+  'BW-OFF-011': ['app/api/workspace/scope/route.ts', 'tests/workspace-scopes.test.mjs'],
   'BW-OFF-012': ['lib/sqlite-migrations.ts', 'tests/sqlite-migrations.test.mjs', '.github/workflows/off12-migrations.yml'],
-  'BW-SYNC-003': ['lib/si-direct-placement.ts', 'components/bluewolf/template-governance-workbench.tsx', 'tests/si-direct-template-ui.test.mjs'],
+  'BW-SYNC-003': ['lib/si-direct-placement.ts', 'components/bluewolf/si-template-governance-workbench.tsx', 'tests/si-direct-template-ui.test.mjs'],
   'BW-SYNC-009': ['core/src/bluewolf_core/event_recompute.py', 'tests/investigation-contract.test.mjs'],
   'BW-SYNC-010': ['core/src/bluewolf_core/event_recompute.py', 'core/tests/test_event_recompute.py'],
   'BW-SYNC-011': ['core/src/bluewolf_core/event_recompute.py', 'lib/investigation-contract.ts'],
   'BW-SYNC-013': ['lib/display-score-smoothing.ts', 'tests/display-score-smoothing.test.mjs', 'components/bluewolf/operational-timeline.tsx'],
+  'BW-UI-005': ['lib/operator-time-cursor.ts', 'components/bluewolf/operational-timeline.tsx', 'components/bluewolf/operational-live-map.tsx', 'tests/operator-time-cursor.test.mjs', 'tests/operator-time-cursor-ui.test.mjs'],
   'BW-UI-006': ['app/api/investigation/events/route.ts', 'tests/investigation-contract.test.mjs'],
-  'BW-UI-007': ['components/bluewolf/operator-view.tsx', 'tests/operator-ui.test.mjs'],
-  'BW-UI-009': ['components/bluewolf/investigation-workspace.tsx', 'scripts/verify_ui_pdf_browser_e2e.py'],
-  'BW-UI-010': ['components/bluewolf/operator-view.tsx', 'tests/operator-ui.test.mjs'],
-  'BW-UI-014': ['components/bluewolf/operational-live-map.tsx', 'tests/operator-ui.test.mjs', 'tests/map-source-ui.test.mjs'],
+  'BW-UI-007': ['components/bluewolf/operator-view.tsx', 'tests/operator-alert-mute.test.mjs'],
+  'BW-UI-009': ['components/bluewolf/investigation-workspace.tsx', 'scripts/verify_ui_browser_e2e.py'],
+  'BW-UI-010': ['components/bluewolf/operator-view.tsx', 'tests/ui-components.test.mjs'],
+  'BW-UI-014': ['components/bluewolf/operational-live-map.tsx', 'tests/op02-map-layers.test.mjs', 'tests/map-source-ui.test.mjs'],
   'BW-REP-003': ['components/bluewolf/investigation-workspace.tsx', 'tests/investigation-lifecycle.test.mjs'],
   'BW-REP-004': ['components/bluewolf/investigation-workspace.tsx', 'tests/investigation-contract.test.mjs'],
-  'BW-REP-007': ['core/src/bluewolf_core/event_recompute.py', 'tests/investigation-retroactive-batch.test.mjs'],
+  'BW-REP-007': ['core/src/bluewolf_core/event_recompute.py', 'tests/investigation-retroactive.test.mjs'],
   'BW-REP-009': ['app/api/investigation/report/route.ts', 'lib/investigation-report-data.ts', 'tests/investigation-pdf-browser.test.mjs'],
   'BW-QA-003': ['scripts/verify_wkt_browser_e2e.py', '.github/workflows/wkt-e2e.yml'],
   'BW-QA-004': ['core/src/bluewolf_runtime_adapter/qa_runner.py', 'core/tests/test_qa_service.py'],
-  'BW-QA-005': ['core/tests/test_event_recompute.py', 'tests/investigation-retroactive-batch.test.mjs'],
+  'BW-QA-005': ['core/tests/test_event_recompute.py', 'tests/investigation-retroactive.test.mjs'],
   'BW-QA-006': ['tests/investigation-pdf-browser.test.mjs', 'tests/investigation-report-route.test.mjs'],
   'BW-QA-007': ['scripts/verify-release-scope.mjs', 'tests/release-scope-gate.test.mjs', '.github/workflows/release-gate.yml'],
-  'BW-QA-008': ['lib/runtime-provenance-server.ts', 'app/api/gt-scenarios/route.ts', 'tests/gt-provenance.test.mjs'],
+  'BW-QA-008': ['lib/runtime-provenance-server.ts', 'app/api/gt-scenarios/route.ts', 'tests/gt-provenance.test.mjs', 'tests/release-provenance.test.mjs'],
   'GEO-01': ['lib/so-geometry.ts', 'tests/so-geometry.test.mjs'],
   'GEO-02': ['lib/so-geometry.ts', 'tests/so-geometry.test.mjs'],
-  'SI-01': ['components/bluewolf/template-governance-workbench.tsx', 'tests/si-direct-template-ui.test.mjs'],
+  'SI-01': ['components/bluewolf/si-template-governance-workbench.tsx', 'tests/si-direct-template-ui.test.mjs', 'tests/si-coordinate-template-ui.test.mjs'],
   'SI-02': ['lib/si-direct-placement.ts', 'tests/si-direct-placement.test.mjs'],
-  'SO-01': ['lib/so-direct-placement.ts', 'tests/so-direct-placement.test.mjs', 'tests/so-direct-template-ui.test.mjs'],
+  'SO-01': ['lib/so-direct-placement.ts', 'components/bluewolf/so-template-governance-workbench.tsx', 'tests/so-direct-placement.test.mjs', 'tests/so-direct-template-ui.test.mjs'],
   'SO-02': ['lib/so-geometry.ts', 'lib/so-direct-placement.ts', 'tests/so-geometry.test.mjs'],
-  'UI-01': ['components/bluewolf/investigation-workspace.tsx', 'scripts/verify_ui_pdf_browser_e2e.py'],
+  'UI-01': ['components/bluewolf/investigation-workspace.tsx', 'scripts/verify_ui_browser_e2e.py'],
   'REP-01': ['components/bluewolf/investigation-workspace.tsx', 'lib/investigation-pdf-release.ts', 'tests/investigation-pdf-browser.test.mjs'],
   'IN-01': ['lib/influx-runtime-config.ts', 'lib/influx-runtime-sync.ts', 'tests/influx-runtime-config.test.mjs'],
-  'BANK-01': ['components/bluewolf/route-bank-wkt-workbench.tsx', 'lib/route-bank-geometry.ts', 'scripts/verify_wkt_browser_e2e.py'],
+  'BANK-01': ['components/bluewolf/route-bank-wkt-workbench.tsx', 'lib/route-bank-geometry.ts', 'tests/route-bank-wkt.test.mjs', 'scripts/verify_wkt_browser_e2e.py'],
   'TEST-01': ['core/src/bluewolf_runtime_adapter/qa_runner.py', 'core/tests/test_qa_service.py'],
   'ARCH-01': ['scripts/start-offline.mjs', 'lib/sqlite-workspace.ts', '.github/workflows/ci.yml'],
-  'OP-02': ['components/bluewolf/operational-live-map.tsx', 'tests/operator-ui.test.mjs', '.github/workflows/op02-map.yml'],
-  'OP-03': ['components/bluewolf/operator-view.tsx', 'lib/speed-units.ts', '.github/workflows/op03-speed.yml'],
-  'OP-04': ['components/bluewolf/operator-view.tsx', 'core/src/bluewolf_core/event_recompute.py', 'core/tests/test_event_recompute.py'],
-  'OP-05': ['components/bluewolf/operational-timeline.tsx', 'tests/operator-ui.test.mjs'],
+  'PROC-01': ['scripts/build-current-head-audit.mjs', 'scripts/verify-full-requirements-registry.mjs', '.github/workflows/release-gate.yml', 'tests/current-head-audit.test.mjs'],
+  'OP-01': ['components/bluewolf/operator-view.tsx', 'tests/op01-arena-presentation.test.mjs'],
+  'OP-02': ['components/bluewolf/operational-live-map.tsx', 'tests/op02-map-layers.test.mjs', '.github/workflows/op02-map.yml'],
+  'OP-03': ['components/bluewolf/operator-view.tsx', 'lib/speed-units.ts', 'tests/operator-speed-ui.test.mjs', '.github/workflows/op03-speed.yml'],
+  'OP-04': ['components/bluewolf/operator-view.tsx', 'core/src/bluewolf_core/event_recompute.py', 'tests/op04-template-recompute-ui.test.mjs', 'core/tests/test_event_recompute.py'],
+  'OP-05': ['components/bluewolf/operational-timeline.tsx', 'tests/op05-timeline-visibility.test.mjs', 'tests/op05-timeline-window.test.mjs'],
 };
 
 const SOURCE_STATUS_ORDER = ['yes', 'partial', 'no', 'unspecified'];
@@ -181,6 +195,15 @@ function baselineReview(id) {
   };
 }
 
+function splitEvidence(entries, baseline) {
+  const implementationLocation = entries.filter((entry) => !entry.startsWith('tests/') && !entry.startsWith('core/tests/') && !entry.startsWith('.github/workflows/') && !entry.startsWith('scripts/verify_'));
+  const acceptanceEvidence = entries.filter((entry) => !implementationLocation.includes(entry));
+  return {
+    implementationLocation: implementationLocation.length ? implementationLocation : baseline.implementationLocation,
+    acceptanceEvidence: acceptanceEvidence.length ? acceptanceEvidence : baseline.acceptanceEvidence,
+  };
+}
+
 export function buildCurrentHeadAudit(registry, { headSha = 'working-tree', reviewedAt = new Date().toISOString() } = {}) {
   const expected = expandExpectedIds(registry);
   const statuses = sourceStatusMap(registry);
@@ -190,22 +213,34 @@ export function buildCurrentHeadAudit(registry, { headSha = 'working-tree', revi
     const sourceStatus = statuses.get(id) ?? 'unspecified';
     const baseline = baselineReview(id);
     const explicit = VERIFIED[id];
+
     if (explicit) {
-      const implementationLocation = explicit.filter((entry) => !entry.startsWith('tests/') && !entry.startsWith('core/tests/') && !entry.startsWith('.github/workflows/') && !entry.startsWith('scripts/verify_'));
-      const acceptanceEvidence = explicit.filter((entry) => !implementationLocation.includes(entry));
-      requirements[id] = {
-        implementation: 'yes',
-        verified: true,
-        reviewedAtHead: headSha,
-        reviewedAt,
-        implementationLocation: implementationLocation.length ? implementationLocation : baseline.implementationLocation,
-        acceptanceEvidence: acceptanceEvidence.length ? acceptanceEvidence : baseline.acceptanceEvidence,
-      };
+      const evidence = splitEvidence(explicit, baseline);
+      if (MANUAL_REVERIFY_REQUIRED.has(id)) {
+        requirements[id] = {
+          implementation: 'partial',
+          verified: false,
+          reviewedAtHead: headSha,
+          reviewedAt,
+          ...evidence,
+          gap: id === 'BW-SYNC-013'
+            ? 'Automated display-only smoothing evidence exists, but the product smoothing decision still requires explicit user approval.'
+            : 'Automated fix evidence exists, but this requirement remains partial until the user re-verifies the previously failed manual QA behavior.',
+        };
+      } else {
+        requirements[id] = {
+          implementation: 'yes',
+          verified: true,
+          reviewedAtHead: headSha,
+          reviewedAt,
+          ...evidence,
+        };
+      }
       continue;
     }
 
     const implementation = sourceStatus === 'no' ? 'no' : 'partial';
-    const historical = sourceStatus === 'yes'
+    const gap = sourceStatus === 'yes'
       ? 'Source document historically marks this implemented, but no explicit current-head verification override has been recorded yet.'
       : sourceStatus === 'partial'
         ? 'Implementation remains partial pending dedicated current-head acceptance closure.'
@@ -219,7 +254,7 @@ export function buildCurrentHeadAudit(registry, { headSha = 'working-tree', revi
       reviewedAt,
       implementationLocation: baseline.implementationLocation,
       acceptanceEvidence: baseline.acceptanceEvidence,
-      gap: historical,
+      gap,
     };
   }
 
@@ -228,7 +263,7 @@ export function buildCurrentHeadAudit(registry, { headSha = 'working-tree', revi
     headSha,
     reviewedAt,
     requirementCount: expected.length,
-    policy: 'Conservative current-head review: only explicit implementation/test overrides are yes; all other source statuses are downgraded to partial/no until current-head evidence is reviewed.',
+    policy: 'Conservative current-head review: only explicit implementation/test overrides are eligible for yes; requirements that failed manual QA remain partial until user re-verification, and user implementation approval remains a separate release gate.',
     requirements,
   };
 }
