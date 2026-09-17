@@ -29,6 +29,16 @@ test('PROC-01 builder produces one conservative current-head row for every regis
   assert.deepEqual(await verifyAuditEvidencePaths(audit.requirements), []);
 });
 
+test('BW-DATA-010 stays partial until dedicated end-to-end latency evidence is registered', async () => {
+  const { registry } = await fixture();
+  assert.ok(registry.sourceImplementation.partial.includes('BW-DATA-010'));
+  const audit = buildCurrentHeadAudit(registry, { headSha: 'test-head', reviewedAt: '2026-09-17T00:00:00.000Z' });
+  const row = audit.requirements['BW-DATA-010'];
+  assert.equal(row.implementation, 'partial');
+  assert.equal(row.verified, false);
+  assert.match(row.gap, /pending dedicated current-head acceptance closure/i);
+});
+
 test('PROC-01 exact-head validation rejects a recycled audit from another commit', async () => {
   const { registry } = await fixture();
   const audit = buildCurrentHeadAudit(registry, { headSha: 'old-head', reviewedAt: '2026-09-17T00:00:00.000Z' });
