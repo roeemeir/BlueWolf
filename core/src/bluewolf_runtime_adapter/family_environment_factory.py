@@ -2,7 +2,8 @@
 
 Shared ingest/session infrastructure is built once per server. Family producers
 are then registered as siblings under ``FamilyRuntimeHost``. No family is used as
-a base implementation for another family.
+a base implementation for another family; SI-only, SO-only and SI+SO all use the
+same composition path.
 """
 from __future__ import annotations
 
@@ -77,18 +78,22 @@ def build_operational_runtime(
     store: RuntimeSnapshotStore,
 ) -> OperationalRuntimeLoop:
     """Build every server through one family-neutral composition path."""
-    bank = _template_bank(config)
-    reader, stream_schema = _connection_and_reader(config)
-    poll_config = _poll_config(config, reader.join_config.tolerance_seconds)
-    sample_archive = _sample_archive(config)
-    comparison = TemplateComparisonDimension(
-        _text(config.get("comparisonDimension", "sync"), "comparisonDimension")
-    )
-    displayed_score_resolver = _displayed_score_resolver(config)
+    raw_so_templates = _list(config.get("templates", []), "templates")
+    so_bank = _template_bank(config) if raw_so_templates else None
 
     si_templates = parse_si_templates(config.get("siTemplates"))
     si_vehicle_types = parse_si_vehicle_types(config.get("siVehicleTypes"))
     validate_si_runtime_configuration(si_templates, si_vehicle_types)
+    if so_bank is None and not si_templates:
+        raise ValueError("at least one SI or SO template family must be configured")
+
+    reader, stream_schema = _connection_and_reader(config)
+    poll_config = _poll_config(config, reader.join_config.tolerance_seconds)
+    sample_archive = _sample_archive(config)
+    displayed_score_resolver = _displayed_score_resolver(config)
+    comparison = TemplateComparisonDimension(
+        _text(config.get("comparisonDimension", "sync"), "comparisonDimension")
+    )
 
     raw_servers = _list(config.get("servers"), "servers")
     if not raw_servers:
@@ -121,18 +126,20 @@ def build_operational_runtime(
             sample_archive=sample_archive,
         )
 
-        so_registry = SOTemplateSelectionRegistry(bank)
-        so_scorer = LiveSOGroupScorer(so_registry)
-        so_runtime = LiveSOEventRuntime(so_scorer, comparison_dimension=comparison)
-        so_producer = LiveRuntimeProducer(
-            server_id=server_id,
-            session=session,
-            runtime=so_runtime,
-            store=store,
-            binding_resolver=_binding_resolver(server),
-            displayed_score_resolver=displayed_score_resolver,
-        )
-        families = [SOFamilyRuntimeAdapter(so_producer)]
+        families = []
+        if so_bank is not None:
+            so_registry = SOTemplateSelectionRegistry(so_bank)
+            so_scorer = LiveSOGroupScorer(so_registry)
+            so_runtime = LiveSOEventRuntime(so_scorer, comparison_dimension=comparison)
+            so_producer = LiveRuntimeProducer(
+                server_id=server_id,
+                session=session,
+                runtime=so_runtime,
+                store=store,
+                binding_resolver=_binding_resolver(server),
+                displayed_score_resolver=displayed_score_resolver,
+            )
+            families.append(SOFamilyRuntimeAdapter(so_producer))
 
         if si_templates:
             si_producer = LiveSIRuntimeProducer(
