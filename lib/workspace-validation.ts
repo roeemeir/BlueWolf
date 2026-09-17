@@ -1,7 +1,8 @@
-import type { InfluxSettings, VehicleType } from "./bluewolf";
+import type { InfluxSettings, SiPosition, VehicleType } from "./bluewolf";
 import { validateInfluxSettings, validateLiveLatencyBudget } from "./influx-runtime-config";
 import { normalizeMapSources } from "./map-source-config";
 import { formatRouteWkt, parseRouteWkt } from "./route-wkt";
+import { validateSiPositions } from "./si-direct-placement";
 import { validateVehicleIdRanges } from "./vehicle-id-ranges";
 
 type JsonObject = Record<string, unknown>;
@@ -24,6 +25,17 @@ function normalizeRoutes(state: JsonObject) {
   });
 }
 
+function vehicleTypesFromState(state: JsonObject): VehicleType[] {
+  if (!Array.isArray(state.vehicleTypes)) return [];
+  return state.vehicleTypes.map((value, index) => {
+    if (!isObject(value)) throw new Error(`vehicle type ${index + 1} must be an object`);
+    if (!Array.isArray(value.siRoles) || value.siRoles.some((role) => role !== "inner" && role !== "middle" && role !== "outer")) {
+      throw new Error(`vehicle type ${index + 1} siRoles are invalid`);
+    }
+    return value as unknown as VehicleType;
+  });
+}
+
 function validateVehicleRanges(state: JsonObject) {
   if (!Array.isArray(state.vehicleTypes)) return;
   const ranges = state.vehicleTypes.map((value, index) => {
@@ -37,6 +49,30 @@ function validateVehicleRanges(state: JsonObject) {
     } as Pick<VehicleType, "id" | "name" | "minId" | "maxId" | "workSpeedKmh">;
   });
   validateVehicleIdRanges(ranges);
+}
+
+function validateTemplates(state: JsonObject) {
+  if (state.templates === undefined) return;
+  if (!Array.isArray(state.templates)) throw new Error("templates must be an array");
+  const vehicleTypes = vehicleTypesFromState(state);
+  const ids = new Set<string>();
+  state.templates.forEach((value, index) => {
+    if (!isObject(value)) throw new Error(`template ${index + 1} must be an object`);
+    if (typeof value.id !== "string" || !value.id.trim()) throw new Error(`template ${index + 1} id is required`);
+    if (ids.has(value.id)) throw new Error(`duplicate template id: ${value.id}`);
+    ids.add(value.id);
+    if (value.family !== "SI" || value.siPositions === undefined) return;
+    if (!Array.isArray(value.siPositions)) throw new Error(`${value.id}.siPositions must be an array`);
+    const positions = value.siPositions.map((raw, positionIndex) => {
+      if (!isObject(raw)) throw new Error(`${value.id}.siPositions[${positionIndex}] must be an object`);
+      if (typeof raw.typeId !== "string" || !raw.typeId.trim()) throw new Error(`${value.id}.siPositions[${positionIndex}].typeId is required`);
+      if (raw.ring !== "inner" && raw.ring !== "middle" && raw.ring !== "outer") throw new Error(`${value.id}.siPositions[${positionIndex}].ring is invalid`);
+      if (typeof raw.angleDeg !== "number" || !Number.isFinite(raw.angleDeg)) throw new Error(`${value.id}.siPositions[${positionIndex}].angleDeg must be finite`);
+      return { typeId: raw.typeId, ring: raw.ring, angleDeg: raw.angleDeg } satisfies SiPosition;
+    });
+    const validation = validateSiPositions(positions, vehicleTypes);
+    if (validation) throw new Error(`${value.id}: ${validation}`);
+  });
 }
 
 function validateInflux(state: JsonObject) {
@@ -90,12 +126,17 @@ function validateMapSources(state: JsonObject) {
  * BW-OFF-010 map source metadata is normalized here, while map tokens are
  * deliberately rejected from workspace JSON and live only in local server-side
  * secret storage.
+ * BW-SYNC-012 coordinate-authored SI templates are validated against the same
+ * 30-degree/ring/type rules used by the editor before they may become persisted
+ * runtime truth. Legacy SI templates without siPositions remain readable but are
+ * never reverse-engineered into operational coordinates.
  */
 export function normalizeAndValidateWorkspaceState(value: unknown): unknown {
   if (!isObject(value)) throw new Error("workspace state must be an object");
   const state = structuredClone(value) as JsonObject;
   normalizeRoutes(state);
   validateVehicleRanges(state);
+  validateTemplates(state);
   validateInflux(state);
   validateLatencyBudget(state);
   validateMapSources(state);

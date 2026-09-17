@@ -136,6 +136,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         } else {
           toast.warning(`מיפוי Influx נשמר ב־Workspace אך לא הוחל על ה־Core${payload.runtimeSync?.reason ? `: ${payload.runtimeSync.reason}` : " בפריסה זו"}`, { id: saveToast });
         }
+      } else if (category === "templates" || category === "vehicle-ranges") {
+        if (payload.runtimeSync?.synced) {
+          toast.success(payload.runtimeSync.restartRequired ? "תצורת SI נשמרה לקונפיגורציית ה־Core; נדרשת הפעלה מחדש של שירות הליבה" : "תצורת SI נשמרה והוחלה", { id: saveToast });
+        } else {
+          toast.warning(`תצורת SI נשמרה ב־Workspace אך לא הוחלה על ה־Core${payload.runtimeSync?.reason ? `: ${payload.runtimeSync.reason}` : " בפריסה זו"}`, { id: saveToast });
+        }
       } else {
         toast.success("נשמר והפך לפעיל", { id: saveToast });
       }
