@@ -19,8 +19,9 @@ test('SI editor is direct coordinate-driven three-ring placement and the legacy 
   assert.match(source, /siPositions is the source of truth/);
   assert.doesNotMatch(source, /siCounts|setSiCounts|setSiAngles|setSiRings/);
 
-  assert.match(governance, /SiTemplateGovernanceWorkbench/);
-  assert.doesNotMatch(governance, /TemplateGovernanceWorkbench/);
+  assert.match(governance, /<SiTemplateGovernanceWorkbench\s*\/>/);
+  assert.doesNotMatch(governance, /<TemplateGovernanceWorkbench\s*\/>/);
+  assert.doesNotMatch(governance, /import\s+\{\s*TemplateGovernanceWorkbench\s*\}/);
 });
 
 test('SI-01 hover ghost is coordinate-driven, visual-only until click and restricted to legal rings', async () => {
