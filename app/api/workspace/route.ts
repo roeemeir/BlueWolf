@@ -39,24 +39,19 @@ function siRuntimeFromState(value: unknown): { templates: SyncTemplate[]; vehicl
 
 async function preparedLocalWorkspace(workspaceId: string) {
   const current = await readLocalWorkspace(workspaceId);
-  // Never mutate an existing installation merely because it is read. Existing
-  // map choices and optimistic revisions are user-owned. The Tel Aviv WMTS QA
-  // profile is seeded only for a genuinely empty local installation.
+  // A GET must never create a user revision. Existing optimistic revisions are
+  // user-owned, and an empty installation can expose the out-of-box Tel Aviv
+  // WMTS profile without committing it. The first real PUT therefore remains
+  // revision 1 and browser/WKT/restart contracts stay deterministic.
   if (current.state) return current;
 
   const prepared = await prepareTelAvivDemoWorkspace(DEFAULT_WORKSPACE);
   const normalized = normalizeAndValidateWorkspaceState(prepared);
-  const serialized = JSON.stringify(normalized);
-  const seeded = await writeLocalWorkspace(
-    workspaceId,
-    serialized,
-    "map-source",
-    "seed-default-wmts-tel-aviv",
-    "seeded new installation with Omniscale public WMTS QA default centered on Tel Aviv",
-    Number(current.revision ?? 0),
-  );
-  if (seeded.conflict) return readLocalWorkspace(workspaceId);
-  return readLocalWorkspace(workspaceId);
+  return {
+    ...current,
+    state: normalized,
+    revision: Number(current.revision ?? 0),
+  };
 }
 
 export async function GET(request: Request) {
