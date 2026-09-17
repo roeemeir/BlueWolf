@@ -39,20 +39,23 @@ function siRuntimeFromState(value: unknown): { templates: SyncTemplate[]; vehicl
 
 async function preparedLocalWorkspace(workspaceId: string) {
   const current = await readLocalWorkspace(workspaceId);
-  const prepared = await prepareTelAvivDemoWorkspace(current.state ?? DEFAULT_WORKSPACE);
+  // Never mutate an existing installation merely because it is read. Existing
+  // map choices and optimistic revisions are user-owned. The Tel Aviv WMTS QA
+  // profile is seeded only for a genuinely empty local installation.
+  if (current.state) return current;
+
+  const prepared = await prepareTelAvivDemoWorkspace(DEFAULT_WORKSPACE);
   const normalized = normalizeAndValidateWorkspaceState(prepared);
   const serialized = JSON.stringify(normalized);
-  if (current.state && JSON.stringify(current.state) === serialized) return current;
-
-  const migrated = await writeLocalWorkspace(
+  const seeded = await writeLocalWorkspace(
     workspaceId,
     serialized,
     "map-source",
-    "default-wmts-tel-aviv",
-    "migrated installation to Omniscale public WMTS QA default centered on Tel Aviv",
+    "seed-default-wmts-tel-aviv",
+    "seeded new installation with Omniscale public WMTS QA default centered on Tel Aviv",
     Number(current.revision ?? 0),
   );
-  if (migrated.conflict) return readLocalWorkspace(workspaceId);
+  if (seeded.conflict) return readLocalWorkspace(workspaceId);
   return readLocalWorkspace(workspaceId);
 }
 
