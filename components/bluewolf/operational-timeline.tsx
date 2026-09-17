@@ -74,6 +74,8 @@ export function OperationalTimeline({
   layers,
   cursor,
   onCursor,
+  smoothingSeconds,
+  onSmoothingSeconds,
   selectedVehicle,
   recomputeOverride,
 }: {
@@ -82,11 +84,12 @@ export function OperationalTimeline({
   layers: ScoreLayer[];
   cursor: number;
   onCursor: (value: number) => void;
+  smoothingSeconds: DisplaySmoothingSeconds;
+  onSmoothingSeconds: (value: DisplaySmoothingSeconds) => void;
   selectedVehicle?: number | null;
   recomputeOverride?: EventRecomputeResult | null;
 }) {
   const [windowMinutes, setWindowMinutes] = useState<OperatorTimelineWindowMinutes>(30);
-  const [smoothingSeconds, setSmoothingSeconds] = useState<DisplaySmoothingSeconds>(10);
   const [explicitGroupIds, setExplicitGroupIds] = useState<string[]>([]);
   const [cursorObservedAt, setCursorObservedAt] = useState<string | null>(() => currentOperatorCursor(serverId));
 
@@ -117,7 +120,7 @@ export function OperationalTimeline({
   const y = (score: number) => bottom - Math.max(0, Math.min(100, score)) / 100 * (bottom - top);
   const events = eventSpans(history, metadata).filter((span) => groupVisible(span.groupId, explicitGroupIds));
   const cursorFrame = cursorObservedAt
-    ? resolveOperatorCursorFrame(originalHistory, getRuntimeTrace(serverId, 90), cursorObservedAt)
+    ? resolveOperatorCursorFrame(displayHistory, getRuntimeTrace(serverId, 90), cursorObservedAt)
     : null;
 
   const toggleGroup = (groupId: string) => setExplicitGroupIds((current) => {
@@ -148,7 +151,7 @@ export function OperationalTimeline({
         {cursorObservedAt && <button type="button" className="active" aria-label="זמן היסטורי נבחר">{timeLabel(cursorObservedAt)}</button>}
       </div>
       <div className="segmented-control" aria-label="החלקת תצוגה בלבד">
-        {DISPLAY_SMOOTHING_OPTIONS_SECONDS.map((seconds) => <button type="button" key={seconds} className={smoothingSeconds === seconds ? "active" : ""} onClick={() => setSmoothingSeconds(seconds)}>{seconds === 0 ? "RAW" : `${seconds}ש׳`}</button>)}
+        {DISPLAY_SMOOTHING_OPTIONS_SECONDS.map((seconds) => <button type="button" key={seconds} className={smoothingSeconds === seconds ? "active" : ""} onClick={() => onSmoothingSeconds(seconds)}>{seconds === 0 ? "RAW" : `${seconds}ש׳`}</button>)}
       </div>
       <div className="segmented-control" aria-label="סינון קבוצות מפורש">
         <button type="button" className={explicitGroupIds.length === 0 ? "active" : ""} onClick={() => setExplicitGroupIds([])}>כל הקבוצות</button>
