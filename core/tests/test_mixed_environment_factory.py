@@ -17,6 +17,7 @@ from bluewolf_runtime_adapter.family_runtime import (
 )
 from bluewolf_runtime_adapter.operational_state import (
     CheckpointedOperationalRuntimeLoop,
+    LEGACY_OPERATIONAL_STATE_SCHEMA_VERSION,
     OPERATIONAL_STATE_SCHEMA_VERSION,
 )
 from bluewolf_runtime_adapter.service import RuntimeSnapshotStore
@@ -175,6 +176,40 @@ class SymmetricFamilyEnvironmentFactoryTests(unittest.TestCase):
             assert isinstance(host, FamilyRuntimeHost)
             self.assertIs(host.session, second.pipelines[0].coordinator.session)
             self.assertEqual(set(host.family_names), {"si", "so"})
+
+    def test_legacy_v1_so_first_checkpoint_migrates_into_symmetric_host(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "runtime-state.json"
+            config = _config(persistence_path=str(state_path))
+            environment = {"TEST_BLUEWOLF_INFLUX_TOKEN": "secret"}
+            with patch.dict(os.environ, environment, clear=False):
+                first = build_operational_runtime(config, RuntimeSnapshotStore())
+            assert isinstance(first, CheckpointedOperationalRuntimeLoop)
+            first.save_checkpoint()
+            v2 = json.loads(state_path.read_text(encoding="utf-8"))
+            server = v2["servers"][0]
+            family_state = server["producer"]
+            legacy = {
+                **v2,
+                "schemaVersion": LEGACY_OPERATIONAL_STATE_SCHEMA_VERSION,
+                "servers": [{
+                    **server,
+                    "producer": {
+                        "si": family_state["si"]["producer"],
+                        "so": family_state["so"]["producer"],
+                    },
+                    "liveRuntime": family_state["so"]["runtime"],
+                }],
+            }
+            state_path.write_text(json.dumps(legacy), encoding="utf-8")
+
+            with patch.dict(os.environ, environment, clear=False):
+                restored = build_operational_runtime(config, RuntimeSnapshotStore())
+            host = restored.pipelines[0].producer
+            self.assertIsInstance(host, FamilyRuntimeHost)
+            assert isinstance(host, FamilyRuntimeHost)
+            self.assertEqual(set(host.family_names), {"si", "so"})
+            self.assertFalse(hasattr(host, "runtime"))
 
     def test_so_only_configuration_still_uses_the_same_family_host(self) -> None:
         config = _config()
