@@ -1,0 +1,27 @@
+name: Blue Wolf BW-DATA-010 Latency
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: bw-data10-latency-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  active-update-latency:
+    name: Active Core-to-HTTP latency budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Python core/runtime
+        working-directory: core
+        run: python -m pip install -e '.[service,influx]'
+      - name: Verify <=10s active update budget
+        working-directory: core/tests
+        run: python -m unittest -v test_latency_budget
