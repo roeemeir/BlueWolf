@@ -47,3 +47,41 @@ test('BW-OFF-010 builds WMTS GetTile and bearer token is carried only in upstrea
   assert.equal(secured.headers.get('authorization'), 'Bearer secret-bearer-token');
   assert.doesNotMatch(secured.url.toString(), /secret-bearer-token/);
 });
+
+test('BW-OFF-010 path-token WMTS keeps key out of workspace/catalog and injects it upstream only', () => {
+  const placeholder = maps.DEFAULT_MAP_TOKEN_PATH_PLACEHOLDER;
+  const source = maps.normalizeMapSource({
+    id: 'wmts-path', name: 'WMTS path', kind: 'wmts',
+    baseUrl: `https://maps.example/v2/${placeholder}/WMTSCapabilities.xml`,
+    layer: 'osm', tileMatrixSet: 'webmercator', attribution: '', enabled: true, isDefault: true,
+    tokenMode: 'path', tokenPathPlaceholder: placeholder,
+  });
+  assert.match(source.baseUrl, new RegExp(placeholder));
+  assert.doesNotMatch(source.baseUrl, /secret-path-key/);
+
+  const securedCapabilities = maps.applyMapSourceToken(new URL(source.baseUrl), source, 'secret-path-key');
+  assert.match(securedCapabilities.url.pathname, /\/v2\/secret-path-key\/WMTSCapabilities\.xml$/);
+  assert.doesNotMatch(source.baseUrl, /secret-path-key/);
+
+  const discovered = {
+    version: '1.0.0',
+    getTileKvpUrls: ['https://maps.example/v2/secret-path-key/wmts'],
+    layers: [{
+      identifier: 'osm', styles: [{ identifier: 'default', isDefault: true }], formats: ['image/png'], tileMatrixSets: ['webmercator'],
+      resourceUrls: [{ format: 'image/png', resourceType: 'tile', template: 'https://maps.example/v2/secret-path-key/osm/{TileMatrix}/{TileCol}/{TileRow}.png' }],
+    }],
+    tileMatrixSets: [{ identifier: 'webmercator', supportedCrs: 'EPSG:3857', matrices: [] }],
+  };
+  const safeCatalog = maps.sanitizeWmtsCatalogToken(discovered, source, 'secret-path-key');
+  assert.doesNotMatch(JSON.stringify(safeCatalog), /secret-path-key/);
+  assert.match(JSON.stringify(safeCatalog), new RegExp(placeholder));
+
+  const tile = maps.buildWmtsUpstreamUrl({ ...source, wmtsCatalog: safeCatalog, wmtsLayers: [{ layer: 'osm', style: 'default', format: 'image/png', tileMatrixSet: 'webmercator', enabled: true, order: 0, opacity: 1 }] }, {
+    tileMatrix: '13', tileRow: 3324, tileCol: 4887,
+    layer: 'osm', style: 'default', format: 'image/png', tileMatrixSet: 'webmercator',
+    resourceTemplate: safeCatalog.layers[0].resourceUrls[0].template,
+  });
+  assert.match(tile.pathname, new RegExp(placeholder));
+  const securedTile = maps.applyMapSourceToken(tile, source, 'secret-path-key');
+  assert.match(securedTile.pathname, /\/v2\/secret-path-key\/osm\/13\/4887\/3324\.png$/);
+});
