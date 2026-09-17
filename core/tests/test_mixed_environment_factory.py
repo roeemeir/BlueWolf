@@ -8,11 +8,17 @@ import unittest
 from unittest.mock import patch
 
 from bluewolf_runtime_adapter.composite_producer import DiscardingRuntimeSnapshotStore
-from bluewolf_runtime_adapter.mixed_environment_factory import (
-    MixedRuntimeProducer,
-    build_operational_runtime,
+from bluewolf_runtime_adapter.family_environment_factory import build_operational_runtime
+from bluewolf_runtime_adapter.family_runtime import (
+    FAMILY_RUNTIME_STATE_SCHEMA_VERSION,
+    FamilyRuntimeHost,
+    SIFamilyRuntimeAdapter,
+    SOFamilyRuntimeAdapter,
 )
-from bluewolf_runtime_adapter.operational_state import CheckpointedOperationalRuntimeLoop
+from bluewolf_runtime_adapter.operational_state import (
+    CheckpointedOperationalRuntimeLoop,
+    OPERATIONAL_STATE_SCHEMA_VERSION,
+)
 from bluewolf_runtime_adapter.service import RuntimeSnapshotStore
 
 
@@ -102,37 +108,41 @@ def _config(*, persistence_path: str | None = None):
     return config
 
 
-class MixedEnvironmentFactoryTests(unittest.TestCase):
-    def test_si_configuration_upgrades_server_to_atomic_mixed_producer(self) -> None:
+class SymmetricFamilyEnvironmentFactoryTests(unittest.TestCase):
+    def test_si_and_so_are_first_class_sibling_families(self) -> None:
         store = RuntimeSnapshotStore()
         with patch.dict(os.environ, {"TEST_BLUEWOLF_INFLUX_TOKEN": "secret"}, clear=False):
             loop = build_operational_runtime(_config(), store)
 
         self.assertEqual(len(loop.pipelines), 1)
         pipeline = loop.pipelines[0]
-        producer = pipeline.producer
-        self.assertIsInstance(producer, MixedRuntimeProducer)
-        assert isinstance(producer, MixedRuntimeProducer)
-        self.assertIs(producer.store, store)
-        self.assertIs(producer.session, pipeline.coordinator.session)
-        self.assertIs(producer.so_producer.session, pipeline.coordinator.session)
-        self.assertIs(producer.si_producer.session, pipeline.coordinator.session)
-        self.assertIs(producer.runtime, producer.so_producer.runtime)
-        self.assertIsInstance(producer.so_producer.store, DiscardingRuntimeSnapshotStore)
-        self.assertIsInstance(producer.si_producer.store, DiscardingRuntimeSnapshotStore)
-        self.assertEqual(producer.si_producer.arena, "arena-a")
+        host = pipeline.producer
+        self.assertIsInstance(host, FamilyRuntimeHost)
+        assert isinstance(host, FamilyRuntimeHost)
+        self.assertEqual(set(host.family_names), {"si", "so"})
+        self.assertIs(host.store, store)
+        self.assertIs(host.session, pipeline.coordinator.session)
+        si = host.family("si")
+        so = host.family("so")
+        self.assertIsInstance(si, SIFamilyRuntimeAdapter)
+        self.assertIsInstance(so, SOFamilyRuntimeAdapter)
+        self.assertIs(si.session, pipeline.coordinator.session)
+        self.assertIs(so.session, pipeline.coordinator.session)
+        self.assertIsInstance(si.store, DiscardingRuntimeSnapshotStore)
+        self.assertIsInstance(so.store, DiscardingRuntimeSnapshotStore)
+        self.assertFalse(hasattr(host, "runtime"), "server host must not expose SO as preferred runtime")
 
-    def test_session_replacement_propagates_to_si_and_so_children(self) -> None:
+    def test_session_replacement_propagates_equally_to_all_families(self) -> None:
         with patch.dict(os.environ, {"TEST_BLUEWOLF_INFLUX_TOKEN": "secret"}, clear=False):
             loop = build_operational_runtime(_config(), RuntimeSnapshotStore())
-        producer = loop.pipelines[0].producer
-        assert isinstance(producer, MixedRuntimeProducer)
+        host = loop.pipelines[0].producer
+        assert isinstance(host, FamilyRuntimeHost)
         replacement = object()
-        producer.session = replacement
-        self.assertIs(producer.so_producer.session, replacement)
-        self.assertIs(producer.si_producer.session, replacement)
+        host.session = replacement
+        for name in host.family_names:
+            self.assertIs(host.family(name).session, replacement)
 
-    def test_checkpoint_roundtrip_keeps_so_runtime_and_namespaces_family_state(self) -> None:
+    def test_checkpoint_v2_namespaces_algorithm_state_inside_each_family(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             state_path = str(Path(directory) / "runtime-state.json")
             config = _config(persistence_path=state_path)
@@ -144,16 +154,39 @@ class MixedEnvironmentFactoryTests(unittest.TestCase):
             first.save_checkpoint()
 
             saved = json.loads(Path(state_path).read_text(encoding="utf-8"))
-            producer_state = saved["servers"][0]["producer"]
+            self.assertEqual(saved["schemaVersion"], OPERATIONAL_STATE_SCHEMA_VERSION)
+            server = saved["servers"][0]
+            self.assertNotIn("liveRuntime", server)
+            producer_state = server["producer"]
             self.assertEqual(set(producer_state), {"si", "so"})
-            self.assertIn("liveRuntime", saved["servers"][0])
+            for family in ("si", "so"):
+                self.assertEqual(
+                    producer_state[family]["schemaVersion"],
+                    FAMILY_RUNTIME_STATE_SCHEMA_VERSION,
+                )
+                self.assertEqual(producer_state[family]["family"], family)
+                self.assertIsInstance(producer_state[family]["producer"], dict)
+                self.assertIsInstance(producer_state[family]["runtime"], dict)
 
             with patch.dict(os.environ, environment, clear=False):
                 second = build_operational_runtime(config, RuntimeSnapshotStore())
-            self.assertIsInstance(second, CheckpointedOperationalRuntimeLoop)
-            producer = second.pipelines[0].producer
-            self.assertIsInstance(producer, MixedRuntimeProducer)
-            self.assertIs(producer.session, second.pipelines[0].coordinator.session)
+            host = second.pipelines[0].producer
+            self.assertIsInstance(host, FamilyRuntimeHost)
+            assert isinstance(host, FamilyRuntimeHost)
+            self.assertIs(host.session, second.pipelines[0].coordinator.session)
+            self.assertEqual(set(host.family_names), {"si", "so"})
+
+    def test_so_only_configuration_still_uses_the_same_family_host(self) -> None:
+        config = _config()
+        config.pop("siTemplates")
+        config.pop("siVehicleTypes")
+        with patch.dict(os.environ, {"TEST_BLUEWOLF_INFLUX_TOKEN": "secret"}, clear=False):
+            loop = build_operational_runtime(config, RuntimeSnapshotStore())
+        host = loop.pipelines[0].producer
+        self.assertIsInstance(host, FamilyRuntimeHost)
+        assert isinstance(host, FamilyRuntimeHost)
+        self.assertEqual(host.family_names, ("so",))
+        self.assertFalse(hasattr(host, "runtime"))
 
 
 if __name__ == "__main__":
