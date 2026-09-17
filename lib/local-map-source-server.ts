@@ -1,9 +1,11 @@
 import { ensureTelAvivDemoMapState } from "./default-map-profile";
+import { defaultPublicWmtsDemoToken } from "./default-map-profile-server";
 import { normalizeMapSources, type OperationalMapSource } from "./map-source-config";
 import {
   hasLocalMapSourceToken,
   readLocalMapSourceToken,
   readLocalWorkspace,
+  writeLocalMapSourceToken,
 } from "./sqlite-workspace";
 
 export const LOCAL_WORKSPACE_ID = "installation";
@@ -29,14 +31,25 @@ export async function localMapSource(sourceId: string): Promise<OperationalMapSo
 
 export async function localMapSourceSecret(source: OperationalMapSource) {
   if (source.tokenMode === "none") return null;
-  return readLocalMapSourceToken(LOCAL_WORKSPACE_ID, source.id);
+  const stored = await readLocalMapSourceToken(LOCAL_WORKSPACE_ID, source.id);
+  if (stored) return stored;
+
+  // The public Omniscale demo key is deliberately seeded through the same
+  // SQLite secret table as a private deployment key. This makes the default QA
+  // source exercise real server-side credential injection without putting the
+  // key in workspace JSON, client responses, reports or map cache keys.
+  const demo = defaultPublicWmtsDemoToken(source.id);
+  if (!demo) return null;
+  await writeLocalMapSourceToken(LOCAL_WORKSPACE_ID, source.id, demo);
+  return demo;
 }
 
 export async function localMapSourceTokenStatus(sourceId: string) {
   const source = await localMapSource(sourceId);
+  const persisted = source.tokenMode === "none" ? true : await hasLocalMapSourceToken(LOCAL_WORKSPACE_ID, source.id);
   return {
     sourceId: source.id,
     tokenMode: source.tokenMode,
-    configured: source.tokenMode === "none" ? true : await hasLocalMapSourceToken(LOCAL_WORKSPACE_ID, source.id),
+    configured: persisted || defaultPublicWmtsDemoToken(source.id) !== null,
   };
 }
