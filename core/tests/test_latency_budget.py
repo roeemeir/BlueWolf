@@ -78,8 +78,8 @@ def _sample(route: ClosedRoute, vehicle: int, phase: float, when: datetime) -> V
         active=True,
         latitude_deg=latitude,
         longitude_deg=longitude,
-        velocity_east_mps=(tangent_point.east_m - point.east_m) * scale,
-        velocity_north_mps=(tangent_point.north_m - point.north_m) * scale,
+        velocity_east_mps=(tangent_point.x_m - point.x_m) * scale,
+        velocity_north_mps=(tangent_point.y_m - point.y_m) * scale,
         reliability=1.0,
     )
 
