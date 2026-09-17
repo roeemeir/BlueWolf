@@ -1,0 +1,88 @@
+{
+  "vehicleTypes": [
+    {
+      "id": "storm",
+      "name": "Storm",
+      "minId": 100,
+      "maxId": 199,
+      "workSpeedKmh": 60,
+      "siRoles": ["outer"],
+      "icon": "rover",
+      "color": "#3366cc"
+    },
+    {
+      "id": "lightning",
+      "name": "Lightning",
+      "minId": 200,
+      "maxId": 299,
+      "workSpeedKmh": 60,
+      "siRoles": ["outer"],
+      "icon": "truck",
+      "color": "#cc6633"
+    }
+  ],
+  "workspaceTemplates": [
+    {
+      "id": "si-exact-120",
+      "family": "SI",
+      "name": "SI exact 120",
+      "mix": "Storm + Lightning",
+      "constellation": "outer 0/120",
+      "law": "coordinate placement",
+      "values": [120],
+      "isDefault": true,
+      "updatedAt": "2026-09-17T00:00:00.000Z",
+      "siPositions": [
+        { "typeId": "storm", "ring": "outer", "angleDeg": 0 },
+        { "typeId": "lightning", "ring": "outer", "angleDeg": 120 }
+      ]
+    },
+    {
+      "id": "si-changed-90",
+      "family": "SI",
+      "name": "SI changed 90",
+      "mix": "Storm + Lightning",
+      "constellation": "outer 0/90",
+      "law": "coordinate placement",
+      "values": [90],
+      "isDefault": false,
+      "updatedAt": "2026-09-17T00:00:00.000Z",
+      "siPositions": [
+        { "typeId": "storm", "ring": "outer", "angleDeg": 0 },
+        { "typeId": "lightning", "ring": "outer", "angleDeg": 90 }
+      ]
+    },
+    {
+      "id": "legacy-pair-only",
+      "family": "SI",
+      "name": "Legacy pair only",
+      "mix": "legacy",
+      "constellation": "legacy",
+      "law": "legacy pair law",
+      "values": [120],
+      "isDefault": false,
+      "updatedAt": "2026-09-17T00:00:00.000Z",
+      "siPairs": [{ "first": 0, "second": 1, "angle": 120 }]
+    }
+  ],
+  "expectedSiTemplates": [
+    {
+      "id": "si-exact-120",
+      "name": "SI exact 120",
+      "default": true,
+      "slots": [
+        { "id": "slot-1", "vehicleType": "storm", "routeRole": "outer", "phaseOffset": 0, "phaseSign": 1 },
+        { "id": "slot-2", "vehicleType": "lightning", "routeRole": "outer", "phaseOffset": 0.3333333333333333, "phaseSign": 1 }
+      ]
+    },
+    {
+      "id": "si-changed-90",
+      "name": "SI changed 90",
+      "default": false,
+      "slots": [
+        { "id": "slot-1", "vehicleType": "storm", "routeRole": "outer", "phaseOffset": 0, "phaseSign": 1 },
+        { "id": "slot-2", "vehicleType": "lightning", "routeRole": "outer", "phaseOffset": 0.25, "phaseSign": 1 }
+      ]
+    }
+  ]
+}
