@@ -8,13 +8,16 @@ const vite = await createServer({ appType: 'custom', configFile: false, root, re
 after(async () => { await vite.close(); });
 const profile = await vite.ssrLoadModule('/lib/default-map-profile.ts');
 
-test('BW-OFF-010 empty/demo workspace gets Omniscale WMTS as Tel Aviv default', () => {
+test('BW-OFF-010 empty/demo workspace gets Omniscale WMTS as Tel Aviv default without storing the API key', () => {
   const migrated = profile.ensureTelAvivDemoMapState({ mapServers: [], settings: { defaultMap: 'engineering' } });
   assert.equal(migrated.settings.defaultMap, profile.DEFAULT_PUBLIC_WMTS_SOURCE_ID);
   assert.equal(migrated.mapServers[0].id, profile.DEFAULT_PUBLIC_WMTS_SOURCE_ID);
   assert.equal(migrated.mapServers[0].kind, 'wmts');
   assert.equal(migrated.mapServers[0].isDefault, true);
-  assert.match(migrated.mapServers[0].baseUrl, /\/v2\/demo\/WMTSCapabilities\.xml$/);
+  assert.equal(migrated.mapServers[0].tokenMode, 'path');
+  assert.equal(migrated.mapServers[0].tokenPathPlaceholder, '{apiKey}');
+  assert.match(migrated.mapServers[0].baseUrl, /\/v2\/%7BapiKey%7D\/WMTSCapabilities\.xml$/i);
+  assert.doesNotMatch(JSON.stringify(migrated), /\/v2\/demo\//);
   const bounds = profile.telAvivDemoBounds();
   assert.ok(bounds.minLatitude < 32.0853 && bounds.maxLatitude > 32.0853);
   assert.ok(bounds.minLongitude < 34.7818 && bounds.maxLongitude > 34.7818);
