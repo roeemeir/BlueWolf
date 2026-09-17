@@ -1,7 +1,8 @@
 import { desc, eq, sql } from "drizzle-orm";
 
 import { auditEntries, workspaces } from "@/db/schema";
-import type { InfluxSettings, SyncTemplate, VehicleType } from "@/lib/bluewolf";
+import { DEFAULT_WORKSPACE, type InfluxSettings, type SyncTemplate, type VehicleType } from "@/lib/bluewolf";
+import { prepareTelAvivDemoWorkspace } from "@/lib/default-map-profile-server";
 import { readLocalWorkspace, writeLocalWorkspace } from "@/lib/sqlite-workspace";
 import { normalizeAndValidateWorkspaceState } from "@/lib/workspace-validation";
 
@@ -36,12 +37,31 @@ function siRuntimeFromState(value: unknown): { templates: SyncTemplate[]; vehicl
   return { templates: row.templates as SyncTemplate[], vehicleTypes: row.vehicleTypes as VehicleType[] };
 }
 
+async function preparedLocalWorkspace(workspaceId: string) {
+  const current = await readLocalWorkspace(workspaceId);
+  const prepared = await prepareTelAvivDemoWorkspace(current.state ?? DEFAULT_WORKSPACE);
+  const normalized = normalizeAndValidateWorkspaceState(prepared);
+  const serialized = JSON.stringify(normalized);
+  if (current.state && JSON.stringify(current.state) === serialized) return current;
+
+  const migrated = await writeLocalWorkspace(
+    workspaceId,
+    serialized,
+    "map-source",
+    "default-wmts-tel-aviv",
+    "migrated installation to Omniscale public WMTS QA default centered on Tel Aviv",
+    current.revision,
+  );
+  if (migrated.conflict) return readLocalWorkspace(workspaceId);
+  return readLocalWorkspace(workspaceId);
+}
+
 export async function GET(request: Request) {
   const workspaceId = getWorkspaceId(request);
   if (!workspaceId) return Response.json({ error: "workspace id is required" }, { status: 400 });
 
   try {
-    if (localStorage()) return Response.json(await readLocalWorkspace(workspaceId));
+    if (localStorage()) return Response.json(await preparedLocalWorkspace(workspaceId));
     const { getDb } = await import("@/db");
     const db = getDb();
     const [row] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
