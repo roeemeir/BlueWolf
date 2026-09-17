@@ -7,7 +7,8 @@ import {
 } from "./wmts-capabilities";
 
 export type MapSourceKind = "xyz" | "wms" | "wmts";
-export type MapTokenMode = "none" | "bearer" | "query";
+export type MapTokenMode = "none" | "bearer" | "query" | "path";
+export const DEFAULT_MAP_TOKEN_PATH_PLACEHOLDER = "__BLUEWOLF_MAP_TOKEN__";
 
 export type OperationalMapSource = {
   id: string;
@@ -25,6 +26,7 @@ export type OperationalMapSource = {
   tileMatrixSet?: string;
   tokenMode: MapTokenMode;
   tokenQueryParam?: string;
+  tokenPathPlaceholder?: string;
   wmtsCatalog?: WmtsCapabilitiesCatalog;
   wmtsLayers?: WmtsLayerSelection[];
 };
@@ -104,11 +106,17 @@ export function normalizeMapSource(value: unknown, index = 0): OperationalMapSou
   const legacyUrl = row.baseUrl ?? row.urlTemplate;
   const baseUrl = mapBaseUrl(legacyUrl, kind, `map source ${id} URL`);
   const tokenModeRaw = row.tokenMode ?? "none";
-  if (tokenModeRaw !== "none" && tokenModeRaw !== "bearer" && tokenModeRaw !== "query") throw new Error(`map source ${id} has unsupported token mode`);
+  if (tokenModeRaw !== "none" && tokenModeRaw !== "bearer" && tokenModeRaw !== "query" && tokenModeRaw !== "path") throw new Error(`map source ${id} has unsupported token mode`);
   const tokenMode = tokenModeRaw as MapTokenMode;
   const tokenQueryParam = optionalText(row.tokenQueryParam);
+  const tokenPathPlaceholder = optionalText(row.tokenPathPlaceholder) ?? (tokenMode === "path" ? DEFAULT_MAP_TOKEN_PATH_PLACEHOLDER : undefined);
   if (tokenMode === "query") {
     if (!tokenQueryParam || !/^[A-Za-z0-9_.-]{1,64}$/.test(tokenQueryParam)) throw new Error(`map source ${id} query-token parameter is invalid`);
+  }
+  if (tokenMode === "path") {
+    if (!tokenPathPlaceholder || !/^[A-Za-z0-9_.~-]{3,80}$/.test(tokenPathPlaceholder)) throw new Error(`map source ${id} path-token placeholder is invalid`);
+    const parsed = new URL(baseUrl);
+    if (!parsed.pathname.includes(tokenPathPlaceholder)) throw new Error(`map source ${id} path-token URL must contain ${tokenPathPlaceholder}`);
   }
   const layer = optionalText(row.layer);
   const tileMatrixSet = optionalText(row.tileMatrixSet);
@@ -138,6 +146,7 @@ export function normalizeMapSource(value: unknown, index = 0): OperationalMapSou
     tileMatrixSet,
     tokenMode,
     tokenQueryParam,
+    tokenPathPlaceholder,
     wmtsCatalog,
     wmtsLayers,
   };
@@ -290,11 +299,42 @@ export function buildXyzUpstreamUrl(source: OperationalMapSource, z: number, x: 
   return parsedHttpUrl(raw, "XYZ tile URL");
 }
 
+function replaceSecretInUrl(raw: string, token: string, placeholder: string) {
+  return raw.replaceAll(token, placeholder).replaceAll(encodeURIComponent(token), placeholder);
+}
+
+export function sanitizeWmtsCatalogToken(
+  catalog: WmtsCapabilitiesCatalog,
+  source: OperationalMapSource,
+  token: string | null,
+): WmtsCapabilitiesCatalog {
+  if (source.tokenMode !== "path" || !token) return catalog;
+  const placeholder = source.tokenPathPlaceholder ?? DEFAULT_MAP_TOKEN_PATH_PLACEHOLDER;
+  return {
+    ...catalog,
+    getTileKvpUrls: catalog.getTileKvpUrls.map((url) => replaceSecretInUrl(url, token, placeholder)),
+    layers: catalog.layers.map((layer) => ({
+      ...layer,
+      resourceUrls: layer.resourceUrls.map((resource) => ({
+        ...resource,
+        template: replaceSecretInUrl(resource.template, token, placeholder),
+      })),
+    })),
+  };
+}
+
 export function applyMapSourceToken(url: URL, source: OperationalMapSource, token: string | null) {
   const headers = new Headers();
   if (source.tokenMode === "none") return { url, headers };
   if (!token) throw new Error(`map source ${source.id} requires a configured token`);
-  if (source.tokenMode === "bearer") headers.set("authorization", `Bearer ${token}`);
-  else url.searchParams.set(source.tokenQueryParam ?? "token", token);
+  if (source.tokenMode === "bearer") {
+    headers.set("authorization", `Bearer ${token}`);
+  } else if (source.tokenMode === "query") {
+    url.searchParams.set(source.tokenQueryParam ?? "token", token);
+  } else {
+    const placeholder = source.tokenPathPlaceholder ?? DEFAULT_MAP_TOKEN_PATH_PLACEHOLDER;
+    if (!url.pathname.includes(placeholder)) throw new Error(`map source ${source.id} URL is missing path-token placeholder`);
+    url.pathname = url.pathname.replaceAll(placeholder, encodeURIComponent(token));
+  }
   return { url, headers };
 }
