@@ -1,3 +1,5 @@
+import { telAvivDemoBounds } from "./default-map-profile";
+
 export type OperationalProjectionMode = "local-wgs84" | "webmercator";
 export type GeoPoint = { latitude: number; longitude: number };
 export type ScreenPoint = { x: number; y: number };
@@ -44,8 +46,16 @@ export function createOperationalProjection(
   mode: OperationalProjectionMode,
 ): OperationalProjection {
   if (!rows.length) {
-    const center = { x: width / 2, y: height / 2 };
-    return { mode, empty: true, project: () => center, worldToScreen: () => center, viewWorldBounds: null, viewGeoBounds: null };
+    const bounds = telAvivDemoBounds();
+    const fallbackRows = [
+      { latitude: bounds.minLatitude, longitude: bounds.minLongitude },
+      { latitude: bounds.minLatitude, longitude: bounds.maxLongitude },
+      { latitude: bounds.maxLatitude, longitude: bounds.minLongitude },
+      { latitude: bounds.maxLatitude, longitude: bounds.maxLongitude },
+    ];
+    // The operational map still reports "no WGS84 evidence" in its overlay;
+    // only the basemap viewport gets a deterministic Tel Aviv QA frame.
+    return createOperationalProjection(fallbackRows, width, height, marginX, marginY, mode);
   }
   const midLatitude = rows.reduce((sum, row) => sum + row.latitude, 0) / rows.length;
   const longitudeScale = Math.max(0.15, Math.cos(midLatitude * Math.PI / 180));
