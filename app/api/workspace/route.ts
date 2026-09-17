@@ -1,7 +1,7 @@
 import { desc, eq, sql } from "drizzle-orm";
 
 import { auditEntries, workspaces } from "@/db/schema";
-import type { InfluxSettings } from "@/lib/bluewolf";
+import type { InfluxSettings, SyncTemplate, VehicleType } from "@/lib/bluewolf";
 import { readLocalWorkspace, writeLocalWorkspace } from "@/lib/sqlite-workspace";
 import { normalizeAndValidateWorkspaceState } from "@/lib/workspace-validation";
 
@@ -26,6 +26,17 @@ function errorMessage(error: unknown) {
 function influxFromState(value: unknown): InfluxSettings {
   if (!value || typeof value !== "object" || Array.isArray(value) || !("influx" in value)) throw new Error("influx settings are missing from workspace");
   return (value as { influx: InfluxSettings }).influx;
+}
+
+function siTemplatesFromState(value: unknown): { templates: SyncTemplate[]; vehicleTypes: VehicleType[] } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("workspace state is missing");
+  const row = value as { templates?: unknown; vehicleTypes?: unknown };
+  if (!Array.isArray(row.templates)) throw new Error("workspace templates are missing");
+  if (!Array.isArray(row.vehicleTypes)) throw new Error("workspace vehicle types are missing");
+  return {
+    templates: row.templates as SyncTemplate[],
+    vehicleTypes: row.vehicleTypes as VehicleType[],
+  };
 }
 
 export async function GET(request: Request) {
@@ -56,12 +67,21 @@ export async function PUT(request: Request) {
 
     if (localStorage()) {
       let runtimeSync = null;
-      if ((body.category ?? "") === "influx") {
+      const category = body.category ?? "";
+      if (category === "influx") {
         try {
           const { syncInfluxToOperationalConfig } = await import("@/lib/influx-runtime-sync");
           runtimeSync = await syncInfluxToOperationalConfig(influxFromState(normalizedState));
         } catch (error) {
           return Response.json({ error: `Influx runtime config sync failed: ${errorMessage(error)}` }, { status: 502 });
+        }
+      } else if (category === "templates") {
+        try {
+          const { syncSiTemplatesToOperationalConfig } = await import("@/lib/si-runtime-sync");
+          const { templates, vehicleTypes } = siTemplatesFromState(normalizedState);
+          runtimeSync = await syncSiTemplatesToOperationalConfig(templates, vehicleTypes);
+        } catch (error) {
+          return Response.json({ error: `SI template runtime config sync failed: ${errorMessage(error)}` }, { status: 502 });
         }
       }
       const result = await writeLocalWorkspace(workspaceId, state, (body.category ?? "configuration").slice(0,40), (body.action ?? "save").slice(0,80), (body.detail ?? "").slice(0,500), body.expectedRevision);
