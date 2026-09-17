@@ -111,6 +111,8 @@ function validateMapSources(state: JsonObject) {
     tileMatrixSet: source.tileMatrixSet,
     tokenMode: source.tokenMode,
     tokenQueryParam: source.tokenQueryParam,
+    wmtsCatalog: source.wmtsCatalog,
+    wmtsLayers: source.wmtsLayers,
   }));
 }
 
@@ -123,9 +125,9 @@ function validateMapSources(state: JsonObject) {
  * BW-DATA-010 is enforced across join tolerance, active polling and UI refresh
  * so a saved operational configuration cannot silently exceed the 10s nominal
  * live-display latency budget.
- * BW-OFF-010 map source metadata is normalized here, while map tokens are
- * deliberately rejected from workspace JSON and live only in local server-side
- * secret storage.
+ * BW-OFF-010 map source metadata, discovered capabilities and default layer
+ * selections are normalized here, while private map tokens are deliberately
+ * rejected from workspace JSON and live only in local server-side secret storage.
  * BW-SYNC-012 coordinate-authored SI templates are validated against the same
  * 30-degree/ring/type rules used by the editor before they may become persisted
  * runtime truth. Legacy SI templates without siPositions remain readable but are
