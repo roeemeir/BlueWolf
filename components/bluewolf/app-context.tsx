@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { toast } from "sonner";
 
 import { DEFAULT_INFLUX_MAPPINGS, DEFAULT_WORKSPACE, type InfluxFieldMapping, type WorkspaceState } from "@/lib/bluewolf";
+import { ensureTelAvivDemoMapState } from "@/lib/default-map-profile";
 
 type StorageMode = "cloud" | "local";
 type RuntimeSyncStatus = { synced: boolean; restartRequired: boolean; reason?: string } | null;
@@ -21,14 +22,19 @@ type WorkspaceContextValue = {
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
+function defaultWorkspace(): WorkspaceState {
+  return ensureTelAvivDemoMapState(structuredClone(DEFAULT_WORKSPACE)) as WorkspaceState;
+}
+
 function hydrateState(value: Partial<WorkspaceState> | null | undefined): WorkspaceState {
-  if (!value) return structuredClone(DEFAULT_WORKSPACE);
+  const defaults = defaultWorkspace();
+  if (!value) return defaults;
   const incomingMappings = value.influx?.mappings;
   const mappings: InfluxFieldMapping[] = Array.isArray(incomingMappings)
     ? DEFAULT_INFLUX_MAPPINGS.map((fallback) => ({ ...fallback, ...(incomingMappings.find((item) => item.systemKey === fallback.systemKey) ?? {}) }))
     : DEFAULT_INFLUX_MAPPINGS;
   return {
-    ...structuredClone(DEFAULT_WORKSPACE),
+    ...defaults,
     ...value,
     weights: {
       sync: { ...DEFAULT_WORKSPACE.weights.sync, ...value.weights?.sync },
@@ -37,7 +43,7 @@ function hydrateState(value: Partial<WorkspaceState> | null | undefined): Worksp
     },
     thresholds: { ...DEFAULT_WORKSPACE.thresholds, ...value.thresholds },
     influx: { ...DEFAULT_WORKSPACE.influx, ...value.influx, stream: { ...DEFAULT_WORKSPACE.influx.stream, ...value.influx?.stream }, mappings },
-    mapServers: value.mapServers?.length ? value.mapServers : structuredClone(DEFAULT_WORKSPACE.mapServers),
+    mapServers: value.mapServers?.length ? value.mapServers : structuredClone(defaults.mapServers),
     activeTemplateOverrides: { ...DEFAULT_WORKSPACE.activeTemplateOverrides, ...value.activeTemplateOverrides },
     templateApplications: { ...DEFAULT_WORKSPACE.templateApplications, ...value.templateApplications },
     servers: value.servers?.map((server, index) => ({ ...DEFAULT_WORKSPACE.servers[index % DEFAULT_WORKSPACE.servers.length], ...server })) ?? structuredClone(DEFAULT_WORKSPACE.servers),
@@ -46,7 +52,7 @@ function hydrateState(value: Partial<WorkspaceState> | null | undefined): Worksp
     routes: value.routes?.map((route, index) => ({ ...DEFAULT_WORKSPACE.routes[index % DEFAULT_WORKSPACE.routes.length], ...route })) ?? structuredClone(DEFAULT_WORKSPACE.routes),
     templates: value.templates?.map((template) => ({ ...template })) ?? structuredClone(DEFAULT_WORKSPACE.templates),
     gtSegments: value.gtSegments?.map((segment, index) => ({ ...DEFAULT_WORKSPACE.gtSegments[index % DEFAULT_WORKSPACE.gtSegments.length], ...segment })) ?? structuredClone(DEFAULT_WORKSPACE.gtSegments),
-    settings: { ...DEFAULT_WORKSPACE.settings, ...value.settings },
+    settings: { ...defaults.settings, ...value.settings },
     investigationEdits: { ...DEFAULT_WORKSPACE.investigationEdits, ...value.investigationEdits },
   };
 }
@@ -63,7 +69,7 @@ function getWorkspaceId() {
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<WorkspaceState>(() => structuredClone(DEFAULT_WORKSPACE));
+  const [state, setState] = useState<WorkspaceState>(() => defaultWorkspace());
   const [ready, setReady] = useState(false);
   const [loadProgress, setLoadProgress] = useState(8);
   const [storageMode, setStorageMode] = useState<StorageMode>("local");
@@ -93,6 +99,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         if (fallback) {
           try { setState(hydrateState(JSON.parse(fallback))); } catch { setState(hydrateState(null)); }
+        } else {
+          setState(hydrateState(null));
         }
         setStorageMode("local");
       } finally {
@@ -120,8 +128,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (!response.ok) throw new Error("save failed");
       const payload = await response.json() as { revision?: number; runtimeSync?: RuntimeSyncStatus };
       setState(next);
-      // The server has committed. A disabled/full browser cache must not turn
-      // a successful save into a reported failure or leave the revision stale.
       try {
         window.localStorage.setItem("bluewolf-workspace-state", JSON.stringify({ ...next, influx: { ...next.influx, token: "" } }));
       } catch {
