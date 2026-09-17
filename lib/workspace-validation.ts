@@ -1,7 +1,8 @@
-import type { InfluxSettings, VehicleType } from "./bluewolf";
+import type { InfluxSettings, SyncTemplate, VehicleType } from "./bluewolf";
 import { validateInfluxSettings, validateLiveLatencyBudget } from "./influx-runtime-config";
 import { normalizeMapSources } from "./map-source-config";
 import { formatRouteWkt, parseRouteWkt } from "./route-wkt";
+import { operationalSiTemplates } from "./si-runtime-config";
 import { validateVehicleIdRanges } from "./vehicle-id-ranges";
 
 type JsonObject = Record<string, unknown>;
@@ -78,6 +79,16 @@ function validateMapSources(state: JsonObject) {
   }));
 }
 
+function validateSiTemplates(state: JsonObject) {
+  if (state.templates === undefined || state.vehicleTypes === undefined) return;
+  if (!Array.isArray(state.templates)) throw new Error("templates must be an array");
+  if (!Array.isArray(state.vehicleTypes)) throw new Error("vehicleTypes must be an array");
+  operationalSiTemplates(
+    state.templates as SyncTemplate[],
+    state.vehicleTypes as VehicleType[],
+  );
+}
+
 /**
  * Server-side canonicalization/validation before either SQLite or D1 persistence.
  * Legacy non-WKT route sentinels remain readable during migration, while every
@@ -90,6 +101,9 @@ function validateMapSources(state: JsonObject) {
  * BW-OFF-010 map source metadata is normalized here, while map tokens are
  * deliberately rejected from workspace JSON and live only in local server-side
  * secret storage.
+ * BW-SYNC-012 coordinate SI templates are validated against the same converter
+ * used for operational runtime synchronization before either storage backend can
+ * accept them.
  */
 export function normalizeAndValidateWorkspaceState(value: unknown): unknown {
   if (!isObject(value)) throw new Error("workspace state must be an object");
@@ -99,5 +113,6 @@ export function normalizeAndValidateWorkspaceState(value: unknown): unknown {
   validateInflux(state);
   validateLatencyBudget(state);
   validateMapSources(state);
+  validateSiTemplates(state);
   return state;
 }
