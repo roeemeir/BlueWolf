@@ -128,13 +128,14 @@ const VERIFIED = {
   'BW-OFF-005': ['components/bluewolf/route-bank-wkt-workbench.tsx', 'scripts/verify_wkt_browser_e2e.py'],
   'BW-OFF-006': ['scripts/verify-offline-http.mjs', '.github/workflows/wkt-e2e.yml'],
   'BW-OFF-009': ['.github/workflows/off09-workday.yml', 'scripts/verify-offline-http.mjs'],
-  'BW-OFF-010': ['lib/wmts-capabilities.ts', 'app/api/map-sources/capabilities/route.ts', 'tests/wmts-capabilities.test.mjs', 'tests/map-source-ui.test.mjs', '.github/workflows/off10-map-sources.yml'],
+  'BW-OFF-010': ['lib/wmts-capabilities.ts', 'lib/map-source-config.ts', 'lib/default-map-profile.ts', 'app/api/map-sources/capabilities/route.ts', 'tests/wmts-capabilities.test.mjs', 'tests/map-source-config.test.mjs', 'tests/default-map-profile.test.mjs', 'scripts/verify-omniscale-wmts.mjs', '.github/workflows/off10-map-sources.yml'],
   'BW-OFF-011': ['app/api/workspace/scope/route.ts', 'tests/workspace-scopes.test.mjs'],
   'BW-OFF-012': ['lib/sqlite-migrations.ts', 'tests/sqlite-migrations.test.mjs', '.github/workflows/off12-migrations.yml'],
   'BW-SYNC-003': ['lib/si-direct-placement.ts', 'components/bluewolf/si-template-governance-workbench.tsx', 'tests/si-direct-template-ui.test.mjs'],
   'BW-SYNC-009': ['core/src/bluewolf_core/event_recompute.py', 'tests/investigation-contract.test.mjs'],
   'BW-SYNC-010': ['core/src/bluewolf_core/event_recompute.py', 'core/tests/test_event_recompute.py'],
   'BW-SYNC-011': ['core/src/bluewolf_core/event_recompute.py', 'lib/investigation-contract.ts'],
+  'BW-SYNC-012': ['lib/si-runtime-sync.ts', 'core/src/bluewolf_runtime_adapter/si_template_config.py', 'core/src/bluewolf_runtime_adapter/si_producer.py', 'core/tests/test_si_producer.py', '.github/workflows/si-live-runtime.yml'],
   'BW-SYNC-013': ['lib/display-score-smoothing.ts', 'tests/display-score-smoothing.test.mjs', 'components/bluewolf/operational-timeline.tsx'],
   'BW-UI-005': ['lib/operator-time-cursor.ts', 'components/bluewolf/operational-timeline.tsx', 'components/bluewolf/operational-live-map.tsx', 'tests/operator-time-cursor.test.mjs', 'tests/operator-time-cursor-ui.test.mjs'],
   'BW-UI-006': ['app/api/investigation/events/route.ts', 'tests/investigation-contract.test.mjs'],
@@ -164,6 +165,7 @@ const VERIFIED = {
   'BANK-01': ['components/bluewolf/route-bank-wkt-workbench.tsx', 'lib/route-bank-geometry.ts', 'tests/route-bank-wkt.test.mjs', 'scripts/verify_wkt_browser_e2e.py'],
   'TEST-01': ['core/src/bluewolf_runtime_adapter/qa_runner.py', 'core/tests/test_qa_service.py'],
   'ARCH-01': ['scripts/start-offline.mjs', 'lib/sqlite-workspace.ts', '.github/workflows/ci.yml'],
+  'ARCH-02': ['core/src/bluewolf_runtime_adapter/family_environment_factory.py', 'core/src/bluewolf_runtime_adapter/family_runtime.py', 'core/src/bluewolf_runtime_adapter/runtime_config_common.py', 'core/src/bluewolf_runtime_adapter/so_family_config.py', 'core/tests/test_family_runtime_symmetry.py', '.github/workflows/si-live-runtime.yml'],
   'PROC-01': ['scripts/build-current-head-audit.mjs', 'scripts/verify-full-requirements-registry.mjs', '.github/workflows/release-gate.yml', 'tests/current-head-audit.test.mjs'],
   'OP-01': ['components/bluewolf/operator-view.tsx', 'tests/op01-arena-presentation.test.mjs'],
   'OP-02': ['components/bluewolf/operational-live-map.tsx', 'tests/op02-map-layers.test.mjs', '.github/workflows/op02-map.yml'],
@@ -288,7 +290,7 @@ if (invoked) {
     const yes = Object.values(audit.requirements).filter((row) => row.implementation === 'yes').length;
     const partial = Object.values(audit.requirements).filter((row) => row.implementation === 'partial').length;
     const no = Object.values(audit.requirements).filter((row) => row.implementation === 'no').length;
-    console.log(`AUDIT BUILT: ${audit.requirementCount}/142 rows · yes=${yes} partial=${partial} no=${no} · head=${headSha}`);
+    console.log(`AUDIT BUILT: ${audit.requirementCount} rows · yes=${yes} partial=${partial} no=${no} · head=${headSha}`);
   } catch (error) {
     console.error(`AUDIT BUILD FAILED: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
