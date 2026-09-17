@@ -1,6 +1,6 @@
 """Compose independent family producers into one atomic live snapshot.
 
-SI and SO keep separate scoring/lifecycle implementations.  This adapter merges
+SI and SO keep separate scoring/lifecycle implementations. This adapter merges
 their already-validated payloads and publishes once, preventing one family from
 overwriting the other in ``RuntimeSnapshotStore``.
 """
@@ -66,6 +66,27 @@ class CompositeRuntimeProducer:
         }
 
     def restore_state(self, state: Mapping[str, object]) -> None:
+        """Restore namespaced family state and accept the pre-SI SO-only shape.
+
+        Before the composite runtime existed, the producer checkpoint was the SO
+        producer dictionary itself (for example ``structurally_active_group_ids``).
+        Treat that exact legacy shape as the ``so`` child only; SI starts from a
+        safe warm-up state. This keeps existing offline checkpoints readable and
+        avoids silently assigning old SO lifecycle state to the new SI scorer.
+        """
+        names = {name for name, _ in self.producers}
+        is_legacy_so_state = (
+            "so" in names
+            and "so" not in state
+            and "si" not in state
+            and "structurally_active_group_ids" in state
+        )
+        if is_legacy_so_state:
+            for name, producer in self.producers:
+                if name == "so" and hasattr(producer, "restore_state"):
+                    producer.restore_state(state)
+            return
+
         for name, producer in self.producers:
             raw = state.get(name)
             if raw is None:
