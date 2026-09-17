@@ -7,7 +7,11 @@ const vite = await createServer({ appType: "custom", configFile: false, root, re
 after(async () => { await vite.close(); });
 
 const { DEFAULT_WORKSPACE } = await vite.ssrLoadModule("/lib/bluewolf.ts");
-const { buildOperationalSiTemplateConfig, operationalSiTemplates } = await vite.ssrLoadModule("/lib/si-runtime-config.ts");
+const {
+  buildOperationalSiTemplateConfig,
+  operationalSiTemplates,
+  operationalSiVehicleTypes,
+} = await vite.ssrLoadModule("/lib/si-runtime-config.ts");
 
 function coordinateTemplate(id, positions, isDefault = false) {
   return {
@@ -37,6 +41,20 @@ test("BW-SYNC-012 converts saved SI coordinates into deterministic Core phase of
   assert.deepEqual(output[0].slots.map((slot) => slot.phaseOffset).sort((a, b) => a - b), [0, 1 / 3]);
   assert.deepEqual(new Set(output[0].slots.map((slot) => slot.routeRole)), new Set([first.siRoles[0], second.siRoles[0]]));
   assert.deepEqual(new Set(output[0].slots.map((slot) => slot.vehicleType)), new Set([first.id, second.id]));
+});
+
+test("BW-SYNC-012 exports deterministic SI vehicle profiles for automatic live-group binding", () => {
+  const output = operationalSiVehicleTypes(DEFAULT_WORKSPACE.vehicleTypes);
+  assert.equal(output.length, DEFAULT_WORKSPACE.vehicleTypes.length);
+  assert.deepEqual(output.map((item) => item.minId), [...output.map((item) => item.minId)].sort((a, b) => a - b));
+  for (const item of output) {
+    const source = DEFAULT_WORKSPACE.vehicleTypes.find((type) => type.id === item.id);
+    assert.ok(source);
+    assert.equal(item.minId, source.minId);
+    assert.equal(item.maxId, source.maxId);
+    assert.equal(item.workSpeedMps, source.workSpeedKmh / 3.6);
+    assert.deepEqual(new Set(item.siRoles), new Set(source.siRoles));
+  }
 });
 
 test("BW-SYNC-012 operational SI serialization is independent of click/insertion order", () => {
@@ -92,4 +110,5 @@ test("BW-SYNC-012 SI runtime update preserves unrelated operational and SO confi
   assert.deepEqual(output.servers, existing.servers);
   assert.deepEqual(output.unrelated, existing.unrelated);
   assert.equal(output.siTemplates[0].id, "si-new");
+  assert.equal(output.siVehicleTypes.length, DEFAULT_WORKSPACE.vehicleTypes.length);
 });
