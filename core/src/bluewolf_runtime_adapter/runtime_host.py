@@ -23,7 +23,7 @@ from .si_template_config import parse_si_templates
 
 
 _BUILTIN_CONFIG_FACTORY = (
-    "bluewolf_runtime_adapter.environment_factory:"
+    "bluewolf_runtime_adapter.mixed_environment_factory:"
     "build_operational_runtime_from_environment"
 )
 
