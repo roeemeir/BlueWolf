@@ -18,8 +18,16 @@ from bluewolf_core.semantic_session import CoreSession
 from bluewolf_core.so_template_selection import SOTemplateSelectionRegistry
 from bluewolf_ingest import ServerPollCursor
 
-from .environment_factory import (
-    _binding_resolver,
+from .family_runtime import (
+    FamilyRuntimeHost,
+    SIFamilyRuntimeAdapter,
+    SOFamilyRuntimeAdapter,
+)
+from .ingest_coordinator import LiveCoreIngestCoordinator
+from .operational_pipeline import OperationalRuntimeLoop, OperationalServerPipeline
+from .operational_state import AtomicOperationalStateStore, CheckpointedOperationalRuntimeLoop
+from .producer import LiveRuntimeProducer
+from .runtime_config_common import (
     _config_fingerprint,
     _connection_and_reader,
     _displayed_score_resolver,
@@ -30,26 +38,16 @@ from .environment_factory import (
     _poll_config,
     _sample_archive,
     _server_awake_at_latest_snapshot,
-    _template_bank,
     _text,
     load_operational_config,
 )
-from .family_runtime import (
-    FamilyRuntimeHost,
-    SIFamilyRuntimeAdapter,
-    SOFamilyRuntimeAdapter,
-)
-from .ingest_coordinator import LiveCoreIngestCoordinator
-from .operational_pipeline import OperationalRuntimeLoop, OperationalServerPipeline
-from .operational_state import AtomicOperationalStateStore, CheckpointedOperationalRuntimeLoop
-from .producer import LiveRuntimeProducer
-from .service import RuntimeSnapshotStore
 from .si_producer import LiveSIRuntimeProducer
 from .si_template_config import (
     parse_si_templates,
     parse_si_vehicle_types,
     validate_si_runtime_configuration,
 )
+from .so_family_config import binding_resolver, template_bank
 
 
 def _server_arena(raw_server: object) -> str:
@@ -79,7 +77,7 @@ def build_operational_runtime(
 ) -> OperationalRuntimeLoop:
     """Build every server through one family-neutral composition path."""
     raw_so_templates = _list(config.get("templates", []), "templates")
-    so_bank = _template_bank(config) if raw_so_templates else None
+    so_bank = template_bank(config) if raw_so_templates else None
 
     si_templates = parse_si_templates(config.get("siTemplates"))
     si_vehicle_types = parse_si_vehicle_types(config.get("siVehicleTypes"))
@@ -136,7 +134,7 @@ def build_operational_runtime(
                 session=session,
                 runtime=so_runtime,
                 store=store,
-                binding_resolver=_binding_resolver(server),
+                binding_resolver=binding_resolver(server),
                 displayed_score_resolver=displayed_score_resolver,
             )
             families.append(SOFamilyRuntimeAdapter(so_producer))
