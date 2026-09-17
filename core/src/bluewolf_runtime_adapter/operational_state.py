@@ -1,20 +1,9 @@
-"""Atomic restart continuity for the process-local operational runtime.
+"""Atomic restart continuity for the operational runtime.
 
-A checkpoint contains only deterministic runtime state and the published live
-runtime cache. Secrets are never persisted. A configuration fingerprint
-prevents a watermark/session from being restored under a different Influx
-mapping, server tag, template bank or operational binding.
-
-``runtimeHistory`` is an optional V1 extension. Older V1 checkpoints that only
-contain ``runtimeSnapshot`` remain valid; newer checkpoints restore bounded
-operator history before the latest snapshot so a process restart does not reset
-the live timeline. History rows may be compact history points or legacy full
-live-runtime snapshots; stores that expose ``restore_history`` own that migration.
-
-Checkpoint writes are cadence-limited. The first state-changing tick is saved
-immediately; subsequent changes are marked dirty and written no more often than
-the configured interval. A graceful host shutdown calls ``flush_checkpoint`` so
-pending state is not lost merely because the interval has not elapsed yet.
+The canonical V2 checkpoint stores family runtime state only through the
+producer's namespaced family contract. SI and SO therefore have the same outer
+checkpoint lifecycle. V1 SO-first checkpoints remain readable for migration,
+but new first-class family runtimes never write a server-level ``liveRuntime``.
 """
 from __future__ import annotations
 
@@ -33,7 +22,8 @@ from bluewolf_core.live_so_event_runtime import LiveSOEventRuntime
 from .operational_pipeline import OperationalRuntimeLoop, OperationalServerPipeline, OperationalTick
 
 
-OPERATIONAL_STATE_SCHEMA_VERSION = "bluewolf.operational-state.v1"
+OPERATIONAL_STATE_SCHEMA_VERSION = "bluewolf.operational-state.v2"
+LEGACY_OPERATIONAL_STATE_SCHEMA_VERSION = "bluewolf.operational-state.v1"
 DEFAULT_CHECKPOINT_INTERVAL_SECONDS = 300.0
 
 
@@ -120,23 +110,45 @@ def _runtime_history(pipeline: OperationalServerPipeline) -> list[dict[str, Any]
     return output
 
 
-def _server_state(pipeline: OperationalServerPipeline) -> dict[str, Any]:
-    coordinator = pipeline.coordinator
-    producer = pipeline.producer
-    checkpoint = coordinator.session.export_checkpoint()
+def _core_session_state(pipeline: OperationalServerPipeline) -> dict[str, Any]:
+    checkpoint = pipeline.coordinator.session.export_checkpoint()
     try:
-        core_session = json.loads(checkpoint.decode("utf-8"))
+        value = json.loads(checkpoint.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("CoreSession checkpoint is not JSON") from exc
-    snapshot = producer.store.get(str(pipeline.server_id))
+    if not isinstance(value, dict):
+        raise ValueError("CoreSession checkpoint must be an object")
+    return value
+
+
+def _server_state_v2(pipeline: OperationalServerPipeline) -> dict[str, Any]:
+    producer = pipeline.producer
+    if not hasattr(producer, "family_names"):
+        raise ValueError("V2 operational checkpoint requires a family runtime host")
     return {
         "serverId": pipeline.server_id,
-        "coreSession": core_session,
-        "cursor": coordinator.cursor.export_state(),
-        "liveRuntime": producer.runtime.export_state(),
+        "coreSession": _core_session_state(pipeline),
+        "cursor": pipeline.coordinator.cursor.export_state(),
         "producer": producer.export_state(),
         "runtimeHistory": _runtime_history(pipeline),
-        "runtimeSnapshot": snapshot,
+        "runtimeSnapshot": producer.store.get(str(pipeline.server_id)),
+    }
+
+
+def _server_state_v1(pipeline: OperationalServerPipeline) -> dict[str, Any]:
+    """Compatibility writer used only by the legacy SO-only factory tests/path."""
+    producer = pipeline.producer
+    runtime = getattr(producer, "runtime", None)
+    if runtime is None:
+        raise ValueError("legacy operational checkpoint requires SO live runtime")
+    return {
+        "serverId": pipeline.server_id,
+        "coreSession": _core_session_state(pipeline),
+        "cursor": pipeline.coordinator.cursor.export_state(),
+        "liveRuntime": runtime.export_state(),
+        "producer": producer.export_state(),
+        "runtimeHistory": _runtime_history(pipeline),
+        "runtimeSnapshot": producer.store.get(str(pipeline.server_id)),
     }
 
 
@@ -147,10 +159,13 @@ def export_operational_state(
 ) -> dict[str, Any]:
     if not config_fingerprint:
         raise ValueError("config_fingerprint is required")
+    family_native = all(hasattr(pipeline.producer, "family_names") for pipeline in loop.pipelines)
+    schema = OPERATIONAL_STATE_SCHEMA_VERSION if family_native else LEGACY_OPERATIONAL_STATE_SCHEMA_VERSION
+    builder = _server_state_v2 if family_native else _server_state_v1
     return {
-        "schemaVersion": OPERATIONAL_STATE_SCHEMA_VERSION,
+        "schemaVersion": schema,
         "configFingerprint": config_fingerprint,
-        "servers": [_server_state(pipeline) for pipeline in loop.pipelines],
+        "servers": [builder(pipeline) for pipeline in loop.pipelines],
     }
 
 
@@ -178,7 +193,6 @@ def _restore_runtime_cache(producer, raw: Mapping[str, Any]) -> None:
                 "persisted runtimeHistory is incompatible with the runtime store"
             ) from exc
     else:
-        # Compatibility path for simple stores that predate compact history.
         for snapshot in validated_history:
             producer.store.publish(deepcopy(dict(snapshot)))
 
@@ -186,22 +200,13 @@ def _restore_runtime_cache(producer, raw: Mapping[str, Any]) -> None:
     if snapshot is not None:
         if not isinstance(snapshot, Mapping):
             raise OperationalStateCompatibilityError("runtimeSnapshot must be an object or null")
-        # Same-observedAt publication is idempotent and also seeds the latest
-        # full snapshot after compact history has been restored.
         producer.store.publish(deepcopy(dict(snapshot)))
 
 
-def _restore_pipeline(pipeline: OperationalServerPipeline, raw: Mapping[str, Any]) -> None:
-    if raw.get("serverId") != pipeline.server_id:
-        raise OperationalStateCompatibilityError("operational state server id mismatch")
-
+def _restore_session_and_cursor(pipeline: OperationalServerPipeline, raw: Mapping[str, Any]):
     coordinator = pipeline.coordinator
-    producer = pipeline.producer
     core_raw = _mapping(raw.get("coreSession"), "coreSession")
     cursor_raw = _mapping(raw.get("cursor"), "cursor")
-    runtime_raw = _mapping(raw.get("liveRuntime"), "liveRuntime")
-    producer_raw = _mapping(raw.get("producer"), "producer")
-
     checkpoint = json.dumps(
         core_raw,
         ensure_ascii=False,
@@ -215,12 +220,24 @@ def _restore_pipeline(pipeline: OperationalServerPipeline, raw: Mapping[str, Any
         config=current_session.config,
         algorithm_version=current_session.algorithm_version,
     )
-
     current_cursor = coordinator.cursor
     restored_cursor = type(current_cursor)(current_cursor.config)
     restored_cursor.restore_state(dict(cursor_raw))
+    return restored_session, restored_cursor
 
-    current_runtime = producer.runtime
+
+def _restore_legacy_so_runtime(producer, runtime_raw: Mapping[str, Any]) -> None:
+    migrate = getattr(producer, "restore_legacy_so_runtime", None)
+    if callable(migrate):
+        try:
+            migrate(runtime_raw)
+        except (TypeError, ValueError) as exc:
+            raise OperationalStateCompatibilityError(str(exc)) from exc
+        return
+
+    current_runtime = getattr(producer, "runtime", None)
+    if current_runtime is None:
+        raise OperationalStateCompatibilityError("V1 checkpoint requires an SO runtime migration path")
     restored_runtime, invalidated = LiveSOEventRuntime.from_state(
         current_runtime.bank,
         runtime_raw,
@@ -232,14 +249,42 @@ def _restore_pipeline(pipeline: OperationalServerPipeline, raw: Mapping[str, Any
         raise OperationalStateCompatibilityError(
             f"persisted manual template selections are invalid under current bank: {ids}"
         )
-
-    # Producer validation mutates only after the complete active-group list is
-    # validated, so perform it before swapping the larger runtime objects.
-    producer.restore_state(producer_raw)
-    coordinator.session = restored_session
-    coordinator.cursor = restored_cursor
-    producer.session = restored_session
     producer.runtime = restored_runtime
+
+
+def _restore_pipeline_v2(pipeline: OperationalServerPipeline, raw: Mapping[str, Any]) -> None:
+    if raw.get("serverId") != pipeline.server_id:
+        raise OperationalStateCompatibilityError("operational state server id mismatch")
+    producer = pipeline.producer
+    if not hasattr(producer, "family_names"):
+        raise OperationalStateCompatibilityError("V2 checkpoint requires a family runtime host")
+    producer_raw = _mapping(raw.get("producer"), "producer")
+    restored_session, restored_cursor = _restore_session_and_cursor(pipeline, raw)
+    try:
+        producer.restore_state(producer_raw)
+    except (TypeError, ValueError) as exc:
+        raise OperationalStateCompatibilityError(str(exc)) from exc
+    pipeline.coordinator.session = restored_session
+    pipeline.coordinator.cursor = restored_cursor
+    producer.session = restored_session
+    _restore_runtime_cache(producer, raw)
+
+
+def _restore_pipeline_v1(pipeline: OperationalServerPipeline, raw: Mapping[str, Any]) -> None:
+    if raw.get("serverId") != pipeline.server_id:
+        raise OperationalStateCompatibilityError("operational state server id mismatch")
+    producer = pipeline.producer
+    runtime_raw = _mapping(raw.get("liveRuntime"), "liveRuntime")
+    producer_raw = _mapping(raw.get("producer"), "producer")
+    restored_session, restored_cursor = _restore_session_and_cursor(pipeline, raw)
+    try:
+        producer.restore_state(producer_raw)
+        _restore_legacy_so_runtime(producer, runtime_raw)
+    except (TypeError, ValueError) as exc:
+        raise OperationalStateCompatibilityError(str(exc)) from exc
+    pipeline.coordinator.session = restored_session
+    pipeline.coordinator.cursor = restored_cursor
+    producer.session = restored_session
     _restore_runtime_cache(producer, raw)
 
 
@@ -249,7 +294,8 @@ def restore_operational_state(
     *,
     config_fingerprint: str,
 ) -> None:
-    if state.get("schemaVersion") != OPERATIONAL_STATE_SCHEMA_VERSION:
+    schema = state.get("schemaVersion")
+    if schema not in {OPERATIONAL_STATE_SCHEMA_VERSION, LEGACY_OPERATIONAL_STATE_SCHEMA_VERSION}:
         raise OperationalStateCompatibilityError("unsupported operational state schema")
     if state.get("configFingerprint") != config_fingerprint:
         raise OperationalStateCompatibilityError(
@@ -273,8 +319,9 @@ def restore_operational_state(
         raise OperationalStateCompatibilityError(
             "operational state server set does not match current configuration"
         )
+    restore = _restore_pipeline_v2 if schema == OPERATIONAL_STATE_SCHEMA_VERSION else _restore_pipeline_v1
     for pipeline in loop.pipelines:
-        _restore_pipeline(pipeline, by_id[pipeline.server_id])
+        restore(pipeline, by_id[pipeline.server_id])
 
 
 def _utc(value: datetime) -> datetime:
@@ -299,7 +346,6 @@ def _configured_checkpoint_interval(
         if not math.isfinite(value) or value <= 0.0:
             raise ValueError("Core timing checkpoint_seconds must be finite and positive")
         values.append(value)
-    # A shared state file must satisfy the most frequent configured requirement.
     return min(values) if values else DEFAULT_CHECKPOINT_INTERVAL_SECONDS
 
 
@@ -357,11 +403,9 @@ class CheckpointedOperationalRuntimeLoop(OperationalRuntimeLoop):
             self._last_checkpoint_utc = _utc(at_utc)
 
     def save_checkpoint(self) -> None:
-        """Force an immediate checkpoint, preserving the pre-cadence public API."""
         self._write_checkpoint(at_utc=None)
 
     def flush_checkpoint(self) -> bool:
-        """Persist pending state once; return whether a write was required."""
         if not self._dirty:
             return False
         self._write_checkpoint(at_utc=None)
@@ -388,6 +432,7 @@ class CheckpointedOperationalRuntimeLoop(OperationalRuntimeLoop):
 
 __all__ = [
     "DEFAULT_CHECKPOINT_INTERVAL_SECONDS",
+    "LEGACY_OPERATIONAL_STATE_SCHEMA_VERSION",
     "OPERATIONAL_STATE_SCHEMA_VERSION",
     "AtomicOperationalStateStore",
     "CheckpointedOperationalRuntimeLoop",
