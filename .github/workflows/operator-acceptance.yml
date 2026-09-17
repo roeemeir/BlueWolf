@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
   operator-acceptance:
-    name: OP-01..05 + BW-UI-008
+    name: OP-01..05 + BW-UI-008 + BW-SYNC-013
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,6 +30,8 @@ jobs:
             tests/op04-shared-result.test.mjs \
             tests/op05-timeline-visibility.test.mjs \
             tests/op05-timeline-window.test.mjs \
-            tests/operator-alert-mute.test.mjs
+            tests/operator-alert-mute.test.mjs \
+            tests/display-score-smoothing.test.mjs \
+            tests/operator-display-smoothing-ui.test.mjs
       - name: Type-check operator surfaces
         run: npx tsc --noEmit
