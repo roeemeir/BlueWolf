@@ -113,6 +113,31 @@ class CompositeRuntimeProducerTests(unittest.TestCase):
         self.assertEqual(si.restored, {"x": 1})
         self.assertEqual(so.restored, {"x": 2})
 
+    def test_legacy_so_only_checkpoint_is_migrated_only_to_so_child(self) -> None:
+        si = _Producer("SI", "si")
+        so = _Producer("SO", "so")
+        composite = CompositeRuntimeProducer(
+            server_id=1,
+            producers=(("si", si), ("so", so)),  # type: ignore[arg-type]
+            store=RuntimeSnapshotStore(),
+        )
+        legacy = {"structurally_active_group_ids": ["old-so-group"]}
+        composite.restore_state(legacy)
+        self.assertIsNone(si.restored)
+        self.assertEqual(so.restored, legacy)
+
+    def test_unknown_non_namespaced_checkpoint_is_not_reinterpreted_as_so(self) -> None:
+        si = _Producer("SI", "si")
+        so = _Producer("SO", "so")
+        composite = CompositeRuntimeProducer(
+            server_id=1,
+            producers=(("si", si), ("so", so)),  # type: ignore[arg-type]
+            store=RuntimeSnapshotStore(),
+        )
+        composite.restore_state({"futureField": 1})
+        self.assertIsNone(si.restored)
+        self.assertIsNone(so.restored)
+
 
 if __name__ == "__main__":
     unittest.main()
