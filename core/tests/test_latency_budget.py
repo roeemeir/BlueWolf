@@ -19,8 +19,9 @@ from bluewolf_core.models import (
 )
 from bluewolf_core.session import _RouteRuntimeState
 from bluewolf_core.templates import SynchronizationTemplate, TemplateSlot
-from bluewolf_ingest.polling import LivePollConfig, PollWindow
-from bluewolf_runtime_adapter.ingest_coordinator import IngestPollResult
+from bluewolf_ingest.polling import LivePollConfig, ServerPollCursor
+from bluewolf_runtime_adapter.ingest_coordinator import LiveCoreIngestCoordinator
+from bluewolf_runtime_adapter.operational_pipeline import OperationalServerPipeline
 from bluewolf_runtime_adapter.producer import DisplayedScoreValue
 from bluewolf_runtime_adapter.service import RuntimeSnapshotStore, create_app
 from bluewolf_runtime_adapter.si_producer import LiveSIRuntimeProducer
@@ -84,7 +85,8 @@ def _sample(route: ClosedRoute, vehicle: int, phase: float, when: datetime) -> V
     )
 
 
-def _samples(route: ClosedRoute, when: datetime, base_phase: float) -> tuple[VehicleSample, ...]:
+def _samples(route: ClosedRoute, when: datetime) -> tuple[VehicleSample, ...]:
+    base_phase = ((when - START).total_seconds() / PERIOD_S) % 1.0
     return (
         _sample(route, VEHICLES[0], base_phase, when),
         _sample(route, VEHICLES[1], (base_phase + 1.0 / 3.0) % 1.0, when),
@@ -130,15 +132,26 @@ def _producer(session: CoreSession, route: ClosedRoute, store: RuntimeSnapshotSt
     )
 
 
-def _poll(session: CoreSession, samples: tuple[VehicleSample, ...], when: datetime) -> IngestPollResult:
-    result = session.process_batch(samples, observed_until_utc=when)
-    return IngestPollResult(
-        window=PollWindow(when, when),
-        samples=samples,
-        core_result=result,
-        server_awake=True,
-        archive_result=None,
-    )
+class _StaticJoinedReader:
+    """Deterministic transport seam; production Influx/network latency is not fabricated."""
+
+    def __init__(self, route: ClosedRoute) -> None:
+        self.route = route
+        self.calls = 0
+
+    def read_samples(
+        self,
+        *,
+        server_id: int,
+        server_tag_value: str | None,
+        start_time_utc: datetime,
+        end_time_utc: datetime,
+    ) -> tuple[VehicleSample, ...]:
+        del server_tag_value, start_time_utc
+        if server_id != 1:
+            raise AssertionError("unexpected benchmark server")
+        self.calls += 1
+        return _samples(self.route, end_time_utc)
 
 
 async def _request_runtime(app, server_id: str = "1"):
@@ -175,11 +188,14 @@ async def _request_runtime(app, server_id: str = "1"):
 
 class ActiveLatencyBudgetTests(unittest.TestCase):
     def test_bw_data_010_active_update_fits_ten_second_runtime_budget(self) -> None:
-        """Measure the warmed active path; upstream network latency is a separate acceptance item.
+        """Measure the warmed software path; external Influx transport remains separate evidence.
 
         The deterministic scheduling envelope is join tolerance (5 s) plus active
-        poll cadence (3 s). The measured portion covers real CoreSession processing,
-        SI scoring/publication, RuntimeSnapshotStore and the ASGI live-runtime read.
+        poll cadence (3 s). The measured portion uses the real poll cursor,
+        transactional coordinator, CoreSession, SI scoring/publication,
+        RuntimeSnapshotStore and ASGI live-runtime endpoint. The joined-sample
+        reader is deterministic so CI never pretends to measure a deployment's
+        external Influx/network latency.
         """
 
         poll_config = LivePollConfig()
@@ -189,42 +205,60 @@ class ActiveLatencyBudgetTests(unittest.TestCase):
         route = _route()
         session = _session(route)
         store = RuntimeSnapshotStore()
-        producer = _producer(session, route, store)
-
-        # Warm grouping + temporal SI metrics before measuring a steady-state update.
-        warm_at = START
-        warm_poll = _poll(session, _samples(route, warm_at, 0.0), warm_at)
-        warm_publication = producer.publish_poll(warm_poll)
-        self.assertIsNotNone(warm_publication.snapshot)
-
-        observed_at = START + timedelta(seconds=1)
-        start = perf_counter()
-        live_poll = _poll(session, _samples(route, observed_at, 1.0 / PERIOD_S), observed_at)
-        publication = producer.publish_poll(live_poll)
-        self.assertIsNotNone(publication.snapshot)
-
-        # Read through the actual ASGI contract, not directly from the store.
-        app = create_app(
-            store,
-            clock=lambda: observed_at + timedelta(seconds=poll_config.join_tolerance_seconds),
+        reader = _StaticJoinedReader(route)
+        cursor = ServerPollCursor(poll_config)
+        coordinator = LiveCoreIngestCoordinator(
+            server_id=1,
+            server_tag_value="latency-test",
+            reader=reader,  # type: ignore[arg-type]
+            session=session,
+            cursor=cursor,
+            awake_resolver=lambda samples, _core, _window: bool(samples),
         )
-        status, payload = asyncio.run(_request_runtime(app))
-        measured_seconds = perf_counter() - start
+        producer = _producer(session, route, store)
+        pipeline = OperationalServerPipeline(coordinator, producer)
 
+        # First active tick warms grouping and SI temporal metrics. With the
+        # approved 5 s safe watermark this publishes evidence observed at START.
+        warm_wall_time = START + timedelta(seconds=poll_config.join_tolerance_seconds)
+        warm = pipeline.poll_once(warm_wall_time)
+        self.assertIsNotNone(warm.publication)
+        self.assertIsNotNone(warm.publication.snapshot if warm.publication else None)
+        self.assertTrue(cursor.awake)
+
+        # The next active poll is due three seconds later. Its safe_end is START+3.
+        measured_wall_time = warm_wall_time + timedelta(seconds=poll_config.active_poll_seconds)
+        expected_observed_at = measured_wall_time - timedelta(seconds=poll_config.join_tolerance_seconds)
+
+        started = perf_counter()
+        result = pipeline.poll_once(measured_wall_time)
+        self.assertIsNotNone(result.publication)
+        self.assertIsNotNone(result.publication.snapshot if result.publication else None)
+
+        # Read through the real ASGI contract, not directly from the store.
+        app = create_app(store, clock=lambda: measured_wall_time)
+        status, payload = asyncio.run(_request_runtime(app))
+        measured_seconds = perf_counter() - started
+
+        self.assertEqual(reader.calls, 2)
         self.assertEqual(status, 200)
-        self.assertEqual(payload["observedAt"], observed_at.isoformat().replace("+00:00", "Z"))
+        self.assertEqual(payload["observedAt"], expected_observed_at.isoformat().replace("+00:00", "Z"))
         self.assertTrue(payload["groups"])
         group = next(iter(payload["groups"].values()))
         self.assertTrue(group["scoreValid"])
 
-        scheduling_seconds = (
-            poll_config.join_tolerance_seconds + poll_config.active_poll_seconds
-        )
+        scheduling_seconds = poll_config.join_tolerance_seconds + poll_config.active_poll_seconds
         end_to_end_upper_bound = scheduling_seconds + measured_seconds
+        print(
+            "BW-DATA-010 active software latency evidence: "
+            f"scheduling={scheduling_seconds:.3f}s "
+            f"processing={measured_seconds:.6f}s "
+            f"upper_bound={end_to_end_upper_bound:.6f}s"
+        )
 
         # Leave a real two-second processing budget after the deterministic 8 s
-        # scheduling envelope. CI noise beyond this indicates the requirement can
-        # no longer be claimed from the current runtime architecture.
+        # scheduling envelope. CI noise beyond this indicates the current runtime
+        # architecture no longer fits the product budget.
         self.assertLess(
             measured_seconds,
             2.0,
