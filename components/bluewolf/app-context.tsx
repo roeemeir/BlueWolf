@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { DEFAULT_INFLUX_MAPPINGS, DEFAULT_WORKSPACE, type InfluxFieldMapping, type WorkspaceState } from "@/lib/bluewolf";
 
 type StorageMode = "cloud" | "local";
-type RuntimeSyncStatus = { synced: boolean; restartRequired: boolean; reason?: string } | null;
+type RuntimeSyncStatus = { synced: boolean; restartRequired: boolean; reason?: string; templateCount?: number } | null;
 
 type WorkspaceContextValue = {
   state: WorkspaceState;
@@ -130,11 +130,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setRevision(payload.revision ?? revision + 1);
       setLastSavedAt(new Date().toISOString());
       setStorageMode("cloud");
-      if (category === "influx") {
-        if (payload.runtimeSync?.synced) {
+      if (category === "influx" && payload.runtimeSync) {
+        if (payload.runtimeSync.synced) {
           toast.success(payload.runtimeSync.restartRequired ? "מיפוי Influx נשמר לקונפיגורציית ה־Core; נדרשת הפעלה מחדש של שירות הליבה" : "מיפוי Influx נשמר והוחל", { id: saveToast });
         } else {
-          toast.warning(`מיפוי Influx נשמר ב־Workspace אך לא הוחל על ה־Core${payload.runtimeSync?.reason ? `: ${payload.runtimeSync.reason}` : " בפריסה זו"}`, { id: saveToast });
+          toast.warning(`מיפוי Influx נשמר ב־Workspace אך לא הוחל על ה־Core${payload.runtimeSync.reason ? `: ${payload.runtimeSync.reason}` : " בפריסה זו"}`, { id: saveToast });
+        }
+      } else if (category === "templates" && payload.runtimeSync) {
+        if (payload.runtimeSync.synced) {
+          const count = payload.runtimeSync.templateCount ?? 0;
+          toast.success(payload.runtimeSync.restartRequired
+            ? `תבניות SI נשמרו וסונכרנו לקונפיגורציית ה־Core (${count}); נדרשת הפעלה מחדש של שירות הליבה`
+            : `תבניות SI נשמרו והוחלו (${count})`, { id: saveToast });
+        } else {
+          toast.warning(`התבניות נשמרו ב־Workspace; תבניות SI עדיין לא הוחלו על ה־Core${payload.runtimeSync.reason ? `: ${payload.runtimeSync.reason}` : " בפריסה זו"}`, { id: saveToast });
         }
       } else {
         toast.success("נשמר והפך לפעיל", { id: saveToast });
