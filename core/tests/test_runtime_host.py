@@ -115,6 +115,45 @@ class RuntimeHostTests(unittest.TestCase):
         self.assertEqual(seen, [store])
         self.assertEqual(host.loop_sleep_seconds, 0.25)
 
+    def test_builtin_bootstrap_rejects_invalid_web_authored_si_templates_before_factory_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "runtime.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "siTemplates": [
+                            {
+                                "id": "bad-si",
+                                "name": "Bad SI",
+                                "default": True,
+                                "slots": [
+                                    {
+                                        "id": "s1",
+                                        "vehicleType": "TYPE_A",
+                                        "routeRole": "outer",
+                                        "phaseOffset": 0.0,
+                                    },
+                                    {
+                                        "id": "s2",
+                                        "vehicleType": "TYPE_A",
+                                        "routeRole": "left",
+                                        "phaseOffset": 1.0 / 3.0,
+                                    },
+                                ],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {"BLUEWOLF_OPERATIONAL_CONFIG": str(config_path)},
+                clear=True,
+            ):
+                with self.assertRaisesRegex(ValueError, "routeRole"):
+                    host_from_environment(object())
+
     def test_environment_state_path_wraps_loop_with_config_fingerprint(self) -> None:
         module = types.ModuleType("bluewolf_test_checkpoint_factory")
         module.make_loop = lambda store: OperationalRuntimeLoop(())
