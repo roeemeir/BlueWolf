@@ -82,7 +82,7 @@ test('BW-OFF-010 path-token WMTS keeps key out of workspace/catalog and injects 
     resourceTemplate: safeCatalog.layers[0].resourceUrls[0].template,
   });
   assert.match(tile.pathname, new RegExp(placeholder));
+  assert.doesNotMatch(tile.toString(), /secret-path-key/);
   const securedTile = maps.applyMapSourceToken(tile, source, 'secret-path-key');
   assert.match(securedTile.url.pathname, /\/v2\/secret-path-key\/osm\/13\/4887\/3324\.png$/);
-  assert.doesNotMatch(tile.toString(), /secret-path-key/);
 });
