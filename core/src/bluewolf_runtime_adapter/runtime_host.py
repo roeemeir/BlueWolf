@@ -19,6 +19,7 @@ from typing import Any, Callable, Protocol
 
 from .operational_pipeline import OperationalRuntimeLoop, OperationalTick
 from .operational_state import AtomicOperationalStateStore, CheckpointedOperationalRuntimeLoop
+from .si_template_config import parse_si_templates
 
 
 _BUILTIN_CONFIG_FACTORY = (
@@ -45,16 +46,23 @@ def load_operational_loop_factory(spec: str) -> OperationalLoopFactory:
     return factory
 
 
-def _configuration_fingerprint(config_path: str) -> str:
-    """Hash canonical public JSON configuration without reading any secret env vars."""
-
+def _read_public_config(config_path: str, *, purpose: str) -> dict[str, object]:
     path = Path(config_path)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except OSError as exc:
-        raise ValueError(f"cannot read operational config for checkpoint fingerprint: {path}") from exc
+        raise ValueError(f"cannot read operational config for {purpose}: {path}") from exc
     except json.JSONDecodeError as exc:
         raise ValueError(f"operational config is not valid JSON: {path}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError("operational config must be a JSON object")
+    return raw
+
+
+def _configuration_fingerprint(config_path: str) -> str:
+    """Hash canonical public JSON configuration without reading any secret env vars."""
+
+    raw = _read_public_config(config_path, purpose="checkpoint fingerprint")
     try:
         canonical = json.dumps(
             raw,
@@ -66,6 +74,13 @@ def _configuration_fingerprint(config_path: str) -> str:
     except (TypeError, ValueError) as exc:
         raise ValueError("operational config is not canonically JSON serializable") from exc
     return hashlib.sha256(canonical).hexdigest()
+
+
+def _validate_builtin_si_templates(config_path: str) -> None:
+    """Fail closed before polling when Web-authored SI runtime config is invalid."""
+
+    raw = _read_public_config(config_path, purpose="SI template validation")
+    parse_si_templates(raw.get("siTemplates"))
 
 
 def _normalized_path(value: str | os.PathLike[str]) -> Path:
@@ -162,8 +177,6 @@ class OperationalLoopHost:
             thread.join(join_timeout_seconds)
             if thread.is_alive():
                 raise TimeoutError("operational runtime thread did not stop")
-        # Flush only after the polling thread is fully stopped. This prevents a
-        # shutdown checkpoint from racing a final in-flight state mutation.
         flush = getattr(self.loop, "flush_checkpoint", None)
         if callable(flush):
             flush()
@@ -191,6 +204,10 @@ def host_from_environment(store: Any) -> OperationalLoopHost | None:
         spec = _BUILTIN_CONFIG_FACTORY
     if not spec:
         return None
+    if spec == _BUILTIN_CONFIG_FACTORY:
+        if not config_path:
+            raise ValueError("built-in operational factory requires BLUEWOLF_OPERATIONAL_CONFIG")
+        _validate_builtin_si_templates(config_path)
     factory = load_operational_loop_factory(spec)
     loop = factory(store)
     if not isinstance(loop, OperationalRuntimeLoop):
