@@ -1,5 +1,6 @@
 import type { SyncTemplate, VehicleType } from "./bluewolf";
 import { validateSiPositions } from "./si-direct-placement";
+import { validateVehicleIdRanges } from "./vehicle-id-ranges";
 
 export type OperationalSiTemplateSlot = {
   id: string;
@@ -13,6 +14,14 @@ export type OperationalSiTemplate = {
   name: string;
   default: boolean;
   slots: OperationalSiTemplateSlot[];
+};
+
+export type OperationalSiVehicleType = {
+  id: string;
+  minId: number;
+  maxId: number;
+  workSpeedMps: number;
+  siRoles: Array<"inner" | "middle" | "outer">;
 };
 
 type JsonObject = Record<string, unknown>;
@@ -30,6 +39,19 @@ function normalizedAngle(value: number) {
 
 function slotId(ring: "inner" | "middle" | "outer", angleDeg: number, vehicleType: string, index: number) {
   return `si-${ring}-${angleDeg}-${vehicleType}-${index + 1}`;
+}
+
+export function operationalSiVehicleTypes(vehicleTypes: readonly VehicleType[]): OperationalSiVehicleType[] {
+  validateVehicleIdRanges([...vehicleTypes]);
+  return [...vehicleTypes]
+    .map((type) => ({
+      id: type.id,
+      minId: type.minId,
+      maxId: type.maxId,
+      workSpeedMps: type.workSpeedKmh / 3.6,
+      siRoles: [...type.siRoles].sort((first, second) => RING_ORDER[first] - RING_ORDER[second]),
+    }))
+    .sort((first, second) => first.minId - second.minId || first.maxId - second.maxId || first.id.localeCompare(second.id));
 }
 
 /**
@@ -86,5 +108,6 @@ export function buildOperationalSiTemplateConfig(
 ) {
   const root = structuredClone(object(existingConfig, "operational config"));
   root.siTemplates = operationalSiTemplates(templates, vehicleTypes);
+  root.siVehicleTypes = operationalSiVehicleTypes(vehicleTypes);
   return root;
 }
