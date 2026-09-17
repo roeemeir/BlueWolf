@@ -1,7 +1,8 @@
 "use client";
 
+import { DEFAULT_PUBLIC_WMTS_SOURCE_ID, telAvivDemoBounds } from "@/lib/default-map-profile";
 import type { OperationalMapSource } from "@/lib/map-source-config";
-import { webMercatorTiles, type OperationalProjection } from "@/lib/operational-map-projection";
+import { createOperationalProjection, webMercatorTiles, type OperationalProjection } from "@/lib/operational-map-projection";
 import { defaultWmtsLayerSelections, wmtsScreenTiles } from "@/lib/wmts-capabilities";
 
 const WIDTH = 1000;
@@ -13,6 +14,17 @@ function proxyUrl(sourceId: string, params: Record<string, string | number>) {
   return `/api/map-sources/proxy?${query.toString()}`;
 }
 
+function effectiveProjection(source: OperationalMapSource, projection: OperationalProjection) {
+  if (!projection.empty || source.id !== DEFAULT_PUBLIC_WMTS_SOURCE_ID) return projection;
+  const bounds = telAvivDemoBounds();
+  return createOperationalProjection([
+    { latitude: bounds.minLatitude, longitude: bounds.minLongitude },
+    { latitude: bounds.minLatitude, longitude: bounds.maxLongitude },
+    { latitude: bounds.maxLatitude, longitude: bounds.minLongitude },
+    { latitude: bounds.maxLatitude, longitude: bounds.maxLongitude },
+  ], WIDTH, HEIGHT, 32, 32, "webmercator");
+}
+
 export function OperationalBasemap({
   source,
   projection,
@@ -22,9 +34,12 @@ export function OperationalBasemap({
   projection: OperationalProjection;
   visibleWmtsLayers?: readonly string[];
 }) {
-  if (!source || !source.enabled || projection.empty) return null;
+  if (!source || !source.enabled) return null;
+  const mapProjection = effectiveProjection(source, projection);
+  if (mapProjection.empty) return null;
+
   if (source.kind === "wms") {
-    const bounds = projection.viewGeoBounds;
+    const bounds = mapProjection.viewGeoBounds;
     if (!bounds) return null;
     const href = proxyUrl(source.id, {
       bbox: `${bounds.minLongitude},${bounds.minLatitude},${bounds.maxLongitude},${bounds.maxLatitude}`,
@@ -39,11 +54,11 @@ export function OperationalBasemap({
     const visible = visibleWmtsLayers
       ? selections.filter((selection) => visibleWmtsLayers.includes(selection.layer))
       : selections.filter((selection) => selection.enabled);
-    return <g className="v04-operational-basemap" data-map-source-kind="wmts" data-wmts-layer-count={visible.length}>
+    return <g className="v04-operational-basemap" data-map-source-kind="wmts" data-wmts-layer-count={visible.length} data-empty-demo={projection.empty ? "tel-aviv" : undefined}>
       {visible.map((selection) => {
         const matrixSet = source.wmtsCatalog?.tileMatrixSets.find((item) => item.identifier === selection.tileMatrixSet);
         if (!matrixSet) return null;
-        const tiles = wmtsScreenTiles(projection, matrixSet, WIDTH, HEIGHT);
+        const tiles = wmtsScreenTiles(mapProjection, matrixSet, WIDTH, HEIGHT);
         return <g key={selection.layer} data-wmts-layer={selection.layer} opacity={selection.opacity}>{tiles.map((tile) => {
           const href = proxyUrl(source.id, {
             layer: selection.layer,
@@ -57,7 +72,7 @@ export function OperationalBasemap({
     </g>;
   }
 
-  const tiles = webMercatorTiles(projection, WIDTH, HEIGHT);
+  const tiles = webMercatorTiles(mapProjection, WIDTH, HEIGHT);
   return <g className="v04-operational-basemap" data-map-source-kind={source.kind}>{tiles.map((tile) => {
     const href = source.kind === "wmts"
       ? proxyUrl(source.id, { tileMatrix: tile.z, tileRow: tile.y, tileCol: tile.x })
