@@ -1,4 +1,9 @@
-import { applyMapSourceToken, buildWmtsCapabilitiesUrl, type OperationalMapSource } from "@/lib/map-source-config";
+import {
+  applyMapSourceToken,
+  buildWmtsCapabilitiesUrl,
+  sanitizeWmtsCatalogToken,
+  type OperationalMapSource,
+} from "@/lib/map-source-config";
 import { localMapSource, localMapSourceSecret, localMapSourcesEnabled } from "@/lib/local-map-source-server";
 import { compatibleMatrixSets, defaultWmtsLayerSelections, parseWmtsCapabilities } from "@/lib/wmts-capabilities";
 
@@ -34,7 +39,7 @@ export async function GET(request: Request) {
     if (Number.isFinite(declaredLength) && declaredLength > MAX_CAPABILITIES_BYTES) throw new Error("WMTS GetCapabilities response is too large");
     const xml = await response.text();
     if (new TextEncoder().encode(xml).byteLength > MAX_CAPABILITIES_BYTES) throw new Error("WMTS GetCapabilities response is too large");
-    const catalog = parseWmtsCapabilities(xml);
+    const catalog = sanitizeWmtsCatalogToken(parseWmtsCapabilities(xml), source, token);
     const supportedLayers = catalog.layers.map((layer) => ({
       identifier: layer.identifier,
       compatibleMatrixSets: compatibleMatrixSets(catalog, layer).map((matrixSet) => ({ identifier: matrixSet.identifier, supportedCrs: matrixSet.supportedCrs })),
