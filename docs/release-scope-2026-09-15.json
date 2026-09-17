@@ -2,7 +2,7 @@
   "schemaVersion": "bluewolf.release-scope.v2",
   "scopeId": "requirements-governance-2026-09-15",
   "scopeApprovedByUser": true,
-  "description": "Frozen requirements included in the current Blue Wolf release scope. Inclusion in this scope means the requirement itself is accepted by the user. implementationApproval is a separate sign-off that means the user explicitly reviewed and approved the implemented result. No historical implementation sign-off is inferred. Implementation statuses were reviewed against Blue Wolf CI #1272, WKT Browser E2E #125 and UI/PDF Browser E2E #38 on 51e4cd2eacb15a066a2a62705c232ff34bf62384; later commits must pass their own gates before release.",
+  "description": "Frozen requirements included in the current Blue Wolf release scope. Inclusion means the requirement itself is accepted by the user. implementationApproval remains a separate explicit sign-off on the implemented result. Current scope includes the SI Web-to-Core scoring bridge, generic WMTS live acceptance and SI/SO sibling-runtime symmetry; release remains blocked while any implementationApproval is pending or any required gate is not green on the exact release SHA.",
   "requirements": [
     { "id": "BW-DEV-002", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["components/bluewolf/route-bank-wkt-workbench.tsx", "tests/route-wkt.test.mjs"] },
     { "id": "BW-DEV-003", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["components/bluewolf/route-bank-wkt-workbench.tsx", "lib/route-bank-geometry.ts", "scripts/verify_wkt_browser_e2e.py"] },
@@ -16,9 +16,11 @@
     { "id": "BW-OFF-004", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["lib/workspace-validation.ts", "tests/workspace-wkt-api.test.mjs"] },
     { "id": "BW-OFF-005", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["components/bluewolf/route-bank-wkt-workbench.tsx", "scripts/verify_wkt_browser_e2e.py"] },
     { "id": "BW-OFF-006", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["scripts/verify-offline-http.mjs", ".github/workflows/wkt-e2e.yml", "scripts/verify_wkt_browser_e2e.py"] },
+    { "id": "BW-OFF-010", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["lib/wmts-capabilities.ts", "lib/map-source-config.ts", "lib/default-map-profile.ts", "app/api/map-sources/capabilities/route.ts", "tests/wmts-capabilities.test.mjs", "tests/map-source-config.test.mjs", "scripts/verify-omniscale-wmts.mjs", ".github/workflows/off10-map-sources.yml"] },
     { "id": "BW-SYNC-009", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["core/src/bluewolf_core/event_recompute.py", "components/bluewolf/investigation-view.tsx", "tests/investigation-contract.test.mjs"] },
     { "id": "BW-SYNC-010", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["core/src/bluewolf_core/event_recompute.py", "core/tests/test_event_recompute.py"] },
     { "id": "BW-SYNC-011", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["core/src/bluewolf_core/event_recompute.py", "lib/investigation-contract.ts"] },
+    { "id": "BW-SYNC-012", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["lib/si-runtime-sync.ts", "core/src/bluewolf_runtime_adapter/si_template_config.py", "core/src/bluewolf_runtime_adapter/si_producer.py", "core/tests/test_si_producer.py", ".github/workflows/si-live-runtime.yml"] },
     { "id": "BW-UI-006", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["components/bluewolf/investigation-view.tsx", "app/api/investigation/events/route.ts", "tests/investigation-contract.test.mjs"] },
     { "id": "BW-REP-003", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["components/bluewolf/investigation-view.tsx", "lib/investigation-contract.ts", "tests/investigation-contract.test.mjs"] },
     { "id": "BW-REP-004", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["components/bluewolf/investigation-view.tsx", "tests/investigation-contract.test.mjs"] },
@@ -32,7 +34,6 @@
     { "id": "BW-QA-006", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["tests/investigation-pdf-browser.test.mjs", "tests/investigation-report-route.test.mjs"] },
     { "id": "BW-QA-007", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["scripts/verify-release-scope.mjs", "tests/release-scope-gate.test.mjs", ".github/workflows/release-gate.yml"] },
     { "id": "BW-QA-008", "frozen": true, "implementation": "partial", "implementationApproval": "pending", "evidence": ["app/api/investigation/report/route.ts", "core/src/bluewolf_runtime_adapter/qa_runner.py"] },
-
     { "id": "GEO-01", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["lib/so-geometry.ts", "components/bluewolf/so-template-governance-workbench.tsx", "components/bluewolf/so-governed-visuals.tsx", "components/bluewolf/operator-view.tsx", "tests/so-geometry.test.mjs"] },
     { "id": "GEO-02", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["lib/so-geometry.ts", "components/bluewolf/so-governed-visuals.tsx", "tests/so-geometry.test.mjs"] },
     { "id": "SI-01", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["components/bluewolf/template-governance-workbench.tsx", "components/bluewolf/developer-governance-workbench.tsx", "tests/si-direct-template-ui.test.mjs"] },
@@ -46,6 +47,7 @@
     { "id": "BANK-01", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["components/bluewolf/route-bank-wkt-workbench.tsx", "lib/route-bank-geometry.ts", "scripts/verify_wkt_browser_e2e.py"] },
     { "id": "TEST-01", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["core/src/bluewolf_runtime_adapter/qa_runner.py", "core/tests/test_qa_service.py", "components/bluewolf/qa-truth-workbench.tsx", "tests/qa-truth-contract.test.mjs"] },
     { "id": "ARCH-01", "frozen": true, "implementation": "partial", "implementationApproval": "pending", "evidence": ["scripts/start-offline.mjs", "scripts/verify-offline-http.mjs", ".github/workflows/ci.yml"] },
+    { "id": "ARCH-02", "frozen": true, "implementation": "yes", "implementationApproval": "pending", "evidence": ["core/src/bluewolf_runtime_adapter/family_environment_factory.py", "core/src/bluewolf_runtime_adapter/family_runtime.py", "core/src/bluewolf_runtime_adapter/runtime_config_common.py", "core/src/bluewolf_runtime_adapter/so_family_config.py", "core/tests/test_family_runtime_symmetry.py", ".github/workflows/si-live-runtime.yml"] },
     { "id": "PROC-01", "frozen": true, "implementation": "partial", "implementationApproval": "pending", "evidence": ["AGENTS.md", "docs/REQUIREMENTS_2026_09_15_HE.md", "docs/REQUIREMENTS_COVERAGE_HE.md", "scripts/verify-release-scope.mjs"] }
   ]
 }
