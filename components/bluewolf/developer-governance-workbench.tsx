@@ -31,6 +31,7 @@ export function DeveloperGovernanceWorkbench() {
       .protected-legacy-developer .developer-nav nav>button:nth-child(2),
       .protected-legacy-developer .developer-nav nav>button:nth-child(3),
       .protected-legacy-developer .developer-nav nav>button:nth-child(4),
+      .protected-legacy-developer .developer-nav nav>button:nth-child(5),
       .protected-legacy-developer .developer-nav nav>button:nth-child(6),
       .protected-legacy-developer .developer-nav .core-state{display:none!important}
       @media(max-width:760px){.developer-governance-tabs{padding:10px}.developer-primary-tabs>[data-slot="tabs-list"]{border-radius:12px}.developer-primary-tabs>[data-slot="tabs-list"]>[data-slot="tabs-trigger"]{padding-inline:10px}.developer-template-tabs>[data-slot="tabs-list"]{display:grid;grid-template-columns:1fr 1fr;width:100%}.developer-template-tabs>[data-slot="tabs-list"]>[data-slot="tabs-trigger"]{min-width:0}}
