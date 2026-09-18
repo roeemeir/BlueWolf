@@ -15,6 +15,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
+      - name: Verify full development iteration review
+        run: node scripts/verify-development-iteration.mjs docs/development-iteration-review.json docs/full-requirements-registry.json
       - name: Build conservative current-head audit
         run: |
           mkdir -p build
