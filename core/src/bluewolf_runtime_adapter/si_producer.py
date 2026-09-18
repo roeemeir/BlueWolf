@@ -13,7 +13,8 @@ from typing import Any, Mapping
 
 from bluewolf_core.event_route_evidence import snapshot_closed_route
 from bluewolf_core.grouping import RouteGroup
-from bluewolf_core.live_si_scoring import LiveSIGroupScorer, LiveSIMemberInput
+from bluewolf_core.live_si_runtime import LiveSIRuntime
+from bluewolf_core.live_si_scoring import LiveSIMemberInput
 from bluewolf_core.models import RouteFamily, VehicleFrameResult, VehicleSample
 from bluewolf_core.semantic_session import CoreSession
 from bluewolf_core.si_ring_roles import (
@@ -77,6 +78,7 @@ class LiveSIRuntimeProducer:
         vehicle_profiles: tuple[OperationalSIVehicleType, ...],
         store: RuntimeSnapshotStore,
         displayed_score_resolver: DisplayedScoreResolver,
+        runtime: LiveSIRuntime | None = None,
         arena: str = "Operational",
         color: str = "#20b9a8",
     ) -> None:
@@ -90,9 +92,9 @@ class LiveSIRuntimeProducer:
         self.vehicle_profiles = vehicle_profiles
         self.store = store
         self.displayed_score_resolver = displayed_score_resolver
+        self.runtime = runtime or LiveSIRuntime(tuple(entry.template for entry in templates))
         self.arena = arena
         self.color = color
-        self._scorers: dict[tuple[str, str], LiveSIGroupScorer] = {}
         self._structurally_active_groups: set[str] = set()
 
     def export_state(self) -> dict[str, object]:
@@ -228,8 +230,7 @@ class LiveSIRuntimeProducer:
         )
         active_ids = {group.group_id for group in active_groups}
         for ended in self._structurally_active_groups - active_ids:
-            for key in [item for item in self._scorers if item[0] == ended]:
-                self._scorers.pop(key, None)
+            self.runtime.remove_group(ended)
         self._structurally_active_groups = active_ids
 
         sample_index = self._sample_index(poll.samples, self.server_id)
@@ -258,11 +259,7 @@ class LiveSIRuntimeProducer:
             if members is None:
                 skipped[group.group_id] = "runtime_member_evidence_incomplete_or_route_mismatch"
                 continue
-            scorer_key = (group.group_id, assignment.template.template_id)
-            scorer = self._scorers.get(scorer_key)
-            if scorer is None:
-                scorer = LiveSIGroupScorer(assignment.template)
-                self._scorers[scorer_key] = scorer
+            scorer = self.runtime.scorer(group.group_id, assignment.template)
             result = scorer.score_group(
                 group.group_id,
                 members,
