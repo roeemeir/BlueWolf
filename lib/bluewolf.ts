@@ -81,7 +81,8 @@ export type InfluxFillMode = "forward-fill" | "linear";
 export type InfluxFieldMapping = { systemKey: string; label: string; bucket: string; measurement: string; key: string; valueMode: InfluxValueMode; sourceValue: string; mappedValue: string; fillMode: InfluxFillMode };
 export type InfluxSettings = { url: string; organization: string; token: string; stream: { serverColumn: string; timeColumn: string; vehicleNumberColumn: string }; idleProbeMinutes: number; activePollSeconds: number; joinToleranceSeconds: number; mappings: InfluxFieldMapping[] };
 export type ServerDefinition = { id: string; name: string; enabled: boolean; arena?: string; influxTag: string };
-export type VehicleType = { id: string; name: string; minId: number; maxId: number; workSpeedKmh: number; siRoles: RingRole[]; icon: VehicleIconName; color: string };
+export type VehicleIdRange = { minId: number; maxId: number };
+export type VehicleType = { id: string; name: string; minId: number; maxId: number; idRanges?: VehicleIdRange[]; workSpeedKmh: number; siRoles: RingRole[]; icon: VehicleIconName; color: string };
 export type GtSegment = { id: string; family: Family; layer: "sync" | "route"; quality: "good" | "medium" | "low"; label: string; serverId: string; groupId: string; start: string; end: string; vehicleCount: number; routeType: string; score: number };
 export type TemplateApplication = { templateId: string; mode: "now" | "event-start"; appliedAt: string };
 
