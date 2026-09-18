@@ -32,19 +32,28 @@ class OperationalSIVehicleType:
     max_id: int
     work_speed_mps: float
     si_roles: frozenset[str]
+    id_ranges: tuple[tuple[int, int], ...] = ()
 
     def __post_init__(self) -> None:
         if not self.type_id:
             raise ValueError("SI vehicle type id is required")
-        if self.min_id < 0 or self.max_id < self.min_id:
-            raise ValueError("SI vehicle id range is invalid")
+        ranges = self.id_ranges or ((self.min_id, self.max_id),)
+        if not ranges:
+            raise ValueError("SI vehicle type requires at least one id range")
+        for minimum, maximum in ranges:
+            if minimum < 0 or maximum < minimum:
+                raise ValueError("SI vehicle id range is invalid")
         if not math.isfinite(self.work_speed_mps) or self.work_speed_mps <= 0.0:
             raise ValueError("SI vehicle workSpeedMps must be finite and positive")
         if not self.si_roles or not self.si_roles.issubset(_RING_ROLES):
             raise ValueError("SI vehicle roles must be a non-empty subset of inner/middle/outer")
 
+    @property
+    def ranges(self) -> tuple[tuple[int, int], ...]:
+        return self.id_ranges or ((self.min_id, self.max_id),)
+
     def contains(self, vehicle_identifier: int) -> bool:
-        return self.min_id <= vehicle_identifier <= self.max_id
+        return any(minimum <= vehicle_identifier <= maximum for minimum, maximum in self.ranges)
 
 
 def _object(value: object, name: str) -> Mapping[str, Any]:
@@ -164,11 +173,44 @@ def parse_si_vehicle_types(raw: object) -> tuple[OperationalSIVehicleType, ...]:
             _text(role, f"siVehicleTypes[{index}].siRoles")
             for role in _list(value.get("siRoles"), f"siVehicleTypes[{index}].siRoles")
         )
+        raw_ranges = value.get("ranges")
+        if raw_ranges is None:
+            ranges = (
+                (
+                    _integer(value.get("minId"), f"siVehicleTypes[{index}].minId"),
+                    _integer(value.get("maxId"), f"siVehicleTypes[{index}].maxId"),
+                ),
+            )
+        else:
+            parsed_ranges: list[tuple[int, int]] = []
+            for range_index, raw_range in enumerate(
+                _list(raw_ranges, f"siVehicleTypes[{index}].ranges")
+            ):
+                range_value = _object(
+                    raw_range,
+                    f"siVehicleTypes[{index}].ranges[{range_index}]",
+                )
+                parsed_ranges.append(
+                    (
+                        _integer(
+                            range_value.get("minId"),
+                            f"siVehicleTypes[{index}].ranges[{range_index}].minId",
+                        ),
+                        _integer(
+                            range_value.get("maxId"),
+                            f"siVehicleTypes[{index}].ranges[{range_index}].maxId",
+                        ),
+                    )
+                )
+            if not parsed_ranges:
+                raise ValueError("SI vehicle type ranges cannot be empty")
+            ranges = tuple(parsed_ranges)
         output.append(
             OperationalSIVehicleType(
                 type_id=type_id,
-                min_id=_integer(value.get("minId"), f"siVehicleTypes[{index}].minId"),
-                max_id=_integer(value.get("maxId"), f"siVehicleTypes[{index}].maxId"),
+                min_id=ranges[0][0],
+                max_id=ranges[0][1],
+                id_ranges=ranges,
                 work_speed_mps=_positive_number(
                     value.get("workSpeedMps"),
                     f"siVehicleTypes[{index}].workSpeedMps",
@@ -176,13 +218,20 @@ def parse_si_vehicle_types(raw: object) -> tuple[OperationalSIVehicleType, ...]:
                 si_roles=roles,
             )
         )
-    ordered = tuple(sorted(output, key=lambda item: (item.min_id, item.max_id, item.type_id)))
-    for previous, current in zip(ordered, ordered[1:]):
-        if current.min_id <= previous.max_id:
+    flattened = sorted(
+        (
+            (minimum, maximum, profile.type_id)
+            for profile in output
+            for minimum, maximum in profile.ranges
+        ),
+        key=lambda item: (item[0], item[1], item[2]),
+    )
+    for previous, current in zip(flattened, flattened[1:]):
+        if current[0] <= previous[1]:
             raise ValueError(
-                f"overlapping SI vehicle id ranges: {previous.type_id} and {current.type_id}"
+                f"overlapping SI vehicle id ranges: {previous[2]} and {current[2]}"
             )
-    return ordered
+    return tuple(sorted(output, key=lambda item: (item.min_id, item.max_id, item.type_id)))
 
 
 def resolve_si_vehicle_type(
