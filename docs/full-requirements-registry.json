@@ -114,6 +114,7 @@
       "BW-CORE-006",
       "BW-CORE-007",
       "BW-CORE-008",
+      "BW-CORE-009",
       "BW-CORE-010",
       "BW-CORE-011",
       "BW-CORE-012",
@@ -208,7 +209,6 @@
     "partial": [
       "BW-GOV-007",
       "BW-GOV-010",
-      "BW-CORE-009",
       "BW-SYNC-013",
       "BW-DATA-010",
       "BW-OFF-009",
