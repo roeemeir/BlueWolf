@@ -29,14 +29,16 @@ test('PROC-01 builder produces one conservative current-head row for every regis
   assert.deepEqual(await verifyAuditEvidencePaths(audit.requirements), []);
 });
 
-test('BW-DATA-010 stays partial until dedicated end-to-end latency evidence is registered', async () => {
+test('BW-DATA-010 is verified only with real InfluxDB2 end-to-end latency evidence', async () => {
   const { registry } = await fixture();
-  assert.ok(registry.sourceImplementation.partial.includes('BW-DATA-010'));
-  const audit = buildCurrentHeadAudit(registry, { headSha: 'test-head', reviewedAt: '2026-09-17T00:00:00.000Z' });
+  assert.ok(registry.sourceImplementation.yes.includes('BW-DATA-010'));
+  const audit = buildCurrentHeadAudit(registry, { headSha: 'test-head', reviewedAt: '2026-09-18T00:00:00.000Z' });
   const row = audit.requirements['BW-DATA-010'];
-  assert.equal(row.implementation, 'partial');
-  assert.equal(row.verified, false);
-  assert.match(row.gap, /pending dedicated current-head acceptance closure/i);
+  assert.equal(row.implementation, 'yes');
+  assert.equal(row.verified, true);
+  assert.ok(row.acceptanceEvidence.includes('core/tests/test_latency_influx_e2e.py'));
+  assert.ok(row.acceptanceEvidence.includes('.github/workflows/data10-latency.yml'));
+  assert.deepEqual(await verifyAuditEvidencePaths({ 'BW-DATA-010': row }), []);
 });
 
 test('PROC-01 exact-head validation rejects a recycled audit from another commit', async () => {
