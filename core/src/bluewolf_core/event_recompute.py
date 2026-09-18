@@ -34,8 +34,10 @@ from uuid import uuid4
 
 from .config import ScoringConfig
 from .event_route_evidence import SOEventRouteEvidence
+from .si_scoring import SIScoringMemberInput, score_si_template
 from .so_scoring import SOScoringObservation, score_so_template
 from .so_templates import SOTemplate
+from .templates import SynchronizationTemplate
 
 
 def _utc(value: datetime) -> datetime:
@@ -163,6 +165,65 @@ class SOEventObservationFrame:
         route_instances = [item.route_instance_id for item in self.routes]
         if len(route_instances) != len(set(route_instances)):
             raise ValueError("route evidence instance ids must be unique per frame")
+
+
+@dataclass(frozen=True, slots=True)
+class SIEventObservationFrame:
+    """Immutable SI scoring evidence captured for one event timestamp."""
+
+    event_id: str
+    server_id: int
+    group_id: str
+    sample_time_utc: datetime
+    observations: tuple[SIScoringMemberInput, ...]
+    active_template_id: str | None = None
+    pending_reason: str | None = None
+    navigation: tuple[SOEventNavigationPoint, ...] = ()
+    routes: tuple[SOEventRouteEvidence, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.event_id:
+            raise ValueError("event_id is required")
+        if isinstance(self.server_id, bool) or not isinstance(self.server_id, int) or self.server_id < 0:
+            raise ValueError("server_id must be a non-negative integer")
+        if not self.group_id:
+            raise ValueError("group_id is required")
+        object.__setattr__(self, "sample_time_utc", _utc(self.sample_time_utc))
+        if self.active_template_id == "":
+            raise ValueError("active_template_id must be non-empty when supplied")
+        if self.pending_reason == "":
+            raise ValueError("pending_reason must be non-empty when supplied")
+        if len(self.observations) < 2 and self.pending_reason is None:
+            raise ValueError("fewer than two SI observations require a pending_reason")
+        member_ids = [item.member.member_id for item in self.observations]
+        if len(member_ids) != len(set(member_ids)):
+            raise ValueError("SI recompute frame member ids must be unique")
+        navigation_members = [item.member_id for item in self.navigation]
+        if len(navigation_members) != len(set(navigation_members)):
+            raise ValueError("navigation frame member ids must be unique")
+        route_instances = [item.route_instance_id for item in self.routes]
+        if len(route_instances) != len(set(route_instances)):
+            raise ValueError("route evidence instance ids must be unique per frame")
+
+
+def si_template_fingerprint(template: SynchronizationTemplate) -> str:
+    payload = {
+        "template_id": template.template_id,
+        "name": template.name,
+        "family": template.family.value,
+        "slots": [
+            {
+                "slot_id": slot.slot_id,
+                "vehicle_type": slot.vehicle_type,
+                "phase_offset": slot.phase_offset,
+                "phase_sign": slot.phase_sign,
+                "route_role": slot.route_role,
+            }
+            for slot in template.slots
+        ],
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return "tpl-" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _finite_score(value: float | None) -> float | None:
@@ -365,9 +426,153 @@ def recompute_so_event(
     }
 
 
+def recompute_si_event(
+    *,
+    event_id: str,
+    template: SynchronizationTemplate,
+    frames: tuple[SIEventObservationFrame, ...],
+    code_version: str,
+    config_version: str,
+    template_version: str | None = None,
+    scenario_id: str | None = None,
+    run_id: str | None = None,
+    config: ScoringConfig | None = None,
+    minimum_valid_vehicles: int = 2,
+) -> dict[str, Any]:
+    """Replay one SI event against one template using immutable Core evidence."""
+
+    if not event_id:
+        raise ValueError("event_id is required")
+    for name, value in (("code_version", code_version), ("config_version", config_version)):
+        if not value:
+            raise ValueError(f"{name} is required")
+    if not frames:
+        raise ValueError("event recomputation requires captured observation frames")
+    resolved_template_version = template_version or si_template_fingerprint(template)
+    resolved_scenario_id = (scenario_id or event_id).strip()
+    resolved_run_id = (run_id or f"recompute-{uuid4().hex}").strip()
+    ordered = tuple(sorted(frames, key=lambda frame: frame.sample_time_utc))
+    if any(frame.event_id != event_id for frame in ordered):
+        raise ValueError("all recompute frames must belong to the requested event")
+    server_ids = {frame.server_id for frame in ordered}
+    group_ids = {frame.group_id for frame in ordered}
+    if len(server_ids) != 1 or len(group_ids) != 1:
+        raise ValueError("recompute frames must belong to one server and one group")
+    timestamps = [frame.sample_time_utc for frame in ordered]
+    if len(timestamps) != len(set(timestamps)):
+        raise ValueError("recompute frames must have unique timestamps")
+
+    known_route_sets = [frame.routes for frame in ordered if frame.routes]
+    route_evidence: tuple[SOEventRouteEvidence, ...] = ()
+    if known_route_sets:
+        route_evidence = tuple(sorted(known_route_sets[0], key=lambda item: item.route_instance_id))
+        for routes in known_route_sets[1:]:
+            normalized = tuple(sorted(routes, key=lambda item: item.route_instance_id))
+            if normalized != route_evidence:
+                raise ValueError("archived event contains changing detected-route evidence")
+
+    points: list[dict[str, Any]] = []
+    reason_counts: dict[str, int] = {}
+    group_totals: list[float] = []
+    group_sync: list[float] = []
+    group_route: list[float] = []
+    scored_frame_count = 0
+
+    for frame in ordered:
+        navigation = [_navigation_payload(item) for item in frame.navigation]
+        if frame.pending_reason is not None:
+            points.append({
+                "observedAt": _iso(frame.sample_time_utc),
+                "pendingReason": frame.pending_reason,
+                "group": {"valid": False, "sync": None, "route": None, "total": None},
+                "members": [],
+                "navigation": navigation,
+            })
+            continue
+        result = score_si_template(
+            template,
+            frame.observations,
+            config=config,
+            minimum_valid_vehicles=minimum_valid_vehicles,
+        )
+        scored_frame_count += 1
+        group = result.group_scores
+        total = _finite_score(group.total)
+        sync = _finite_score(group.sync)
+        route = _finite_score(group.route)
+        if total is not None:
+            group_totals.append(total)
+        if sync is not None:
+            group_sync.append(sync)
+        if route is not None:
+            group_route.append(route)
+        fit_by_member = {item.member_id: item for item in result.fit.members}
+        members: list[dict[str, Any]] = []
+        for member_id, scores in sorted(result.member_scores.items()):
+            fitted = fit_by_member[member_id]
+            reason = scores.primary_reason
+            if reason:
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+            members.append({
+                "memberId": member_id,
+                "routeInstanceId": None,
+                "slotId": fitted.slot_id,
+                "expectedPhase": fitted.expected_phase,
+                "positionErrorCycle": fitted.position_error_cycle,
+                "valid": scores.valid,
+                "sync": _finite_score(scores.sync),
+                "route": _finite_score(scores.route),
+                "total": _finite_score(scores.total),
+                "primaryReason": reason,
+            })
+        points.append({
+            "observedAt": _iso(frame.sample_time_utc),
+            "pendingReason": None,
+            "group": {"valid": group.valid, "sync": sync, "route": route, "total": total},
+            "members": members,
+            "navigation": navigation,
+        })
+
+    def average(values: list[float]) -> float | None:
+        return None if not values else round(sum(values) / len(values), 6)
+
+    return {
+        "schemaVersion": "bluewolf.event-recompute.v1",
+        "family": "SI",
+        "runId": resolved_run_id,
+        "scenarioId": resolved_scenario_id,
+        "eventId": event_id,
+        "serverId": next(iter(server_ids)),
+        "groupId": next(iter(group_ids)),
+        "templateId": template.template_id,
+        "templateVersion": resolved_template_version,
+        "codeVersion": code_version,
+        "configVersion": config_version,
+        "startAt": _iso(ordered[0].sample_time_utc),
+        "endAt": _iso(ordered[-1].sample_time_utc),
+        "frameCount": len(ordered),
+        "scoredFrameCount": scored_frame_count,
+        "missingFrameCount": len(ordered) - scored_frame_count,
+        "routes": [_route_payload(item) for item in route_evidence],
+        "summary": {
+            "sync": average(group_sync),
+            "route": average(group_route),
+            "total": average(group_totals),
+        },
+        "rootCauses": [
+            {"reason": reason, "occurrences": count}
+            for reason, count in sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        "points": points,
+    }
+
+
 __all__ = [
+    "SIEventObservationFrame",
     "SOEventNavigationPoint",
     "SOEventObservationFrame",
+    "recompute_si_event",
     "recompute_so_event",
+    "si_template_fingerprint",
     "template_fingerprint",
 ]
