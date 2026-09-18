@@ -214,6 +214,9 @@ class SIProducerTests(unittest.TestCase):
         route, _, producer = _producer(1.0 / 3.0)
         first = producer.publish_poll(_poll(route, START, 0.0, 1.0 / 3.0))
         self.assertIsNotNone(first.snapshot)
+        first_group = first.snapshot["groups"]["si"]  # type: ignore[index]
+        self.assertIn("event", first_group)
+        first_event_id = first_group["event"]["id"]
         state = SIFamilyRuntimeAdapter(producer).export_state()
 
         restored_route, _, restored_producer = _producer(1.0 / 3.0)
@@ -233,6 +236,7 @@ class SIProducerTests(unittest.TestCase):
         group = second.snapshot["groups"]["si"]  # type: ignore[index]
         self.assertTrue(group["scoreValid"])
         self.assertEqual(group["sync"], 100.0)
+        self.assertEqual(group["event"]["id"], first_event_id)
 
     def test_missing_vehicle_profile_fails_closed_without_publishing_group(self) -> None:
         route = _route()
