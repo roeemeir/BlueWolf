@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CalendarRange, ChevronDown, Download, FileChartColumn, MapPinned, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import type { DataMode } from "@/lib/bluewolf";
 import type { EventRecomputeResult } from "@/lib/investigation-contract";
 import { buildInvestigationReleasePdf } from "@/lib/investigation-pdf-release";
 import { normalizeInvestigationReportData, type InvestigationReportDataEnvelope } from "@/lib/investigation-report-data";
@@ -31,6 +32,11 @@ type LoadState =
 type PdfState = "idle" | "running" | "done";
 
 type GeoPoint = { latitude: number; longitude: number };
+
+function localDateTimeInput(value: Date) {
+  const offset = value.getTimezoneOffset() * 60_000;
+  return new Date(value.getTime() - offset).toISOString().slice(0, 16);
+}
 
 function inputTimeToIso(value: string, name: string) {
   if (!value) throw new Error(`יש לבחור ${name}`);
@@ -222,13 +228,23 @@ function groupSummary(events: InvestigationReportDataEnvelope["report"]["events"
   return [...groups.entries()].map(([groupId, row]) => ({ groupId, eventCount: row.eventCount, frames: row.frames, sync: row.syncWeight ? row.sync / row.syncWeight : null, route: row.routeWeight ? row.route / row.routeWeight : null, total: row.totalWeight ? row.total / row.totalWeight : null }));
 }
 
-export function InvestigationWorkspace({ server, onServerChange }: { server: string; onServerChange: (value: string) => void }) {
+export function InvestigationWorkspace({ server, onServerChange, dataMode }: { server: string; onServerChange: (value: string) => void; dataMode: DataMode }) {
   const { state } = useWorkspace();
   const edits = state.investigationEdits as Record<string, InvestigationEdit>;
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [loadState, setLoadState] = useState<LoadState>({ kind: "idle" });
   const [pdfState, setPdfState] = useState<PdfState>("idle");
+
+  useEffect(() => {
+    if (dataMode !== "simulation" || from || to) return;
+    const now = new Date();
+    setTo(localDateTimeInput(now));
+    setFrom(localDateTimeInput(new Date(now.getTime() - 7 * 24 * 60 * 60_000)));
+  }, [dataMode, from, to]);
+
+  const reportSource = dataMode === "simulation" ? "simulation" : "core";
+  const reportSourceHeader = dataMode === "simulation" ? "simulator-archive" : "core-event-archive";
 
   const loadReport = async () => {
     let fromIso: string;
@@ -249,7 +265,7 @@ export function InvestigationWorkspace({ server, onServerChange }: { server: str
         headers: { "content-type": "application/json", accept: "application/json" },
         cache: "no-store",
         body: JSON.stringify({
-          serverId: Number(server), from: fromIso, to: toIso, format: "data",
+          serverId: Number(server), from: fromIso, to: toIso, format: "data", source: reportSource,
           overrides: Object.entries(edits).map(([eventId, edit]) => ({
             eventId,
             templateId: edit.templateId || null,
@@ -268,7 +284,7 @@ export function InvestigationWorkspace({ server, onServerChange }: { server: str
         const missing = Array.isArray(row.missingTemplateEvents) ? ` · חסרה תבנית מקורית ל-${row.missingTemplateEvents.length} אירועים` : "";
         throw new Error(`${row.error ? String(row.error) : `report data returned ${response.status}`}${missing}`);
       }
-      if (response.headers.get("x-bluewolf-report-source") !== "core-event-archive") throw new Error("מקור הדוח לא אומת כ-Core event archive");
+      if (response.headers.get("x-bluewolf-report-source") !== reportSourceHeader) throw new Error("מקור הדוח אינו תואם למצב הנתונים שנבחר");
       const envelope = normalizeInvestigationReportData(payload);
       setLoadState({ kind: "ready", envelope, fromLocal: from, toLocal: to });
     } catch (error) {
@@ -302,7 +318,7 @@ export function InvestigationWorkspace({ server, onServerChange }: { server: str
         <label><span>שרת</span><Select value={server} onValueChange={(value) => { onServerChange(value); setLoadState({ kind: "idle" }); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.servers.filter((item) => item.enabled).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></label>
         <Button className="investigation-confirm" onClick={loadReport} disabled={loadState.kind === "loading"}><FileChartColumn />{loadState.kind === "loading" ? "טוען דוח…" : "אישור והצג דוח"}</Button>
       </div>
-      {loadState.kind === "loading" && <div className="investigation-status"><ShieldCheck /><span>טוען אירועים ומחשב את הדוח מה־Core Event Archive. אין progress מומצא.</span></div>}
+      {loadState.kind === "loading" && <div className="investigation-status"><ShieldCheck /><span>{dataMode === "simulation" ? "טוען 7 ימי אירועי סימולציה דטרמיניסטיים. אין progress מומצא." : "טוען אירועים ומחשב את הדוח מה־Core Event Archive. אין progress מומצא."}</span></div>}
       {loadState.kind === "error" && <div className="investigation-status error"><TriangleAlert /><span>{loadState.detail}</span></div>}
     </section>
     <style jsx>{investigationStyles}</style>
@@ -311,7 +327,7 @@ export function InvestigationWorkspace({ server, onServerChange }: { server: str
   const { envelope } = loadState;
   return <div className="investigation-workspace report-ready" dir="rtl" data-requirements="BW-REP-001 BW-REP-003 BW-REP-004 BW-REP-008 BW-UI-014">
     <section className="investigation-report-hero glass-panel">
-      <div><p className="eyebrow">Web Investigation Report</p><h2>דוח תחקור · שרת {server}</h2><p>{formatTime(envelope.report.from ?? envelope.report.events[0].result.startAt)} — {formatTime(envelope.report.to ?? envelope.report.events.at(-1)!.result.endAt)}</p><div className="report-provenance"><Badge variant="outline">Core Archive</Badge><Badge variant="outline">code {envelope.codeVersion.slice(0, 10)}</Badge><Badge variant="outline">config {envelope.configVersion.slice(0, 10)}</Badge></div></div>
+      <div><p className="eyebrow">Web Investigation Report</p><h2>דוח תחקור · שרת {server}</h2><p>{formatTime(envelope.report.from ?? envelope.report.events[0].result.startAt)} — {formatTime(envelope.report.to ?? envelope.report.events.at(-1)!.result.endAt)}</p><div className="report-provenance"><Badge variant="outline">{envelope.source === "simulator-archive" ? "SIM · 7-day Archive" : "Core Archive"}</Badge><Badge variant="outline">code {envelope.codeVersion.slice(0, 10)}</Badge><Badge variant="outline">config {envelope.configVersion.slice(0, 10)}</Badge></div></div>
       <div className="report-actions"><Button variant="outline" onClick={() => { setLoadState({ kind: "idle" }); setPdfState("idle"); }}><RefreshCw />שנה טווח</Button><Button onClick={generatePdf} disabled={pdfState === "running"}><Download />{pdfState === "running" ? "מפיק PDF…" : "הפק דוח PDF"}</Button></div>
     </section>
 
