@@ -6,12 +6,18 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from bluewolf_core.event_recompute import (
+    SIEventObservationFrame,
     SOEventNavigationPoint,
     SOEventObservationFrame,
+    recompute_si_event,
     recompute_so_event,
+    si_template_fingerprint,
     template_fingerprint,
 )
+from bluewolf_core.models import PrimitiveMetrics, RouteFamily
+from bluewolf_core.si_scoring import SIScoringMemberInput
 from bluewolf_core.so_scoring import SOScoringObservation
+from bluewolf_core.templates import ObservedMember, SynchronizationTemplate, TemplateSlot
 from bluewolf_core.so_templates import Quarter, SORouteInstance, SORouteKind, SOTemplate, SOVehicleSlot
 from bluewolf_runtime_adapter.event_observation_archive import SOEventObservationArchive
 
@@ -117,7 +123,86 @@ def _other_event_frame(at: datetime) -> SOEventObservationFrame:
     )
 
 
+
+def _si_template(template_id: str, separation_deg: float) -> SynchronizationTemplate:
+    return SynchronizationTemplate(
+        template_id=template_id,
+        name=template_id,
+        family=RouteFamily.SI,
+        slots=(
+            TemplateSlot("outer-a", "outer", 0.0, route_role="outer"),
+            TemplateSlot("outer-b", "outer", separation_deg / 360.0, route_role="outer"),
+        ),
+    )
+
+
+def _si_observations(phase_a: float = 0.0, phase_b: float = 1.0 / 3.0) -> tuple[SIScoringMemberInput, ...]:
+    def one(member_id: str, phase: float) -> SIScoringMemberInput:
+        return SIScoringMemberInput(
+            member=ObservedMember(member_id, "outer", phase, "outer"),
+            metrics=PrimitiveMetrics(
+                family=RouteFamily.SI,
+                position_error=0.0,
+                period_error_ratio=0.0,
+                movement_error_ratio=0.0,
+                distance_error_b_ratio=0.0,
+                tangent_error_deg=0.0,
+                curvature_error_ratio=0.0,
+                reliability=1.0,
+                speed_fraction=1.0,
+                active=True,
+                diagnostics={"source": "si-core-test"},
+            ),
+        )
+    return one("v1", phase_a), one("v2", phase_b)
+
+
+def _si_frame(at: datetime) -> SIEventObservationFrame:
+    return SIEventObservationFrame(
+        event_id="si-g@2026-09-15T08:00:00Z",
+        server_id=7,
+        group_id="si-g",
+        sample_time_utc=at,
+        observations=_si_observations(),
+        active_template_id="si-120",
+        navigation=_navigation(0.02),
+    )
+
+
 class EventRecomputeTests(unittest.TestCase):
+    def test_si_template_change_recomputes_from_same_immutable_evidence(self) -> None:
+        start = datetime(2026, 9, 15, 8, 0, tzinfo=UTC)
+        frames = (_si_frame(start), _si_frame(start + timedelta(seconds=1)))
+        baseline_template = _si_template("si-120", 120.0)
+        changed_template = _si_template("si-90", 90.0)
+
+        baseline = recompute_si_event(
+            event_id=frames[0].event_id,
+            template=baseline_template,
+            frames=frames,
+            code_version="sha-si",
+            config_version="cfg-si",
+            run_id="si-baseline",
+        )
+        changed = recompute_si_event(
+            event_id=frames[0].event_id,
+            template=changed_template,
+            frames=frames,
+            code_version="sha-si",
+            config_version="cfg-si",
+            run_id="si-changed",
+        )
+
+        self.assertEqual(baseline["family"], "SI")
+        self.assertEqual(baseline["templateVersion"], si_template_fingerprint(baseline_template))
+        self.assertEqual(baseline["frameCount"], 2)
+        self.assertEqual(baseline["missingFrameCount"], 0)
+        self.assertGreater(baseline["summary"]["sync"], changed["summary"]["sync"])
+        self.assertNotEqual(
+            baseline["points"][0]["members"][1]["positionErrorCycle"],
+            changed["points"][0]["members"][1]["positionErrorCycle"],
+        )
+
     def test_template_change_recomputes_real_scores_from_same_core_observations(self) -> None:
         start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
         frames = (_frame(start), _frame(start + timedelta(seconds=1), 0.02, 0.52))
@@ -211,6 +296,20 @@ class EventRecomputeTests(unittest.TestCase):
 
 
 class EventObservationArchiveTests(unittest.TestCase):
+    def test_si_event_archive_round_trip_preserves_family_and_inputs(self) -> None:
+        start = datetime(2026, 9, 15, 8, 0, tzinfo=UTC)
+        frame = _si_frame(start)
+        with TemporaryDirectory() as directory:
+            archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
+            self.assertTrue(archive.record_frame(frame))
+            restored = archive.read_event(frame.event_id)
+            self.assertEqual(restored, (frame,))
+            listed = archive.list_events(7)
+            self.assertEqual(listed[0]["eventId"], frame.event_id)
+            self.assertEqual(listed[0]["family"], "SI")
+            self.assertEqual(listed[0]["activeTemplateId"], "si-120")
+            self.assertIsInstance(restored[0], SIEventObservationFrame)
+
     def test_event_evidence_is_immutable_round_trips_navigation_and_recompute_provenance_persists(self) -> None:
         start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
         pending = _pending_frame(start)
