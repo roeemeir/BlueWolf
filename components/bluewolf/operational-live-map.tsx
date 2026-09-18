@@ -96,6 +96,7 @@ export function OperationalLiveMap({
   const [showTemplate, setShowTemplate] = useState(true);
   const [showContext, setShowContext] = useState(showGrid);
   useEffect(() => setShowScoreTrace(showTrace), [showTrace]);
+  useEffect(() => setShowContext(showGrid), [showGrid]);
   const [traceWindowMinutes, setTraceWindowMinutes] = useState<number>(DEFAULT_TRACE_WINDOW_MINUTES);
   const [wmtsVisibility, setWmtsVisibility] = useState<Record<string, string[]>>({});
   const [cursorObservedAt, setCursorObservedAt] = useState<string | null>(() => currentOperatorCursor(serverId));
@@ -181,7 +182,7 @@ export function OperationalLiveMap({
   const historical = cursorObservedAt !== null;
   const historicalLabel = cursorFrame ? new Date(cursorFrame.timeMs).toLocaleTimeString("he-IL") : null;
 
-  return <div className="operational-map-layer-shell" dir="rtl" data-requirements="OP-02 OP-04 BW-OFF-010 BW-UI-005">
+  return <div className="operational-map-layer-shell" dir="rtl" data-requirements="OP-02 OP-04 BW-OFF-010 BW-UI-005 BW-UI-014 UI-01">
     <div className="v04-map-layer-controls" style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "6px 8px" }}>
       <button type="button" className={showBase ? "active" : ""} onClick={() => setShowBase((value) => !value)}>בסיס</button>
       <button type="button" className={showObservedTrace ? "active" : ""} onClick={() => setShowObservedTrace((value) => !value)}>עקבה נצפית</button>
