@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Beaker, Check, CheckCircle2, ChevronLeft, Database, Gauge, Info, Layers3, LoaderCircle, MapPinned, Pause, Play, Plus, Save, Search, Server, Settings2, ShieldCheck, SlidersHorizontal, Trash2, UsersRound } from "lucide-react";
+import { Activity, Beaker, Check, CheckCircle2, ChevronLeft, Database, Gauge, Info, Layers3, LoaderCircle, MapPinned, Pause, Play, Plus, Save, Search, Server, Settings2, ShieldCheck, SlidersHorizontal, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -24,7 +24,6 @@ import {
   type Family,
   type GtSegment,
   type InfluxFieldMapping,
-  type RingRole,
   type ScoreThresholds,
   type ScoreWeights,
   type SoRelation,
@@ -34,7 +33,7 @@ import {
 } from "@/lib/bluewolf";
 import { THRESHOLD_EXPLAINERS, thresholdClassificationLabel } from "@/lib/threshold-explainer";
 import { useWorkspace } from "./app-context";
-import { GtPlayback, RouteBankMap, TemplatePreview, VehicleIconGlyph } from "./visuals";
+import { GtPlayback, RouteBankMap, TemplatePreview } from "./visuals";
 
 const sectionItems: { id: DeveloperSection; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: "score", label: "ציון וספים", icon: Activity },
@@ -176,8 +175,11 @@ const qaCategories = [
 function TestsSection() { const total = qaCategories.reduce((sum, item) => sum + item.scenarios, 0); const passed = qaCategories.reduce((sum, item) => sum + item.passed, 0); return <><SectionHeader eyebrow="QA אגרגטיבי" title="בדיקות מערכת לפי פונקציונליות" description="המסקנה מתקבלת על עשרות ומאות תרחישי GT, לא מאירוע יחיד."><Badge variant="outline">{passed}/{total} תרחישים</Badge></SectionHeader><div className="v04-qa-grid">{qaCategories.map((item) => <article className="glass-panel" key={item.id}><header><ShieldCheck /><div><strong>{item.title}</strong><span>{item.scenarios} תרחישים</span></div><b>{item.metric}</b></header><Progress value={item.passed / item.scenarios * 100} /><p>{item.detail}</p><footer><span>עברו {item.passed}</span><span>נכשלו {item.scenarios - item.passed}</span></footer></article>)}</div><section className="v04-qa-summary glass-panel"><div><p className="eyebrow">מסקנת QA</p><h3>הצגה לפי פונקציה + מגמה</h3><p>כאשר בנק ה־GT יגדל, כל כרטיס יציג התפלגות שגיאה, p50/p95, regressions והבדל בין גרסאות.</p></div><Button onClick={() => toast.success("הרצת QA מלאה הוכנה לפי הקטגוריות") }><Play />הרץ QA מלא</Button></section></>; }
 
 function SettingsSection() {
-  const { state, save } = useWorkspace(); const [servers, setServers] = useState(structuredClone(state.servers)); const [arenas, setArenas] = useState([...state.arenas]); const [newArena, setNewArena] = useState(""); const [vehicleTypes, setVehicleTypes] = useState(structuredClone(state.vehicleTypes)); const roleLabels: Record<RingRole, string> = { inner: "פנימית", middle: "ביניים", outer: "חיצונית" };
-  return <><SectionHeader eyebrow="מערכת" title="שרתים, זירות וסוגי רכב" description="שרתים וזירות הם ישויות נפרדות. צבע סוג רכב משמש לעריכת תבנית/נתיב בלבד."><Button onClick={() => save({ ...state, servers, arenas, vehicleTypes }, "settings", "save", "server-arena-decoupled")}><Save />שמור</Button></SectionHeader><div className="v04-settings-grid"><section className="glass-panel"><h3><Server />שרתים</h3>{servers.map((server, index) => <div className="v04-setting-row" key={server.id}><Switch checked={server.enabled} onCheckedChange={(enabled) => setServers(servers.map((item, itemIndex) => itemIndex === index ? { ...item, enabled } : item))} /><input value={server.name} onChange={(event) => setServers(servers.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} /><small>Influx tag {server.influxTag}</small></div>)}</section><section className="glass-panel"><h3><MapPinned />זירות</h3>{arenas.map((arena, index) => <div className="v04-setting-row" key={`${arena}-${index}`}><input value={arena} onChange={(event) => setArenas(arenas.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} /><Button variant="ghost" size="icon-sm" onClick={() => setArenas(arenas.filter((_, itemIndex) => itemIndex !== index))}><Trash2 /></Button></div>)}<div className="v04-setting-row"><input value={newArena} onChange={(event) => setNewArena(event.target.value)} placeholder="זירה חדשה" /><Button variant="outline" onClick={() => { if (newArena.trim()) { setArenas([...arenas, newArena.trim()]); setNewArena(""); } }}><Plus /></Button></div></section><section className="glass-panel"><h3><UsersRound />סוגי רכב</h3>{vehicleTypes.map((type, index) => <div className="v04-vehicle-type-row" key={type.id}><span className="v04-type-swatch" style={{ background: type.color }} /><svg viewBox="-15 -15 30 30"><VehicleIconGlyph icon={type.icon} color={type.color} /></svg><input value={type.name} onChange={(event) => setVehicleTypes(vehicleTypes.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} /><small>{type.siRoles.map((role) => roleLabels[role]).join(", ")}</small></div>)}</section></div></>;
+  const { state, save } = useWorkspace();
+  const [servers, setServers] = useState(structuredClone(state.servers));
+  const [arenas, setArenas] = useState([...state.arenas]);
+  const [newArena, setNewArena] = useState("");
+  return <><SectionHeader eyebrow="מערכת" title="שרתים וזירות" description="שרתים וזירות מנוהלים כאן. הגדרת סוגי רכב וטווחי מזהים נמצאת רק בטאב רכבים כדי למנוע שתי תצורות מתחרות."><Button onClick={() => save({ ...state, servers, arenas }, "settings", "save", "server-arena-decoupled")}><Save />שמור</Button></SectionHeader><div className="v04-settings-grid"><section className="glass-panel"><h3><Server />שרתים</h3>{servers.map((server, index) => <div className="v04-setting-row" key={server.id}><Switch checked={server.enabled} onCheckedChange={(enabled) => setServers(servers.map((item, itemIndex) => itemIndex === index ? { ...item, enabled } : item))} /><input value={server.name} onChange={(event) => setServers(servers.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} /><small>Influx tag {server.influxTag}</small></div>)}</section><section className="glass-panel"><h3><MapPinned />זירות</h3>{arenas.map((arena, index) => <div className="v04-setting-row" key={`${arena}-${index}`}><input value={arena} onChange={(event) => setArenas(arenas.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} /><Button variant="ghost" size="icon-sm" onClick={() => setArenas(arenas.filter((_, itemIndex) => itemIndex !== index))}><Trash2 /></Button></div>)}<div className="v04-setting-row"><input value={newArena} onChange={(event) => setNewArena(event.target.value)} placeholder="זירה חדשה" /><Button variant="outline" onClick={() => { if (newArena.trim()) { setArenas([...arenas, newArena.trim()]); setNewArena(""); } }}><Plus /></Button></div></section></div></>;
 }
 
 export function DeveloperView() {
