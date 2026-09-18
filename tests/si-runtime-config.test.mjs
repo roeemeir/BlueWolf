@@ -53,6 +53,7 @@ test("BW-SYNC-012 exports deterministic SI vehicle profiles for automatic live-g
     assert.equal(item.minId, source.minId);
     assert.equal(item.maxId, source.maxId);
     assert.equal(item.workSpeedMps, source.workSpeedKmh / 3.6);
+    assert.deepEqual(item.ranges, [{ minId: source.minId, maxId: source.maxId }]);
     assert.deepEqual(new Set(item.siRoles), new Set(source.siRoles));
   }
 });
@@ -111,4 +112,19 @@ test("BW-SYNC-012 SI runtime update preserves unrelated operational and SO confi
   assert.deepEqual(output.unrelated, existing.unrelated);
   assert.equal(output.siTemplates[0].id, "si-new");
   assert.equal(output.siVehicleTypes.length, DEFAULT_WORKSPACE.vehicleTypes.length);
+});
+
+
+test("BW-DEV-005 exports every configured vehicle-id range into the operational Core config", () => {
+  const [first, ...rest] = DEFAULT_WORKSPACE.vehicleTypes;
+  const custom = [
+    { ...first, minId: 10, maxId: 19, idRanges: [{ minId: 10, maxId: 19 }, { minId: 40, maxId: 49 }] },
+    ...rest,
+  ];
+  const output = operationalSiVehicleTypes(custom);
+  const exported = output.find((item) => item.id === first.id);
+  assert.ok(exported);
+  assert.deepEqual(exported.ranges, [{ minId: 10, maxId: 19 }, { minId: 40, maxId: 49 }]);
+  assert.equal(exported.minId, 10);
+  assert.equal(exported.maxId, 19);
 });
