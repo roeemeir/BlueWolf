@@ -94,6 +94,7 @@ export type EventRecomputePoint = {
 
 export type EventRecomputeResult = {
   schemaVersion: typeof EVENT_RECOMPUTE_SCHEMA;
+  family: "SI" | "SO";
   runId: string;
   scenarioId: string;
   eventId: string;
@@ -325,8 +326,11 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
   });
   const observedMissing = points.filter((point) => point.pendingReason !== null).length;
   if (observedMissing !== missingFrameCount) throw new Error("missingFrameCount does not match pending points");
+  const family = (row.family === undefined ? "SO" : text(row.family, "recompute family")) as "SI" | "SO";
+  if (family !== "SI" && family !== "SO") throw new Error("recompute family must be SI or SO");
   return {
     schemaVersion: EVENT_RECOMPUTE_SCHEMA,
+    family,
     runId: text(row.runId, "runId"), scenarioId: text(row.scenarioId, "scenarioId"), eventId: text(row.eventId, "eventId"),
     serverId: integer(row.serverId, "serverId"), groupId: text(row.groupId, "groupId"), templateId: text(row.templateId, "templateId"),
     templateVersion: text(row.templateVersion, "templateVersion"), codeVersion: text(row.codeVersion, "codeVersion"), configVersion: text(row.configVersion, "configVersion"),
