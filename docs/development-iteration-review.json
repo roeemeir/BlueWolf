@@ -2,8 +2,8 @@
   "schemaVersion": "bluewolf.development-iteration-review.v1",
   "iterationId": "requirements-governance-2026-09-18",
   "branch": "work/requirements-governance-2026-09-15",
-  "baselineHead": "63a6404448e88210efb0ad508815053cb3396912",
-  "reviewedAt": "2026-09-18T08:10:00.000Z",
+  "baselineHead": "d1cbe18ef46488d264cb638957be44d739e66967",
+  "reviewedAt": "2026-09-18T08:18:00.000Z",
   "requirementCount": 143,
   "policy": "Every iteration reviews the complete registry before selecting new work. Existing yes requirements are protected; open requirements are reviewed explicitly; user-manual re-verification remains separate from engineering selection.",
   "protectedRequirements": [
@@ -116,6 +116,7 @@
     "BW-UI-008",
     "BW-UI-011",
     "BW-UI-015",
+    "CFG-01",
     "CFG-02",
     "GEO-01",
     "GEO-02",
@@ -138,7 +139,6 @@
     "BW-UI-012",
     "BW-UI-013",
     "BW-UI-014",
-    "CFG-01",
     "OP-01",
     "OP-02",
     "OP-03",
@@ -155,8 +155,7 @@
   ],
   "selectedForWork": [
     "BW-GOV-010",
-    "BW-UI-013",
-    "CFG-01"
+    "BW-UI-013"
   ],
   "manualReverifyRequired": [
     "BW-DEV-001",
