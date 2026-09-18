@@ -43,9 +43,8 @@ async function preparedLocalWorkspace(workspaceId: string) {
   // user-owned, and an empty installation can expose the out-of-box Tel Aviv
   // WMTS profile without committing it. The first real PUT therefore remains
   // revision 1 and browser/WKT/restart contracts stay deterministic.
-  if (current.state) return current;
-
-  const prepared = await prepareTelAvivDemoWorkspace(DEFAULT_WORKSPACE);
+  const source = current.state ?? DEFAULT_WORKSPACE;
+  const prepared = await prepareTelAvivDemoWorkspace(source);
   const normalized = normalizeAndValidateWorkspaceState(prepared);
   return {
     ...current,
