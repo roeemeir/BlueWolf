@@ -16,19 +16,19 @@ import os
 from typing import Any, Mapping
 from urllib.parse import parse_qs
 
-from bluewolf_core.event_recompute import recompute_so_event
+from bluewolf_core.event_recompute import SIEventObservationFrame, recompute_si_event, recompute_so_event
 
 from . import service
 from .event_archive_binding import attach_event_archives, operational_config_fingerprint
-from .event_lifecycle_archive import SOEventLifecycleArchive
-from .event_observation_archive import SOEventObservationArchive
+from .event_lifecycle_archive import EventLifecycleArchive, SOEventLifecycleArchive
+from .event_observation_archive import EventObservationArchive, SOEventObservationArchive
 from .qa_runner import run_deterministic_qa
 
 _MAX_BODY_BYTES = 64 * 1024
 _PROVENANCE_SCHEMA_VERSION = "bluewolf.runtime-provenance.v1"
 
-event_archive: SOEventObservationArchive | None = None
-event_lifecycle_archive: SOEventLifecycleArchive | None = None
+event_archive: EventObservationArchive | None = None
+event_lifecycle_archive: EventLifecycleArchive | None = None
 
 
 def _json_bytes(payload: Mapping[str, Any]) -> bytes:
@@ -85,7 +85,7 @@ def _pipeline_for_server(server_id: int):
     return None
 
 
-def _resolved_lifecycle_archive(archive: SOEventObservationArchive | None) -> SOEventLifecycleArchive | None:
+def _resolved_lifecycle_archive(archive: EventObservationArchive | None) -> EventLifecycleArchive | None:
     """Return lifecycle storage for the same SQLite file as observation evidence."""
 
     if event_lifecycle_archive is not None:
@@ -93,6 +93,49 @@ def _resolved_lifecycle_archive(archive: SOEventObservationArchive | None) -> SO
     if archive is None:
         return None
     return SOEventLifecycleArchive(archive.path)
+
+
+def _family_runtime(pipeline, family: str):
+    producer = pipeline.producer
+    normalized = family.strip().lower()
+    resolver = getattr(producer, "family", None)
+    if callable(resolver):
+        try:
+            return resolver(normalized).producer.runtime
+        except KeyError:
+            return None
+    if normalized == "so":
+        return getattr(producer, "runtime", None)
+    return None
+
+
+def _templates_for_pipeline(pipeline) -> list[dict[str, str]]:
+    output: list[dict[str, str]] = []
+    producer = pipeline.producer
+    family_names = tuple(getattr(producer, "family_names", ()))
+    if family_names:
+        for family in family_names:
+            runtime = _family_runtime(pipeline, family)
+            if runtime is None:
+                continue
+            if family == "si":
+                output.extend(
+                    {"id": template.template_id, "name": template.name, "family": "SI"}
+                    for template in runtime.templates
+                )
+            elif family == "so":
+                output.extend(
+                    {"id": entry.template.template_id, "name": entry.template.name, "family": "SO"}
+                    for entry in runtime.bank.entries
+                )
+        return output
+    runtime = getattr(producer, "runtime", None)
+    if runtime is not None and hasattr(runtime, "bank"):
+        output.extend(
+            {"id": entry.template.template_id, "name": entry.template.name, "family": "SO"}
+            for entry in runtime.bank.entries
+        )
+    return output
 
 
 def _optional_query_time(query: Mapping[str, list[str]], name: str) -> datetime | None:
@@ -221,7 +264,7 @@ class QaEnabledASGI:
         archive = event_archive
         lifecycle_archive = _resolved_lifecycle_archive(archive)
         if archive is None or lifecycle_archive is None:
-            await self._send_json(send, 503, {"status": "unavailable", "error": "SO event evidence archive is not configured"}, surface=b"core-event-archive")
+            await self._send_json(send, 503, {"status": "unavailable", "error": "event evidence archive is not configured"}, surface=b"core-event-archive")
             return
         try:
             query = self._query(scope)
@@ -247,9 +290,7 @@ class QaEnabledASGI:
             await self._send_json(send, 400, {"error": str(error)})
             return
         pipeline = _pipeline_for_server(server_id)
-        templates = []
-        if pipeline is not None:
-            templates = [{"id": entry.template.template_id, "name": entry.template.name} for entry in pipeline.producer.runtime.bank.entries]
+        templates = [] if pipeline is None else _templates_for_pipeline(pipeline)
         await self._send_json(
             send,
             200,
@@ -290,26 +331,50 @@ class QaEnabledASGI:
         if pipeline is None:
             await self._send_json(send, 503, {"status": "unavailable", "error": "operational Core runtime is unavailable for event server"})
             return
-        template = pipeline.producer.runtime.bank.template_by_id(template_id)
+        family = "SI" if isinstance(frames[0], SIEventObservationFrame) else "SO"
+        if any(("SI" if isinstance(frame, SIEventObservationFrame) else "SO") != family for frame in frames):
+            await self._send_json(send, 500, {"error": "event evidence mixes route families"})
+            return
+        runtime = _family_runtime(pipeline, family)
+        if runtime is None:
+            await self._send_json(send, 503, {"status": "unavailable", "error": f"{family} runtime is unavailable for event server"})
+            return
+        if family == "SI":
+            template = next((item for item in runtime.templates if item.template_id == template_id), None)
+        else:
+            template = runtime.bank.template_by_id(template_id)
         if template is None:
-            await self._send_json(send, 404, {"error": "template is not present in the active Core template bank"})
+            await self._send_json(send, 404, {"error": "template is not present in the active Core family template bank"})
             return
         provenance = _runtime_provenance()
         if provenance is None:
             await self._send_json(send, 503, {"status": "unavailable", "error": "code/config provenance is unavailable"})
             return
         try:
-            result = await asyncio.to_thread(
-                recompute_so_event,
-                event_id=event_id,
-                template=template,
-                frames=frames,
-                code_version=provenance["codeSha"],
-                config_version=provenance["configVersion"],
-                scenario_id=scenario_id,
-                config=pipeline.producer.runtime.scorer.scoring_config,
-                minimum_valid_vehicles=pipeline.producer.runtime.scorer.minimum_valid_vehicles,
-            )
+            if family == "SI":
+                result = await asyncio.to_thread(
+                    recompute_si_event,
+                    event_id=event_id,
+                    template=template,
+                    frames=frames,
+                    code_version=provenance["codeSha"],
+                    config_version=provenance["configVersion"],
+                    scenario_id=scenario_id,
+                    config=runtime.scoring_config,
+                    minimum_valid_vehicles=runtime.minimum_valid_vehicles,
+                )
+            else:
+                result = await asyncio.to_thread(
+                    recompute_so_event,
+                    event_id=event_id,
+                    template=template,
+                    frames=frames,
+                    code_version=provenance["codeSha"],
+                    config_version=provenance["configVersion"],
+                    scenario_id=scenario_id,
+                    config=runtime.scorer.scoring_config,
+                    minimum_valid_vehicles=runtime.scorer.minimum_valid_vehicles,
+                )
             result = {**result, "lifecycle": await asyncio.to_thread(lifecycle_archive.event_lifecycle, event_id)}
             await asyncio.to_thread(archive.record_recompute, result, created_at_utc=datetime.now(UTC))
         except (TypeError, ValueError) as error:
