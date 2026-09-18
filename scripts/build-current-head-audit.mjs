@@ -164,7 +164,7 @@ const VERIFIED = {
   'BANK-01': ['components/bluewolf/route-bank-wkt-workbench.tsx', 'lib/route-bank-geometry.ts', 'tests/route-bank-wkt.test.mjs', 'scripts/verify_wkt_browser_e2e.py'],
   'TEST-01': ['core/src/bluewolf_runtime_adapter/qa_runner.py', 'core/tests/test_qa_service.py'],
   'ARCH-01': ['scripts/start-offline.mjs', 'lib/sqlite-workspace.ts', '.github/workflows/ci.yml'],
-  'ARCH-02': ['core/src/bluewolf_runtime_adapter/family_environment_factory.py', 'core/src/bluewolf_runtime_adapter/family_runtime.py', 'core/src/bluewolf_runtime_adapter/runtime_config_common.py', 'core/src/bluewolf_runtime_adapter/so_family_config.py', 'core/tests/test_family_runtime_symmetry.py', '.github/workflows/si-live-runtime.yml'],
+  'ARCH-02': ['core/src/bluewolf_runtime_adapter/family_environment_factory.py', 'core/src/bluewolf_runtime_adapter/family_runtime.py', 'core/src/bluewolf_runtime_adapter/runtime_config_common.py', 'core/src/bluewolf_runtime_adapter/so_family_config.py', 'core/src/bluewolf_core/live_si_runtime.py', 'core/tests/test_family_runtime_symmetry.py', 'core/tests/test_live_si_scoring.py', '.github/workflows/si-live-runtime.yml'],
   'PROC-01': ['scripts/build-current-head-audit.mjs', 'scripts/verify-full-requirements-registry.mjs', '.github/workflows/release-gate.yml', 'tests/current-head-audit.test.mjs'],
   'OP-01': ['components/bluewolf/operator-view.tsx', 'tests/op01-arena-presentation.test.mjs'],
   'OP-02': ['components/bluewolf/operational-live-map.tsx', 'tests/op02-map-layers.test.mjs', '.github/workflows/op02-map.yml'],
