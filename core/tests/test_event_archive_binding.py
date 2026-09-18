@@ -50,6 +50,34 @@ class EventArchiveBindingTests(unittest.TestCase):
             second = operational_config_fingerprint(config_path)
             self.assertNotEqual(first, second)
 
+    def test_family_host_binds_each_event_capable_sibling_without_so_first_attribute(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive_path = root / "bluewolf-family.sqlite"
+            config_path = root / "runtime.json"
+            config_path.write_text(
+                json.dumps({"archive": {"path": str(archive_path)}}),
+                encoding="utf-8",
+            )
+            si_runtime = SimpleNamespace(observation_sink=None, lifecycle_sink=None)
+            so_runtime = SimpleNamespace(observation_sink=None, lifecycle_sink=None)
+            host = SimpleNamespace(
+                families=(
+                    SimpleNamespace(producer=SimpleNamespace(runtime=si_runtime)),
+                    SimpleNamespace(producer=SimpleNamespace(runtime=so_runtime)),
+                )
+            )
+            loop = SimpleNamespace(pipelines=(SimpleNamespace(producer=host),))
+
+            archive = attach_event_observation_archive(loop, config_path=config_path)
+
+            self.assertIsNotNone(archive)
+            assert archive is not None
+            for runtime in (si_runtime, so_runtime):
+                self.assertTrue(callable(runtime.observation_sink))
+                self.assertTrue(callable(runtime.lifecycle_sink))
+                self.assertIs(runtime.observation_sink.__self__, archive)
+
     def test_missing_archive_keeps_runtime_sink_unconfigured(self) -> None:
         with TemporaryDirectory() as directory:
             config_path = Path(directory) / "runtime.json"
