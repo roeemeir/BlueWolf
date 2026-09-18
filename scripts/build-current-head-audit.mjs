@@ -141,6 +141,7 @@ const VERIFIED = {
   'BW-UI-005': ['lib/operator-time-cursor.ts', 'components/bluewolf/operational-timeline.tsx', 'components/bluewolf/operational-live-map.tsx', 'tests/operator-time-cursor.test.mjs', 'tests/operator-time-cursor-ui.test.mjs'],
   'BW-UI-006': ['app/api/investigation/events/route.ts', 'tests/investigation-contract.test.mjs'],
   'BW-UI-007': ['components/bluewolf/operator-view.tsx', 'tests/operator-alert-mute.test.mjs'],
+  'BW-UI-008': ['core/src/bluewolf_core/live_so_event_runtime.py', 'core/src/bluewolf_runtime_adapter/contract.py', 'core/tests/test_live_runtime_contract.py', 'components/bluewolf/operator-view.tsx', 'components/bluewolf/operational-timeline.tsx', 'tests/operator-event-alert-linkage.test.mjs', '.github/workflows/operator-acceptance.yml'],
   'BW-UI-009': ['components/bluewolf/investigation-workspace.tsx', 'scripts/verify_ui_browser_e2e.py'],
   'BW-UI-010': ['components/bluewolf/operator-view.tsx', 'tests/ui-components.test.mjs'],
   'BW-UI-014': ['components/bluewolf/operational-live-map.tsx', 'tests/op02-map-layers.test.mjs', 'tests/map-source-ui.test.mjs'],
