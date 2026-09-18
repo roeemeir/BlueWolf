@@ -24,7 +24,7 @@ jobs:
       - name: Verify live Omniscale WMTS GetCapabilities + Tel Aviv GetTile
         run: node scripts/verify-omniscale-wmts.mjs
       - name: Validate GetCapabilities, named matrices, layer defaults, secret isolation, proxy and projection
-        run: node --test tests/wmts-capabilities.test.mjs tests/map-source-config.test.mjs tests/map-source-proxy.test.mjs tests/operational-map-projection.test.mjs tests/map-source-ui.test.mjs tests/default-map-profile.test.mjs
+        run: node --test tests/wmts-capabilities.test.mjs tests/map-source-config.test.mjs tests/map-source-proxy.test.mjs tests/map-source-secret-store.test.mjs tests/operational-map-projection.test.mjs tests/map-source-ui.test.mjs tests/default-map-profile.test.mjs
       - name: TypeScript check
         run: npx tsc --noEmit
       - name: Offline build
