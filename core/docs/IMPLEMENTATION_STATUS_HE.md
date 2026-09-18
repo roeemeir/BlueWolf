@@ -219,7 +219,7 @@ checkpoint חדש שומר compact points. Restore תומך גם ב־V1 ישן �
 
 כל כשל משמעותי שנמצא במהלך פיתוח הופך ל־regression קבוע לפני קידום baseline.
 
-ה־baseline המלא הנוכחי הוא `3c76d8bda4526ec7e36d7cbb3d3d4737ec6628a2`; `Blue Wolf CI` run `2163` הסתיים SUCCESS. בנוסף עברו על אותו SHA: SI Live Runtime #263, Operator #682, BW-OFF-010 #587, BW-DATA-010 #75, BW-OFF-009 #549 ו-BW-OFF-012 #571.
+ה־implementation baseline המאומת הנוכחי הוא `8e859273560d61af09095352579f37a94c4d45b1`; `Blue Wolf CI` run `2203` הסתיים SUCCESS. בנוסף עברו על אותו SHA: SI Live Runtime #303, Operator #722, OP-02 #710, OP-03 #763, UI/PDF #969, WKT #1056, BW-DATA-010 #90, IN-01 #820, BW-OFF-009 #589, BW-OFF-010 #627, BW-OFF-012 #611, BW-CORE-009 #96, REP-02 #905 ו-REP-03/04 #882.
 
 ## מה עדיין פתוח
 
@@ -236,3 +236,8 @@ checkpoint חדש שומר compact points. Restore תומך גם ב־V1 ישן �
 - SI template עובר Web → Workspace → operational config → Python parser → `LiveSIRuntimeProducer` → SI scoring → RuntimeSnapshot, כולל regression שמוכיח ששינוי template משנה score בפועל.
 - display smoothing מוגדר כיום כשכבת תצוגה בלבד ב-`lib/display-score-smoothing.ts`, עם חלונות 0/5/10/20/30 שניות; historical notes שבהם הנוסחה טרם הוגדרה נשמרים רק כ-history.
 - `ACTIVE_ALGORITHM_THRESHOLD_CATALOG.json` הוא catalog machine-checked לכל ברירות המחדל הפעילות של `CoreConfig`, `LivePollConfig` ו-`EventAlertConfig`, עם סיווג product/calibration/implementation_guard/compatibility ורציונל לכל סף.
+
+
+### Documentation synchronization gate
+
+`docs/documentation-sync.json` שומר fingerprint דטרמיניסטי של קבצי implementation וקישור ל-Master Specification ולמסמכי המחקר. `scripts/verify-documentation-sync.mjs` מחשב את fingerprint מחדש מתוך Git index. Release נחסם אם App/Core/Runtime/Deploy השתנו בלי refresh של תיעוד, כך ש-`BW-GOV-010` אינו תלוי עוד בזיכרון ידני בלבד.
