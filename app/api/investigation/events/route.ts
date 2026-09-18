@@ -1,3 +1,4 @@
+import { listSimulationInvestigationEvents } from "@/lib/simulation-investigation";
 import { normalizeInvestigationEvents } from "@/lib/investigation-contract";
 
 function runtimeConfig() {
@@ -7,10 +8,20 @@ function runtimeConfig() {
 }
 
 export async function GET(request: Request) {
-  const { baseUrl, token } = runtimeConfig();
-  if (!baseUrl) return Response.json({ status: "unavailable", error: "Python Core investigation archive is not configured" }, { status: 503 });
   const url = new URL(request.url);
   const serverId = url.searchParams.get("serverId")?.trim();
+  const source = url.searchParams.get("source")?.trim().toLowerCase();
+  if (source === "simulation") {
+    if (!serverId) return Response.json({ status: "error", error: "serverId is required" }, { status: 400 });
+    try {
+      const listing = listSimulationInvestigationEvents(serverId, url.searchParams.get("from"), url.searchParams.get("to"));
+      return Response.json(listing, { headers: { "cache-control": "no-store", "x-bluewolf-investigation": "simulator-archive" } });
+    } catch (error) {
+      return Response.json({ status: "error", error: error instanceof Error ? error.message : "simulation archive failed" }, { status: 400 });
+    }
+  }
+  const { baseUrl, token } = runtimeConfig();
+  if (!baseUrl) return Response.json({ status: "unavailable", error: "Python Core investigation archive is not configured" }, { status: 503 });
   if (!serverId) return Response.json({ status: "error", error: "serverId is required" }, { status: 400 });
   const coreQuery = new URLSearchParams({ serverId });
   for (const name of ["from", "to"] as const) {
