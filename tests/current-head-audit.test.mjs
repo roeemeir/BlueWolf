@@ -41,6 +41,20 @@ test('BW-DATA-010 is verified only with real InfluxDB2 end-to-end latency eviden
   assert.deepEqual(await verifyAuditEvidencePaths({ 'BW-DATA-010': row }), []);
 });
 
+test('evidence-backed non-manual requirements remain verified on current head', async () => {
+  const { registry } = await fixture();
+  const ids = ['BW-OFF-009', 'BW-OFF-011', 'BW-OFF-012', 'BW-UI-007'];
+  for (const id of ids) assert.ok(registry.sourceImplementation.yes.includes(id), `${id}: source status must be yes`);
+  const audit = buildCurrentHeadAudit(registry, { headSha: 'test-head', reviewedAt: '2026-09-18T00:00:00.000Z' });
+  for (const id of ids) {
+    const row = audit.requirements[id];
+    assert.equal(row.implementation, 'yes', `${id}: current-head implementation`);
+    assert.equal(row.verified, true, `${id}: current-head evidence`);
+    assert.equal(row.gap, undefined, `${id}: verified row must not carry a gap`);
+  }
+  assert.deepEqual(await verifyAuditEvidencePaths(Object.fromEntries(ids.map((id) => [id, audit.requirements[id]]))), []);
+});
+
 test('PROC-01 exact-head validation rejects a recycled audit from another commit', async () => {
   const { registry } = await fixture();
   const audit = buildCurrentHeadAudit(registry, { headSha: 'old-head', reviewedAt: '2026-09-17T00:00:00.000Z' });
