@@ -129,3 +129,29 @@ test('report endpoint fails closed when an event has no original or explicit tem
   assert.deepEqual(body.missingTemplateEvents, ['event-1']);
   assert.equal(recomputeCalls, 0);
 });
+
+
+test('simulation report data uses the explicit seven-day simulator archive without calling Python Core', async () => {
+  let externalCalls = 0;
+  globalThis.fetch = async () => { externalCalls += 1; throw new Error('simulation report must not call Python Core'); };
+  const response = await route.POST(new Request('http://app.test/api/investigation/report', {
+    method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({
+      serverId: 1,
+      source: 'simulation',
+      format: 'data',
+      from: '2026-09-12T00:00:00.000Z',
+      to: '2026-09-19T23:59:59.999Z',
+      overrides: [],
+    }),
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-bluewolf-report-source'), 'simulator-archive');
+  assert.equal(externalCalls, 0);
+  const body = await response.json();
+  assert.equal(body.source, 'simulator-archive');
+  assert.equal(body.report.serverId, 1);
+  assert.ok(body.report.events.length >= 20);
+  assert.ok(body.report.events.some((event) => event.result.family === 'SI'));
+  assert.ok(body.report.events.some((event) => event.result.family === 'SO'));
+});
