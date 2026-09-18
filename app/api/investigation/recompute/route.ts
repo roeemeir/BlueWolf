@@ -1,3 +1,4 @@
+import { recomputeSimulationEvent } from "@/lib/simulation-investigation";
 import { normalizeEventRecompute } from "@/lib/investigation-contract";
 
 function runtimeConfig() {
@@ -7,10 +8,27 @@ function runtimeConfig() {
 }
 
 export async function POST(request: Request) {
-  const { baseUrl, token } = runtimeConfig();
-  if (!baseUrl) return Response.json({ status: "unavailable", error: "Python Core investigation recomputation is not configured" }, { status: 503 });
   let body: unknown;
   try { body = await request.json(); } catch { return Response.json({ status: "error", error: "request must be valid JSON" }, { status: 400 }); }
+  const row = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
+  if (row.source === "simulation") {
+    try {
+      const result = recomputeSimulationEvent({
+        serverId: Number(row.serverId),
+        eventId: String(row.eventId ?? ""),
+        templateId: String(row.templateId ?? ""),
+        scenarioId: typeof row.scenarioId === "string" ? row.scenarioId : undefined,
+        groupId: typeof row.groupId === "string" ? row.groupId : undefined,
+        family: row.family === "SI" || row.family === "SO" ? row.family : undefined,
+        template: row.template && typeof row.template === "object" && !Array.isArray(row.template) ? row.template as Record<string, unknown> : undefined,
+      });
+      return Response.json(normalizeEventRecompute(result), { headers: { "cache-control": "no-store", "x-bluewolf-investigation": "simulator-archive" } });
+    } catch (error) {
+      return Response.json({ status: "error", error: error instanceof Error ? error.message : "simulation recomputation failed" }, { status: 422 });
+    }
+  }
+  const { baseUrl, token } = runtimeConfig();
+  if (!baseUrl) return Response.json({ status: "unavailable", error: "Python Core investigation recomputation is not configured" }, { status: 503 });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60_000);
   try {
