@@ -19,6 +19,7 @@ from bluewolf_core.models import (
     VehicleSample,
 )
 from bluewolf_core.templates import SynchronizationTemplate, TemplateSlot
+from bluewolf_runtime_adapter.family_runtime import SIFamilyRuntimeAdapter
 from bluewolf_runtime_adapter.producer import DisplayedScoreValue
 from bluewolf_runtime_adapter.service import RuntimeSnapshotStore
 from bluewolf_runtime_adapter.si_producer import LiveSIRuntimeProducer
@@ -208,6 +209,30 @@ class SIProducerTests(unittest.TestCase):
         self.assertLess(changed_group["sync"], exact_group["sync"])
         self.assertEqual({member["ring"] for member in exact_group["members"]}, {"outer"})
         self.assertEqual(len(exact_group["detectedRoutes"]), 2)
+
+    def test_family_checkpoint_restore_preserves_si_runtime_without_rewarmup(self) -> None:
+        route, _, producer = _producer(1.0 / 3.0)
+        first = producer.publish_poll(_poll(route, START, 0.0, 1.0 / 3.0))
+        self.assertIsNotNone(first.snapshot)
+        state = SIFamilyRuntimeAdapter(producer).export_state()
+
+        restored_route, _, restored_producer = _producer(1.0 / 3.0)
+        restored_adapter = SIFamilyRuntimeAdapter(restored_producer)
+        restored_adapter.restore_state(state)
+
+        step = 1.0 / PERIOD
+        second = restored_producer.publish_poll(
+            _poll(
+                restored_route,
+                START + timedelta(seconds=1),
+                step,
+                1.0 / 3.0 + step,
+            )
+        )
+        self.assertIsNotNone(second.snapshot)
+        group = second.snapshot["groups"]["si"]  # type: ignore[index]
+        self.assertTrue(group["scoreValid"])
+        self.assertEqual(group["sync"], 100.0)
 
     def test_missing_vehicle_profile_fails_closed_without_publishing_group(self) -> None:
         route = _route()
