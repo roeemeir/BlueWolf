@@ -219,14 +219,20 @@ checkpoint חדש שומר compact points. Restore תומך גם ב־V1 ישן �
 
 כל כשל משמעותי שנמצא במהלך פיתוח הופך ל־regression קבוע לפני קידום baseline.
 
-ה־baseline המלא האחרון הוא Run `780` על `9a6de173`. קידום baseline הבא יתבצע רק לאחר run מלא על הקוד הכולל compact history + footprint guard.
+ה־baseline המלא הנוכחי הוא `3c76d8bda4526ec7e36d7cbb3d3d4737ec6628a2`; `Blue Wolf CI` run `2163` הסתיים SUCCESS. בנוסף עברו על אותו SHA: SI Live Runtime #263, Operator #682, BW-OFF-010 #587, BW-DATA-010 #75, BW-OFF-009 #549 ו-BW-OFF-012 #571.
 
 ## מה עדיין פתוח
 
-1. **Displayed-score policy** — קיים `displayed_smoothing_seconds=10`, אך אין נוסחת smoothing מוגדרת. עד החלטת מפרט operational displayed score נשאר fail-closed; אין raw fallback.
-2. **SI operational live publication** — ה־runtime operational הנוכחי מחבר SO; SI דורש serializer/bindings/live pipeline מקבילים.
-3. **Late-data recomputation / archive** — live history של 30 דקות אינו תחליף ל־After Action persistence ארוך טווח. נדרש storage/versioned recomputation נפרד.
-4. **Full load/robustness campaign** — footprint serialization מכוסה; עדיין נדרשים CPU, Influx query latency, Core processing, memory ו־HTTP tests עבור סדר גודל 10 servers / 150 vehicles.
-5. **Operational deployment** — packaging קיים; נדרש deployment בפועל ברשת Windows/OpenShift עם Influx אמיתי, secrets ו־persistent volume.
-6. **Sites demo** — הפריסה הציבורית נשארת demo ואינה מחליפה Python runtime ברשת הסגורה. אין להציג URL שלא פורסם ואומת בפועל.
-7. **`DOUBLE_FIGURE_EIGHT`** — חסום עד אפיון מפורש; אינו milestone לביצוע כרגע.
+1. **BW-SYNC-013 user re-verification** — מנגנון display-only smoothing ממומש ב-Web עם RAW/5/10/20/30 שניות (default 10s) ומשותף לגרף ולכרטיסי הקבוצה לאחר recompute. הוא אינו משנה raw Core score, alerts, events או grouping; הסעיף נשאר partial רק עד QA ויזואלי מפורש של המשתמש.
+2. **Late-data recomputation / archive** — live history של 30 דקות אינו תחליף לכל After Action persistence ארוך הטווח. נדרש להשלים את כל חוזי storage/versioned recomputation שנותרו פתוחים במפרט.
+3. **Full load/robustness campaign** — BW-DATA-010 כבר מודד InfluxDB2 2.7 אמיתי → Flux → temporal join → Core → RuntimeSnapshot → HTTP מתחת ל-10s, ו-footprint serialization מכוסה; עדיין נדרש מסע עומס מלא בקנה מידה 10 servers / 150 vehicles לכל ממדי CPU/memory/late-data/restart.
+4. **Operational deployment** — packaging קיים ונבדק ב-CI; נדרש deployment בפועל ברשת Windows/OpenShift הארגונית עם Influx, secrets ו-persistent volume אמיתיים.
+5. **Sites demo** — הפריסה הציבורית נשארת demo ואינה מחליפה Python runtime ברשת הסגורה. אין להציג URL שלא פורסם ואומת בפועל.
+6. **`DOUBLE_FIGURE_EIGHT`** — חסום עד אפיון גאומטרי מפורש; אינו milestone לביצוע כרגע.
+
+### Current-head supersession
+
+- SI ו-SO מחוברים כיום כ-first-class sibling families דרך `FamilyRuntimeHost` ו-`family_environment_factory.py`; אין עוד מצב current שבו SO הוא base ו-SI הוא extension.
+- SI template עובר Web → Workspace → operational config → Python parser → `LiveSIRuntimeProducer` → SI scoring → RuntimeSnapshot, כולל regression שמוכיח ששינוי template משנה score בפועל.
+- display smoothing מוגדר כיום כשכבת תצוגה בלבד ב-`lib/display-score-smoothing.ts`, עם חלונות 0/5/10/20/30 שניות; historical notes שבהם הנוסחה טרם הוגדרה נשמרים רק כ-history.
+- `ACTIVE_ALGORITHM_THRESHOLD_CATALOG.json` הוא catalog machine-checked לכל ברירות המחדל הפעילות של `CoreConfig`, `LivePollConfig` ו-`EventAlertConfig`, עם סיווג product/calibration/implementation_guard/compatibility ורציונל לכל סף.
