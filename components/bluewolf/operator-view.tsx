@@ -14,6 +14,7 @@ import { normalizeEventRecompute, normalizeInvestigationEvents, type EventRecomp
 import { getRuntimeGroups } from "@/lib/live-runtime";
 import { getLiveRuntimeHistory } from "@/lib/live-runtime-history";
 import { groupFromEventRecompute, historyWithEventRecompute, sameRecomputeVersion } from "@/lib/operator-retroactive-result";
+import { simulationActiveEventId } from "@/lib/simulation-investigation";
 import { workspaceScopeId, type GroupScopedSettings, type ServerScopedSettings } from "@/lib/scoped-workspace-settings";
 import { formatKnotsFromKmh, formatKnotsFromMps } from "@/lib/speed-units";
 import { readWorkspaceScope, writeWorkspaceScope } from "@/lib/workspace-scope-client";
@@ -191,9 +192,10 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
       return () => { cancelled = true; };
     }
     if (dataMode === "simulation") {
-      setArchiveEventId(null);
-      setEventEvidenceState("unavailable");
-      setEventEvidenceMessage("חישוב מתחילת אירוע דורש event evidence מארכיון ה־Core; במצב SIM אין evidence מבצעי.");
+      const simulationEventId = simulationActiveEventId(serverId, selectedBase.family);
+      setArchiveEventId(simulationEventId);
+      setEventEvidenceState("available");
+      setEventEvidenceMessage("SIM event evidence זמין מתוך ארכיון הסימולציה הדטרמיניסטי.");
       return () => { cancelled = true; };
     }
     setArchiveEventId(null);
@@ -228,7 +230,7 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
     let cancelled = false;
     void fetch("/api/investigation/recompute", {
       method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, cache: "no-store",
-      body: JSON.stringify({ eventId: expected.eventId, templateId: expected.templateId, scenarioId: `operator-refresh:${expected.eventId}:${expected.templateVersion}` }),
+      body: JSON.stringify({ source: dataMode === "simulation" ? "simulation" : "core", serverId: Number(serverId), groupId: selectedBase.id, family: selectedBase.family, eventId: expected.eventId, templateId: expected.templateId, template: state.templates.find((item) => item.id === expected.templateId) ?? null, scenarioId: `operator-refresh:${expected.eventId}:${expected.templateVersion}` }),
     }).then(async (response) => {
       const payload: unknown = await response.json();
       if (!response.ok) throw new Error(`recompute restore failed (${response.status})`);
@@ -241,7 +243,7 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
       if (!cancelled) { setRecomputeOverride(null); toast.error(error instanceof Error ? `לא ניתן לשחזר חישוב רטרואקטיבי: ${error.message}` : "לא ניתן לשחזר חישוב רטרואקטיבי"); }
     });
     return () => { cancelled = true; };
-  }, [application, currentEventId, recomputeOverride]);
+  }, [application, currentEventId, recomputeOverride, dataMode, serverId, selectedBase.id, selectedBase.family, state.templates]);
 
   const expectedOverrideVersion = application?.mode === "event-start" && application.eventId && application.codeVersion && application.configVersion && application.templateVersion && currentEventId === application.eventId
     ? { eventId: application.eventId, templateId: application.templateId, codeVersion: application.codeVersion, configVersion: application.configVersion, templateVersion: application.templateVersion }
@@ -310,7 +312,7 @@ export function OperatorView({ serverId, serverName, dataMode, onDataModeChange,
     if (mode === "event-start") {
       if (!eventId || eventEvidenceState !== "available") { toast.error(eventEvidenceMessage); return; }
       try {
-        const response = await fetch("/api/investigation/recompute", { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, cache: "no-store", body: JSON.stringify({ eventId, templateId: id, scenarioId: `operator:${eventId}:${Date.now()}` }) });
+        const response = await fetch("/api/investigation/recompute", { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, cache: "no-store", body: JSON.stringify({ source: dataMode === "simulation" ? "simulation" : "core", serverId: Number(serverId), groupId: selectedBase.id, family: selectedBase.family, eventId, templateId: id, template: state.templates.find((item) => item.id === id) ?? null, scenarioId: `operator:${eventId}:${Date.now()}` }) });
         const payload: unknown = await response.json();
         if (!response.ok) { const detail = payload && typeof payload === "object" && "error" in payload ? String((payload as { error: unknown }).error) : `recompute failed (${response.status})`; throw new Error(detail); }
         recomputedResult = normalizeEventRecompute(payload);
