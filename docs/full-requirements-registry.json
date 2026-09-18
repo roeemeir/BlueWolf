@@ -210,10 +210,10 @@
       "BW-OFF-011",
       "BW-OFF-012",
       "BW-UI-007",
-      "BW-UI-008"
+      "BW-UI-008",
+      "BW-GOV-007"
     ],
     "partial": [
-      "BW-GOV-007",
       "BW-GOV-010",
       "BW-SYNC-013",
       "BW-DEV-001",
@@ -274,7 +274,8 @@
     "BW-OFF-011": "Server-wide and per-group settings must persist in separate SQLite scopes with independent revisions; stale writes conflict only inside their own scope and cross-scope fields are rejected.",
     "BW-OFF-012": "A legacy SQLite workspace must migrate transactionally without losing workspace state, revision or audit evidence; migration ledger must be idempotent and older migration markers must be adopted safely.",
     "BW-UI-007": "Audible alerts expose mute for 5/15/30 minutes and until restart; mute is session-local, automatically expires for timed modes, can be cleared, and is never persisted to Workspace.",
-    "BW-UI-008": "A material formation/template context change opens a new lifecycle event; a sustained low displayed score opens the approved alert on that same event. Both event and alert must reach the runtime contract and Operator as separate Core-backed concepts; UI must not synthesize either from smoothed display scores."
+    "BW-UI-008": "A material formation/template context change opens a new lifecycle event; a sustained low displayed score opens the approved alert on that same event. Both event and alert must reach the runtime contract and Operator as separate Core-backed concepts; UI must not synthesize either from smoothed display scores.",
+    "BW-GOV-007": "Each development iteration must carry a machine-verified review manifest that partitions all 143 requirements exactly once into protected vs open, selects work only from open requirements, explicitly records manual-reverification items, and blocks release if registry status changes without refreshing that review."
   },
   "audit": {
     "policy": "Every requirement must be present. Implementation status comes from the Drive Master Spec v2.8 until a current-head audit updates it. Implementation and acceptance evidence are separate; manual-QA failures remain partial until user re-verification; missing evidence is reported, never invented.",
