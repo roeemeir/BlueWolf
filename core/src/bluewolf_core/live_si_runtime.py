@@ -144,6 +144,7 @@ class LiveSIRuntime:
         scoring_config: ScoringConfig | None = None,
         event_config: EventAlertConfig | None = None,
         comparison_dimension: str = "sync",
+        minimum_valid_vehicles: int = 2,
         event_engine: EventAlertEngine | None = None,
         observation_sink: SIObservationSink | None = None,
         lifecycle_sink: SILifecycleSink | None = None,
@@ -159,10 +160,13 @@ class LiveSIRuntime:
             by_id[template.template_id] = template
         if comparison_dimension not in {"sync", "total"}:
             raise ValueError("SI comparison_dimension must be sync or total")
+        if isinstance(minimum_valid_vehicles, bool) or not isinstance(minimum_valid_vehicles, int) or minimum_valid_vehicles < 1:
+            raise ValueError("SI minimum_valid_vehicles must be a positive integer")
         self.templates = tuple(templates)
         self._templates = by_id
         self.scoring_config = scoring_config or ScoringConfig()
         self.comparison_dimension = comparison_dimension
+        self.minimum_valid_vehicles = minimum_valid_vehicles
         self.event_engine = event_engine or EventAlertEngine(event_config)
         self.observation_sink = observation_sink
         self.lifecycle_sink = lifecycle_sink
@@ -177,7 +181,11 @@ class LiveSIRuntime:
         key = (group_id, template.template_id)
         scorer = self._scorers.get(key)
         if scorer is None:
-            scorer = LiveSIGroupScorer(template, config=self.scoring_config)
+            scorer = LiveSIGroupScorer(
+                template,
+                config=self.scoring_config,
+                minimum_valid_vehicles=self.minimum_valid_vehicles,
+            )
             self._scorers[key] = scorer
         return scorer
 
@@ -254,7 +262,7 @@ class LiveSIRuntime:
                         candidate,
                         inputs,
                         config=self.scoring_config,
-                        minimum_valid_vehicles=self.scorer(group_id, template).minimum_valid_vehicles,
+                        minimum_valid_vehicles=self.minimum_valid_vehicles,
                     )
                 except NoLegalTemplateAssignment:
                     continue
@@ -393,6 +401,7 @@ class LiveSIRuntime:
         return {
             "schemaVersion": LIVE_SI_RUNTIME_STATE_SCHEMA_VERSION,
             "comparisonDimension": self.comparison_dimension,
+            "minimumValidVehicles": self.minimum_valid_vehicles,
             "eventAlert": self.event_engine.export_state(),
             "scorers": [
                 {
@@ -422,11 +431,15 @@ class LiveSIRuntime:
         if not isinstance(raw_scorers, list) or not isinstance(raw_event, Mapping):
             raise ValueError("live SI runtime state is malformed")
         comparison_dimension = str(state.get("comparisonDimension") or "sync")
+        minimum_valid_raw = state.get("minimumValidVehicles", 2)
+        if isinstance(minimum_valid_raw, bool) or not isinstance(minimum_valid_raw, int):
+            raise ValueError("live SI runtime minimumValidVehicles is invalid")
         runtime = cls(
             templates,
             scoring_config=scoring_config,
             event_config=event_config,
             comparison_dimension=comparison_dimension,
+            minimum_valid_vehicles=minimum_valid_raw,
             event_engine=EventAlertEngine.from_state(raw_event, config=event_config),
             observation_sink=observation_sink,
             lifecycle_sink=lifecycle_sink,
@@ -451,7 +464,11 @@ class LiveSIRuntime:
             template = runtime._templates.get(template_id)
             if template is None:
                 raise ValueError(f"persisted SI scorer references unavailable template: {template_id}")
-            scorer = LiveSIGroupScorer(template, config=runtime.scoring_config)
+            scorer = LiveSIGroupScorer(
+                template,
+                config=runtime.scoring_config,
+                minimum_valid_vehicles=runtime.minimum_valid_vehicles,
+            )
             scorer.restore_state(scorer_state)
             runtime._scorers[key] = scorer
         return runtime
