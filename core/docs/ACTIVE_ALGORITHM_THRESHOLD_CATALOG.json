@@ -1,0 +1,780 @@
+{
+  "schemaVersion": "bluewolf.active-algorithm-threshold-catalog.v1",
+  "purpose": "Machine-checked catalog for BW-DOC-003/BW-DOC-005. Every active CoreConfig/LivePollConfig/EventAlertConfig field is listed with the code default, classification and rationale. Compatibility-only fields are explicit rather than silently treated as active gates.",
+  "classifications": {
+    "product": "Explicit product/approved behavior or threshold.",
+    "calibration": "Empirical operating point selected from deterministic simulation/regression and intended for real-data calibration.",
+    "implementation_guard": "Algorithmic/discretization/performance guard; not a product semantic timer.",
+    "compatibility": "Legacy configuration field retained for backward compatibility and not an active behavior gate."
+  },
+  "thresholds": [
+    {
+      "path": "core.scoring.sync_weights",
+      "value": {
+        "first": 60,
+        "second": 20,
+        "third": 20
+      },
+      "classification": "product",
+      "rationale": "משקלי מיקום/מחזור/תנועה שנקבעו במפרט הציון: המיקום דומיננטי אך period ו-movement נשארים גורמי בקרה עצמאיים.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.sync_weights"
+    },
+    {
+      "path": "core.scoring.route_weights",
+      "value": {
+        "first": 15,
+        "second": 70,
+        "third": 15
+      },
+      "classification": "product",
+      "rationale": "משקלי distance/tangent/curvature; המשיק הוא האות המרכזי ל-adherence בעוד distance ו-curvature מגינים מפני התאמה גאומטרית חלקית.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.route_weights"
+    },
+    {
+      "path": "core.scoring.total_weights",
+      "value": {
+        "first": 75,
+        "second": 25
+      },
+      "classification": "product",
+      "rationale": "הציון הכולל נותן עדיפות לסנכרון הקבוצתי תוך שמירת penalty עצמאי לאיכות הנתיב.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.total_weights"
+    },
+    {
+      "path": "core.scoring.si_position_deg",
+      "value": {
+        "full_score_through": 10,
+        "zero_score_from": 30
+      },
+      "classification": "product",
+      "rationale": "תחום שגיאת המיקום הזוויתי המאושר ל-SI: flat עד 10° ו-zero ב-30°; מייצר מעבר ליניארי ולא cliff נסתר.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.si_position_deg"
+    },
+    {
+      "path": "core.scoring.so_position_cycle",
+      "value": {
+        "full_score_through": 0.05,
+        "zero_score_from": 0.25
+      },
+      "classification": "product",
+      "rationale": "שגיאת פאזה ב-SO מנורמלת למחזור כדי להיות scale-independent; 5% מלא ו-25% אפס.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.so_position_cycle"
+    },
+    {
+      "path": "core.scoring.period_ratio",
+      "value": {
+        "full_score_through": 0.05,
+        "zero_score_from": 0.2
+      },
+      "classification": "product",
+      "rationale": "סטיית period מנורמלת; 5% נחשב תואם ו-20% הוא גבול כשל מוצרי.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.period_ratio"
+    },
+    {
+      "path": "core.scoring.movement_ratio",
+      "value": {
+        "full_score_through": 0.1,
+        "zero_score_from": 0.3
+      },
+      "classification": "product",
+      "rationale": "סטיית קצב ההתקדמות: tolerance רחב יותר מ-period כדי לסבול variation רגעי בלי להסתיר drift ממושך.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.movement_ratio"
+    },
+    {
+      "path": "core.scoring.distance_short_axis_ratio",
+      "value": {
+        "full_score_through": 0.05,
+        "zero_score_from": 0.3
+      },
+      "classification": "product",
+      "rationale": "מרחק מהנתיב מנורמל ל-short axis כדי שהציון לא יהיה תלוי בגודל המסלול.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.distance_short_axis_ratio"
+    },
+    {
+      "path": "core.scoring.tangent_deg",
+      "value": {
+        "full_score_through": 10,
+        "zero_score_from": 60
+      },
+      "classification": "product",
+      "rationale": "שגיאת tangent: 10° נחשבת מלאה ו-60° כבר אינה מייצגת תנועה לאורך הנתיב.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.tangent_deg"
+    },
+    {
+      "path": "core.scoring.curvature_ratio",
+      "value": {
+        "full_score_through": 0.1,
+        "zero_score_from": 1
+      },
+      "classification": "product",
+      "rationale": "שגיאת curvature מנורמלת; התחום הרחב מונע מרעש נקודתי להפוך ל-zero score תוך שמירת רגישות לעיוות ממשי.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.curvature_ratio"
+    },
+    {
+      "path": "core.scoring.minimum_motion_speed_fraction",
+      "value": 0.3,
+      "classification": "product",
+      "rationale": "מתחת ל-30% ממהירות העבודה tangent/curvature אינם observable באופן אמין ולכן אינם משוקללים.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.minimum_motion_speed_fraction"
+    },
+    {
+      "path": "core.scoring.minimum_valid_reliability",
+      "value": 0.6,
+      "classification": "product",
+      "rationale": "דגימה מתחת ל-60% reliability אינה eligible לציון/קיבוץ; חוסר evidence אינו הופך לציון מומצא.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.minimum_valid_reliability"
+    },
+    {
+      "path": "core.scoring.displayed_smoothing_seconds",
+      "value": 10,
+      "classification": "product",
+      "rationale": "חלון התצוגה המאושר; display-only ואינו משנה raw score, alerts, events או Core truth.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.displayed_smoothing_seconds"
+    },
+    {
+      "path": "core.scoring.good_score_from",
+      "value": 80,
+      "classification": "product",
+      "rationale": "סף תצוגה לציון טוב/ירוק כפי שנקבע במפרט המפעיל.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.good_score_from"
+    },
+    {
+      "path": "core.scoring.low_score_below",
+      "value": 50,
+      "classification": "product",
+      "rationale": "סף low-score שממנו מתחיל lifecycle של alert, בכפוף להיסטרזיס זמן.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.low_score_below"
+    },
+    {
+      "path": "core.scoring.alert_open_seconds",
+      "value": 10,
+      "classification": "product",
+      "rationale": "דורש 10 שניות רציפות low-score כדי לדחות transient ולמנוע alarm chatter.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.alert_open_seconds"
+    },
+    {
+      "path": "core.scoring.alert_recovery_score",
+      "value": 60,
+      "classification": "product",
+      "rationale": "סף recovery גבוה מסף הפתיחה כדי ליצור hysteresis בציון.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.alert_recovery_score"
+    },
+    {
+      "path": "core.scoring.alert_recovery_seconds",
+      "value": 20,
+      "classification": "product",
+      "rationale": "דורש recovery רציף של 20 שניות לפני סגירת alert.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.alert_recovery_seconds"
+    },
+    {
+      "path": "core.scoring.wrong_direction_zero_seconds",
+      "value": 60,
+      "classification": "product",
+      "rationale": "SI בכיוון שגוי מקבל zero-direction effect רק לאחר דקה רציפה, בהתאם ל-lifecycle המאושר.",
+      "source": "src/bluewolf_core/config.py:ScoringConfig.wrong_direction_zero_seconds"
+    },
+    {
+      "path": "core.detection.si_axis_ratio_max",
+      "value": 1.5,
+      "classification": "product",
+      "rationale": "גבול המשפחה הקומפקטית SI; מעליו route אינו מסווג SI רק מכוח compactness.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.si_axis_ratio_max"
+    },
+    {
+      "path": "core.detection.canonical_point_limit",
+      "value": 64,
+      "classification": "implementation_guard",
+      "rationale": "תקרת discretization קבועה שמגבילה CPU/memory בלי להפוך את ה-centerline לפרימיטיב אליפטי.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.canonical_point_limit"
+    },
+    {
+      "path": "core.detection.new_route_observation_seconds",
+      "value": 0,
+      "classification": "compatibility",
+      "rationale": "שדה תאימות בלבד; confirmation אינו timer-based ולכן הערך הפעיל הוא 0 ואסור להשתמש בו כ-gate.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.new_route_observation_seconds"
+    },
+    {
+      "path": "core.detection.known_route_candidate_seconds",
+      "value": 0,
+      "classification": "compatibility",
+      "rationale": "שדה legacy בלבד; התאמה ל-route bank אינה מקצרת evidence גאומטרי ולא משמשת confirmation timer.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.known_route_candidate_seconds"
+    },
+    {
+      "path": "core.detection.max_history_seconds",
+      "value": 2400,
+      "classification": "product",
+      "rationale": "40 דקות הן memory/lookback ceiling בלבד, לא זמן המתנה לאישור.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.max_history_seconds"
+    },
+    {
+      "path": "core.detection.adaptive_min_window_seconds",
+      "value": 30,
+      "classification": "implementation_guard",
+      "rationale": "חלון החיפוש ההתחלתי שומר על מינימום evidence שימושי לפני adaptive growth; אינו confirmation timer.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.adaptive_min_window_seconds"
+    },
+    {
+      "path": "core.detection.adaptive_window_growth_factor",
+      "value": 1.5,
+      "classification": "implementation_guard",
+      "rationale": "גידול גאומטרי של suffix מאזן מספר fits מול יכולת למצוא מחזור ארוך.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.adaptive_window_growth_factor"
+    },
+    {
+      "path": "core.detection.adaptive_window_refine_seconds",
+      "value": 10,
+      "classification": "implementation_guard",
+      "rationale": "רזולוציית refinement לחלון לאחר proposal; משפיעה על עלות/דיוק חיפוש ולא על חוק מוצר.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.adaptive_window_refine_seconds"
+    },
+    {
+      "path": "core.detection.partial_candidate_min_turn_fraction",
+      "value": 0.3,
+      "classification": "calibration",
+      "rationale": "candidate מוקדם דורש לפחות 30% absolute turn; כויל מול משפחות route מאושרות ו-negative banks כדי לדחות approach ישר.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.partial_candidate_min_turn_fraction"
+    },
+    {
+      "path": "core.detection.partial_candidate_min_smooth_heading_fraction",
+      "value": 0.85,
+      "classification": "calibration",
+      "rationale": "דורש שרוב שינויי heading יהיו חלקים ולא GPS spikes; כויל בסימולציות רעש/רוח.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.partial_candidate_min_smooth_heading_fraction"
+    },
+    {
+      "path": "core.detection.partial_candidate_min_turn_sign_persistence",
+      "value": 0.75,
+      "classification": "calibration",
+      "rationale": "שומר curvature sign קוהרנטי לאורך פניות משמעותיות ומדכא random walk.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.partial_candidate_min_turn_sign_persistence"
+    },
+    {
+      "path": "core.detection.partial_candidate_max_path_efficiency",
+      "value": 0.9,
+      "classification": "calibration",
+      "rationale": "מסלול כמעט ישר נשאר approach/free; threshold נבחר להפריד route-like curvature מתנועה ליניארית.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.partial_candidate_max_path_efficiency"
+    },
+    {
+      "path": "core.detection.partial_candidate_min_contiguous_observation_fraction",
+      "value": 0.35,
+      "classification": "calibration",
+      "rationale": "דורש מספיק רצף observed אמיתי לפני חיפוש יקר, בלי לתת interpolation credit לחורים.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.partial_candidate_min_contiguous_observation_fraction"
+    },
+    {
+      "path": "core.detection.candidate_fit_fraction",
+      "value": 0.68,
+      "classification": "calibration",
+      "rationale": "סף candidate נמוך מסף confirmation כדי לאפשר חיפוש מוקדם אך לא לפתוח ConfirmedRoute.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.candidate_fit_fraction"
+    },
+    {
+      "path": "core.detection.candidate_coverage_fraction",
+      "value": 0.45,
+      "classification": "calibration",
+      "rationale": "coverage מוקדם מאפשר candidate חלקי; calibration נשען על phase-arc coverage ולא occupied bins.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.candidate_coverage_fraction"
+    },
+    {
+      "path": "core.detection.candidate_travel_fraction",
+      "value": 0.4,
+      "classification": "calibration",
+      "rationale": "מינימום travel ל-candidate מבטיח התקדמות route-like בלי לדרוש מחזור כמעט מלא.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.candidate_travel_fraction"
+    },
+    {
+      "path": "core.detection.required_fit_fraction",
+      "value": 0.78,
+      "classification": "calibration",
+      "rationale": "confirmation דורש fit קשיח יותר מה-candidate; ננעל ברגרסיות acquisition/classification.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.required_fit_fraction"
+    },
+    {
+      "path": "core.detection.confirmation_coverage_fraction",
+      "value": 0.82,
+      "classification": "calibration",
+      "rationale": "confirmation דורש כיסוי רוב המחזור כדי למנוע fit חזק על arc קטן בלבד.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.confirmation_coverage_fraction"
+    },
+    {
+      "path": "core.detection.required_completed_cycles",
+      "value": 0.9,
+      "classification": "calibration",
+      "rationale": "דורש evidence כמעט מחזור מלא לפני confirmation בלי timer קשיח.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.required_completed_cycles"
+    },
+    {
+      "path": "core.detection.phase_coverage_bins",
+      "value": 32,
+      "classification": "implementation_guard",
+      "rationale": "רזולוציית coverage פנימית; מספיק גבוהה לטופולוגיה אך חסומה כדי לשמור deterministic cost.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.phase_coverage_bins"
+    },
+    {
+      "path": "core.detection.coverage_interpolation_max_phase_gap",
+      "value": 0.2,
+      "classification": "calibration",
+      "rationale": "credit בין פאזות ניתן רק לפערים קטנים; מונע מחור גדול להיראות כ-observed coverage.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.coverage_interpolation_max_phase_gap"
+    },
+    {
+      "path": "core.detection.closure_distance_short_axis_ratio",
+      "value": 0.2,
+      "classification": "product",
+      "rationale": "closure דורש חזרה מרחבית בתוך 20% מה-short axis.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.closure_distance_short_axis_ratio"
+    },
+    {
+      "path": "core.detection.closure_direction_error_deg",
+      "value": 30,
+      "classification": "product",
+      "rationale": "closure direction עד 30° מונע סגירה שקרית בחצייה מרחבית בכיוון אחר.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.closure_direction_error_deg"
+    },
+    {
+      "path": "core.detection.closure_minimum_phase",
+      "value": 0.8,
+      "classification": "product",
+      "rationale": "לפחות 80% phase progression נדרש לפני קבלת closure.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.closure_minimum_phase"
+    },
+    {
+      "path": "core.detection.geometry_change_ratio",
+      "value": 0.1,
+      "classification": "product",
+      "rationale": "BW-CORE-009 מקבע כ-10% כברירת מחדל לשינוי גאומטרי חומרי; configurable אך לא timer-based.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.geometry_change_ratio"
+    },
+    {
+      "path": "core.detection.period_change_ratio",
+      "value": 0.2,
+      "classification": "product",
+      "rationale": "20% שינוי period הוא default חומרי עצמאי מגאומטריה.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.period_change_ratio"
+    },
+    {
+      "path": "core.detection.replacement_min_new_speed_support_fraction",
+      "value": 0.75,
+      "classification": "calibration",
+      "rationale": "replacement period דורש שרוב decisive evidence יעדיף את regime החדש כדי למנוע intermediate-period chatter.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.replacement_min_new_speed_support_fraction"
+    },
+    {
+      "path": "core.detection.replacement_speed_decision_margin",
+      "value": 0.04,
+      "classification": "calibration",
+      "rationale": "פער error מינימלי בין old/new speed לפני שדגימה נחשבת decisive; מדכא רעש גבולי.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.replacement_speed_decision_margin"
+    },
+    {
+      "path": "core.detection.replacement_min_decisive_speed_samples",
+      "value": 6,
+      "classification": "calibration",
+      "rationale": "מספר מינימלי של דגימות decisive לפני replacement purity decision; guard נגד excursion בודד.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.replacement_min_decisive_speed_samples"
+    },
+    {
+      "path": "core.detection.change_confirmation_seconds",
+      "value": 120,
+      "classification": "compatibility",
+      "rationale": "שדה legacy שנשמר ל-config compatibility בלבד; אינו gate התנהגותי במנוע V2.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.change_confirmation_seconds"
+    },
+    {
+      "path": "core.detection.smoothing_seconds",
+      "value": 3,
+      "classification": "product",
+      "rationale": "החלקת קלט קצרה לפני detection מפחיתה jitter; נפרדת מה-display smoothing של 10 שניות.",
+      "source": "src/bluewolf_core/config.py:DetectionConfig.smoothing_seconds"
+    },
+    {
+      "path": "core.grouping.minimum_valid_vehicles",
+      "value": 2,
+      "classification": "product",
+      "rationale": "קבוצה מבצעית דורשת לפחות שני רכבים תקפים; רכב יחיד אינו group score.",
+      "source": "src/bluewolf_core/config.py:GroupingConfig.minimum_valid_vehicles"
+    },
+    {
+      "path": "core.grouping.membership_confirmation_seconds",
+      "value": 120,
+      "classification": "product",
+      "rationale": "חברות מבנית חדשה דורשת יציבות לפני קיבוע group membership; score אינו חלק מה-gate.",
+      "source": "src/bluewolf_core/config.py:GroupingConfig.membership_confirmation_seconds"
+    },
+    {
+      "path": "core.grouping.membership_hold_seconds",
+      "value": 300,
+      "classification": "product",
+      "rationale": "חברות נשמרת עד 5 דקות בחוסר תקשורת כדי לא לפרק קבוצה בגלל outage קצר.",
+      "source": "src/bluewolf_core/config.py:GroupingConfig.membership_hold_seconds"
+    },
+    {
+      "path": "core.grouping.identity_preservation_fraction",
+      "value": 0.6,
+      "classification": "product",
+      "rationale": "group_id נשמר כאשר לפחות 60% מהחברות המבנית נמשכת; merge אמיתי מקבל ID חדש.",
+      "source": "src/bluewolf_core/config.py:GroupingConfig.identity_preservation_fraction"
+    },
+    {
+      "path": "core.grouping.si_center_distance_ratio",
+      "value": 0.3,
+      "classification": "product",
+      "rationale": "SI compatibility משתמשת במרחק מרכזים מנורמל לגודל route, לא score.",
+      "source": "src/bluewolf_core/config.py:GroupingConfig.si_center_distance_ratio"
+    },
+    {
+      "path": "core.grouping.si_period_difference_ratio",
+      "value": 0.2,
+      "classification": "product",
+      "rationale": "פער period מרבי ל-SI grouping הוא 20%.",
+      "source": "src/bluewolf_core/config.py:GroupingConfig.si_period_difference_ratio"
+    },
+    {
+      "path": "core.grouping.so_period_difference_ratio",
+      "value": 0.2,
+      "classification": "product",
+      "rationale": "פער base-period מרבי ל-SO grouping הוא 20%, עם normalization מבני Single/Double כשנדרש.",
+      "source": "src/bluewolf_core/config.py:GroupingConfig.so_period_difference_ratio"
+    },
+    {
+      "path": "core.grouping.so_neighbor_longer_leg_multiplier",
+      "value": 1,
+      "classification": "product",
+      "rationale": "שכנות SO מוגבלת לסקייל leg פיזי ולא distance גלובלי שרירותי.",
+      "source": "src/bluewolf_core/config.py:GroupingConfig.so_neighbor_longer_leg_multiplier"
+    },
+    {
+      "path": "core.grouping.si_wrong_direction_alert_seconds",
+      "value": 60,
+      "classification": "product",
+      "rationale": "כיוון הפוך ב-SI פותח lifecycle alert לאחר דקה ולא מפצל מיד את הקבוצה.",
+      "source": "src/bluewolf_core/config.py:GroupingConfig.si_wrong_direction_alert_seconds"
+    },
+    {
+      "path": "core.grouping.si_wrong_direction_exit_additional_seconds",
+      "value": 300,
+      "classification": "product",
+      "rationale": "הסרה אפשרית רק לאחר 5 דקות נוספות בכיוון הפוך, כדי לשמר group stability.",
+      "source": "src/bluewolf_core/config.py:GroupingConfig.si_wrong_direction_exit_additional_seconds"
+    },
+    {
+      "path": "core.grouping.default_maximum_so_vehicles",
+      "value": 8,
+      "classification": "product",
+      "rationale": "ברירת מחדל תפעולית לתקרת חברי SO; נשארת configurable ואינה משפיעה על detection.",
+      "source": "src/bluewolf_core/config.py:GroupingConfig.default_maximum_so_vehicles"
+    },
+    {
+      "path": "core.timing.logical_grid_seconds",
+      "value": 1,
+      "classification": "product",
+      "rationale": "רשת הזמן הקנונית היא שנייה אחת; כל join/scoring מתייחס אליה.",
+      "source": "src/bluewolf_core/config.py:TimingConfig.logical_grid_seconds"
+    },
+    {
+      "path": "core.timing.live_batch_seconds",
+      "value": 5,
+      "classification": "product",
+      "rationale": "גודל batch לוגי נשאר 5 שניות; scheduler רשאי לבצע poll בתדירות גבוהה יותר כדי לעמוד ב-latency.",
+      "source": "src/bluewolf_core/config.py:TimingConfig.live_batch_seconds"
+    },
+    {
+      "path": "core.timing.join_tolerance_seconds",
+      "value": 5,
+      "classification": "product",
+      "rationale": "forward-fill/interpolation מוגבלים ל-5 שניות לפי חוזה הנתונים.",
+      "source": "src/bluewolf_core/config.py:TimingConfig.join_tolerance_seconds"
+    },
+    {
+      "path": "core.timing.interpolation_limit_seconds",
+      "value": 5,
+      "classification": "product",
+      "rationale": "אין interpolation מעבר ל-5 שניות; חוסר evidence נשאר missing.",
+      "source": "src/bluewolf_core/config.py:TimingConfig.interpolation_limit_seconds"
+    },
+    {
+      "path": "core.timing.late_correction_horizon_seconds",
+      "value": 10,
+      "classification": "product",
+      "rationale": "אופק correction מאוחר מוגבל כדי לשמור versioned recomputation צפוי.",
+      "source": "src/bluewolf_core/config.py:TimingConfig.late_correction_horizon_seconds"
+    },
+    {
+      "path": "core.timing.no_data_display_seconds",
+      "value": 20,
+      "classification": "product",
+      "rationale": "לאחר 20 שניות ללא evidence התצוגה עוברת no-data במקום להחזיק ציון ישן.",
+      "source": "src/bluewolf_core/config.py:TimingConfig.no_data_display_seconds"
+    },
+    {
+      "path": "core.timing.return_consistency_seconds",
+      "value": 10,
+      "classification": "product",
+      "rationale": "לאחר חזרת תקשורת נדרשות 10 שניות consistency לפני חידוש live score.",
+      "source": "src/bluewolf_core/config.py:TimingConfig.return_consistency_seconds"
+    },
+    {
+      "path": "core.timing.ui_refresh_seconds",
+      "value": 2,
+      "classification": "product",
+      "rationale": "קצב רענון UI של 2 שניות הוא דרישת תצוגה ולא קצב Core truth.",
+      "source": "src/bluewolf_core/config.py:TimingConfig.ui_refresh_seconds"
+    },
+    {
+      "path": "core.timing.checkpoint_seconds",
+      "value": 300,
+      "classification": "product",
+      "rationale": "checkpoint כל 5 דקות מגביל replay לאחר restart בלי להפוך לזמן confirmation.",
+      "source": "src/bluewolf_core/config.py:TimingConfig.checkpoint_seconds"
+    },
+    {
+      "path": "core.timing.event_finalize_seconds",
+      "value": 120,
+      "classification": "product",
+      "rationale": "event נסגר סופית אחרי 2 דקות כדי לאפשר late evidence/recompute לפני finalization.",
+      "source": "src/bluewolf_core/config.py:TimingConfig.event_finalize_seconds"
+    },
+    {
+      "path": "ingest.polling.logical_grid_seconds",
+      "value": 1,
+      "classification": "product",
+      "rationale": "scheduler משתמש באותה רשת זמן של הליבה כדי לשמור watermark contiguous.",
+      "source": "src/bluewolf_ingest/polling.py:LivePollConfig.logical_grid_seconds"
+    },
+    {
+      "path": "ingest.polling.active_poll_seconds",
+      "value": 3,
+      "classification": "implementation_guard",
+      "rationale": "poll פעיל כל 3 שניות נבחר יחד עם join tolerance של 5 שניות כדי לשמור upper-bound תפעולי מתחת ל-10 שניות; נמדד ב-BW-DATA-010.",
+      "source": "src/bluewolf_ingest/polling.py:LivePollConfig.active_poll_seconds"
+    },
+    {
+      "path": "ingest.polling.idle_probe_seconds",
+      "value": 300,
+      "classification": "product",
+      "rationale": "שרת רדום נבדק כל 5 דקות כדי להגביל שאילתות בלי לפגוע ב-awake transition.",
+      "source": "src/bluewolf_ingest/polling.py:LivePollConfig.idle_probe_seconds"
+    },
+    {
+      "path": "ingest.polling.join_tolerance_seconds",
+      "value": 5,
+      "classification": "product",
+      "rationale": "safe watermark מתעכב 5 שניות כדי לאפשר bracket interpolation ללא תיקון שקט של נקודות שכבר פורסמו.",
+      "source": "src/bluewolf_ingest/polling.py:LivePollConfig.join_tolerance_seconds"
+    },
+    {
+      "path": "ingest.polling.bootstrap_history_seconds",
+      "value": 2400,
+      "classification": "product",
+      "rationale": "bootstrap מוגבל ל-40 דקות history ceiling; אינו wait time.",
+      "source": "src/bluewolf_ingest/polling.py:LivePollConfig.bootstrap_history_seconds"
+    },
+    {
+      "path": "events.low_score_below",
+      "value": 50,
+      "classification": "product",
+      "rationale": "פתיחת low-score lifecycle מתחילה מתחת ל-50, תואם ScoringConfig.",
+      "source": "src/bluewolf_core/event_alert.py:EventAlertConfig.low_score_below"
+    },
+    {
+      "path": "events.low_score_seconds",
+      "value": 10,
+      "classification": "product",
+      "rationale": "low-score צריך להימשך 10 שניות רצופות לפני alert.",
+      "source": "src/bluewolf_core/event_alert.py:EventAlertConfig.low_score_seconds"
+    },
+    {
+      "path": "events.recovery_score",
+      "value": 60,
+      "classification": "product",
+      "rationale": "recovery threshold של 60 יוצר hysteresis מעל 50.",
+      "source": "src/bluewolf_core/event_alert.py:EventAlertConfig.recovery_score"
+    },
+    {
+      "path": "events.recovery_seconds",
+      "value": 20,
+      "classification": "product",
+      "rationale": "recovery חייב להימשך 20 שניות לפני סגירת alert.",
+      "source": "src/bluewolf_core/event_alert.py:EventAlertConfig.recovery_seconds"
+    },
+    {
+      "path": "events.recommendation_open_advantage",
+      "value": 30,
+      "classification": "product",
+      "rationale": "template חלופי צריך יתרון 30 נקודות לפני שהוא candidate להמלצה.",
+      "source": "src/bluewolf_core/event_alert.py:EventAlertConfig.recommendation_open_advantage"
+    },
+    {
+      "path": "events.recommendation_open_seconds",
+      "value": 120,
+      "classification": "product",
+      "rationale": "היתרון חייב להיות רציף 2 דקות כדי למנוע recommendation chatter.",
+      "source": "src/bluewolf_core/event_alert.py:EventAlertConfig.recommendation_open_seconds"
+    },
+    {
+      "path": "events.recommendation_close_advantage",
+      "value": 15,
+      "classification": "product",
+      "rationale": "המלצה נסגרת רק כאשר היתרון יורד מתחת ל-15, hysteresis מול 30.",
+      "source": "src/bluewolf_core/event_alert.py:EventAlertConfig.recommendation_close_advantage"
+    },
+    {
+      "path": "events.recommendation_close_seconds",
+      "value": 30,
+      "classification": "product",
+      "rationale": "היתרון הנמוך חייב להימשך 30 שניות לפני סגירת suggestion.",
+      "source": "src/bluewolf_core/event_alert.py:EventAlertConfig.recommendation_close_seconds"
+    },
+    {
+      "path": "events.event_finalize_seconds",
+      "value": 120,
+      "classification": "product",
+      "rationale": "event ended נשמר 2 דקות לפני close סופי כדי לאפשר late-data lifecycle.",
+      "source": "src/bluewolf_core/event_alert.py:EventAlertConfig.event_finalize_seconds"
+    }
+  ],
+  "algorithms": [
+    {
+      "id": "temporal_join",
+      "decision": "Join deterministic on UTC 1s grid; categorical fields forward-fill, numeric fields bracket-interpolate, never across identity/inactive boundary.",
+      "classification": "product+architecture",
+      "rationale": "Separates source truth from approximation and keeps missing evidence explicit.",
+      "alternatives": "Nearest-value or unrestricted interpolation were rejected because they can cross vehicle identity and fabricate observability.",
+      "evidence": [
+        "src/bluewolf_ingest/join.py",
+        "tests/test_ingest_join.py",
+        "tests/test_influx_window_reader.py"
+      ]
+    },
+    {
+      "id": "masked_fft_recurrence",
+      "decision": "Masked spatial recurrence proposes periods using FFT correlations, then local lag refinement.",
+      "classification": "algorithm",
+      "rationale": "Reduces history sweep from quadratic pairwise distance work to O(N log N) while preserving explicit missing masks.",
+      "alternatives": "N×N distance matrix and naive all-lag loops were rejected for long offline history.",
+      "evidence": [
+        "src/bluewolf_core/vector_trajectory.py",
+        "tests/test_vector_trajectory.py"
+      ]
+    },
+    {
+      "id": "adaptive_acquisition",
+      "decision": "Route confirmation is evidence-driven using fit/coverage/travel/closure over adaptive suffix windows.",
+      "classification": "algorithm",
+      "rationale": "Elapsed time is not route evidence; short clean routes can confirm early while long/noisy routes wait for sufficient structure.",
+      "alternatives": "Fixed 5-minute and 120-second confirmation timers are retained only as historical/compatibility fields and are not active gates.",
+      "evidence": [
+        "src/bluewolf_core/session.py",
+        "tests/test_adaptive_acquisition.py",
+        "tests/test_session.py"
+      ]
+    },
+    {
+      "id": "topology_classifier",
+      "decision": "Classifier checks complex topology evidence before compact SI/single-SO fallback and uses ordered phase/model separation.",
+      "classification": "algorithm",
+      "rationale": "Prevents axis-ratio shortcuts and complex-model false positives, especially Double vs sparse-turn Single.",
+      "alternatives": "Axis ratio alone and nearest-template distance alone were rejected by negative regressions.",
+      "evidence": [
+        "src/bluewolf_core/route_classifier_v2.py",
+        "tests/test_route_classifier_v2.py",
+        "tests/test_route_classifier_sweep.py"
+      ]
+    },
+    {
+      "id": "route_replacement",
+      "decision": "Material route change uses configurable geometry/period deltas plus evidence purity and retrospective onset.",
+      "classification": "algorithm",
+      "rationale": "Separates detection time from physical onset and prevents mixed old/new windows from causing intermediate replacements.",
+      "alternatives": "Fixed confirmation timers and immediate replacement on one mismatching sample were rejected.",
+      "evidence": [
+        "src/bluewolf_core/route_change.py",
+        "tests/test_route_change.py"
+      ]
+    },
+    {
+      "id": "structural_grouping",
+      "decision": "Membership is geometry+period+reliability/lifecycle only; score never participates.",
+      "classification": "product+algorithm",
+      "rationale": "A formation can score poorly without ceasing to be the same structural group.",
+      "alternatives": "Score-driven clustering is explicitly prohibited.",
+      "evidence": [
+        "src/bluewolf_core/grouping.py",
+        "tests/test_grouping.py",
+        "tests/test_group_lifecycle.py"
+      ]
+    },
+    {
+      "id": "semantic_phase",
+      "decision": "SO raw detector phase is converted to a common geometry-based semantic phase; ambiguous crossings use heading or return unavailable.",
+      "classification": "algorithm",
+      "rationale": "Independent route streams have arbitrary phase-zero and Figure-8 crossings are spatially non-unique.",
+      "alternatives": "Comparing raw phase or nearest point alone was rejected.",
+      "evidence": [
+        "src/bluewolf_core/so_phase.py",
+        "tests/test_so_phase.py"
+      ]
+    },
+    {
+      "id": "double_active_lobe",
+      "decision": "Double Hippodrome keeps full physical phase for lifecycle but scores on the active logical lobe; lobe switches reset derivative evidence.",
+      "classification": "algorithm",
+      "rationale": "Avoids inventing continuous scoring motion between two logical phase surfaces.",
+      "alternatives": "Blind full-double phase folding was rejected.",
+      "evidence": [
+        "src/bluewolf_core/double_lobe_phase.py",
+        "tests/test_double_lobe_phase.py"
+      ]
+    },
+    {
+      "id": "flat_linear_zero_scoring",
+      "decision": "Every error component uses explicit flat-linear-zero bands, then approved weighted aggregation.",
+      "classification": "product+algorithm",
+      "rationale": "Keeps score explainable and threshold effects visible; missing components renormalize rather than silently become zero.",
+      "alternatives": "Hidden sigmoid/nonlinear penalties and independent group formulas are prohibited.",
+      "evidence": [
+        "src/bluewolf_core/scoring.py",
+        "tests/test_scoring.py"
+      ]
+    },
+    {
+      "id": "event_alert_lifecycle",
+      "decision": "Event identity follows structural context; low-score alert and template suggestion use separate hysteresis state machines.",
+      "classification": "product+algorithm",
+      "rationale": "Score degradation must not split groups/events, while audible/recommendation behavior needs chatter resistance.",
+      "alternatives": "UI-generated events and auto-applying suggested templates are prohibited.",
+      "evidence": [
+        "src/bluewolf_core/event_alert.py",
+        "tests/test_event_alert.py",
+        "tests/test_live_runtime_contract.py"
+      ]
+    },
+    {
+      "id": "family_runtime_symmetry",
+      "decision": "SI and SO are sibling family runtimes under a neutral host/checkpoint/publication contract.",
+      "classification": "architecture",
+      "rationale": "Prevents SO from becoming hidden base implementation for SI and guarantees restore/publication parity.",
+      "alternatives": "SO-base + SI-extension architecture was explicitly rejected.",
+      "evidence": [
+        "src/bluewolf_runtime_adapter/family_runtime.py",
+        "src/bluewolf_runtime_adapter/family_environment_factory.py",
+        "tests/test_family_runtime_symmetry.py"
+      ]
+    },
+    {
+      "id": "real_latency_budget",
+      "decision": "Active scheduling envelope is join tolerance + active polling, and CI measures real InfluxDB2→join→Core→snapshot→HTTP processing.",
+      "classification": "architecture+performance",
+      "rationale": "The product requires <10s update latency and fake readers cannot prove transport behavior.",
+      "alternatives": "Static reader-only latency evidence is retained as a fast regression but is insufficient for acceptance.",
+      "evidence": [
+        "tests/test_latency_budget.py",
+        "tests/test_latency_influx_e2e.py",
+        "../.github/workflows/data10-latency.yml"
+      ]
+    }
+  ]
+}
