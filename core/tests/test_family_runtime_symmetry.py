@@ -2,21 +2,29 @@ from __future__ import annotations
 
 import inspect
 import os
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from bluewolf_core.live_si_runtime import LIVE_SI_RUNTIME_STATE_SCHEMA_VERSION
 from bluewolf_core.semantic_session import CoreSession
+from bluewolf_runtime_adapter.contract import LIVE_RUNTIME_SCHEMA_VERSION
 import bluewolf_runtime_adapter.family_environment_factory as neutral_factory
+import bluewolf_runtime_adapter.si_producer as si_producer_module
+import bluewolf_runtime_adapter.si_template_config as si_template_config_module
+import bluewolf_runtime_adapter.so_family_config as so_family_config_module
 from bluewolf_runtime_adapter.family_environment_factory import build_operational_runtime
 from bluewolf_runtime_adapter.family_runtime import (
     FAMILY_RUNTIME_STATE_SCHEMA_VERSION,
     FamilyRuntimeHost,
+    RuntimeFamilyAdapter,
 )
 from bluewolf_runtime_adapter.operational_state import (
     OPERATIONAL_STATE_SCHEMA_VERSION,
     export_operational_state,
+    restore_operational_state,
 )
+from bluewolf_runtime_adapter.producer import RuntimePublicationResult
 from bluewolf_runtime_adapter.service import RuntimeSnapshotStore
 
 from test_mixed_environment_factory import _config
@@ -95,6 +103,136 @@ class FamilyRuntimeSymmetryTests(unittest.TestCase):
         self.assertNotIn("from .environment_factory", source)
         self.assertIn("from .runtime_config_common", source)
         self.assertIn("from .so_family_config", source)
+
+
+    def test_single_family_restart_restore_parity(self) -> None:
+        for family in ("si", "so"):
+            with self.subTest(family=family):
+                config = _config()
+                if family == "si":
+                    config["templates"] = []
+                    config["servers"][0].pop("groups")
+                else:
+                    config.pop("siTemplates")
+                    config.pop("siVehicleTypes")
+
+                first = self._build(config)
+                state = export_operational_state(first, config_fingerprint="symmetry-test")
+                second = self._build(config)
+                restore_operational_state(
+                    second,
+                    state,
+                    config_fingerprint="symmetry-test",
+                )
+                restored = export_operational_state(
+                    second,
+                    config_fingerprint="symmetry-test",
+                )
+
+                self.assertEqual(
+                    restored["servers"][0]["producer"],
+                    state["servers"][0]["producer"],
+                )
+                host = second.pipelines[0].producer
+                self.assertIsInstance(host, FamilyRuntimeHost)
+                assert isinstance(host, FamilyRuntimeHost)
+                self.assertEqual(host.family_names, (family,))
+
+    def test_family_specific_modules_do_not_depend_on_sibling_family(self) -> None:
+        si_source = "\n".join(
+            (
+                inspect.getsource(si_producer_module),
+                inspect.getsource(si_template_config_module),
+            )
+        )
+        so_source = inspect.getsource(so_family_config_module)
+
+        for forbidden in (
+            "so_family_config",
+            "bluewolf_core.live_so",
+            "SOFamilyRuntimeAdapter",
+        ):
+            self.assertNotIn(forbidden, si_source)
+        for forbidden in (
+            "si_producer",
+            "si_template_config",
+            "bluewolf_core.live_si",
+            "SIFamilyRuntimeAdapter",
+        ):
+            self.assertNotIn(forbidden, so_source)
+
+    def test_family_host_publishes_one_atomic_snapshot_for_mixed_families(self) -> None:
+        observed_at = "2026-09-18T00:00:00Z"
+
+        class CountingStore:
+            def __init__(self) -> None:
+                self.publish_count = 0
+                self.last_snapshot = None
+
+            def publish(self, snapshot) -> None:
+                self.publish_count += 1
+                self.last_snapshot = dict(snapshot)
+
+        class FakeProducer:
+            def __init__(self, family: str, group_id: str) -> None:
+                self.family = family
+                self.group_id = group_id
+                self.session = None
+                self.store = None
+
+            def export_state(self) -> dict[str, object]:
+                return {}
+
+            def restore_state(self, state) -> None:
+                self.assert_empty = dict(state)
+
+            def publish_poll(self, poll) -> RuntimePublicationResult:
+                del poll
+                group = {
+                    "id": self.group_id,
+                    "family": self.family.upper(),
+                    "observedAt": observed_at,
+                    "members": [],
+                }
+                snapshot = {
+                    "schemaVersion": LIVE_RUNTIME_SCHEMA_VERSION,
+                    "serverId": "1",
+                    "arena": "Operational",
+                    "status": "test",
+                    "observedAt": observed_at,
+                    "source": {
+                        "kind": "python-core",
+                        "health": "healthy",
+                        "detail": f"{self.family} test producer",
+                    },
+                    "groups": {self.family: group},
+                    "groupList": [group],
+                }
+                return RuntimePublicationResult(snapshot, (self.group_id,), {})
+
+        store = CountingStore()
+        session = object()
+        host = FamilyRuntimeHost(
+            server_id=1,
+            session=session,
+            families=(
+                RuntimeFamilyAdapter("si", FakeProducer("si", "si:test")),
+                RuntimeFamilyAdapter("so", FakeProducer("so", "so:test")),
+            ),
+            store=store,
+        )
+
+        result = host.publish_poll(SimpleNamespace(samples=()))
+
+        self.assertIsNotNone(result.snapshot)
+        self.assertEqual(store.publish_count, 1)
+        self.assertIsNotNone(store.last_snapshot)
+        assert store.last_snapshot is not None
+        self.assertEqual(
+            {group["id"] for group in store.last_snapshot["groupList"]},
+            {"si:test", "so:test"},
+        )
+        self.assertEqual(set(result.published_group_ids), {"si:test", "so:test"})
 
 
 if __name__ == "__main__":
