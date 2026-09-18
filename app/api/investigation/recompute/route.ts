@@ -1,5 +1,6 @@
 import { recomputeSimulationEvent } from "@/lib/simulation-investigation";
 import { normalizeEventRecompute } from "@/lib/investigation-contract";
+import type { SyncTemplate } from "@/lib/bluewolf";
 
 function runtimeConfig() {
   const baseUrl = process.env.BLUEWOLF_CORE_API_URL?.trim().replace(/\/$/, "");
@@ -20,7 +21,7 @@ export async function POST(request: Request) {
         scenarioId: typeof row.scenarioId === "string" ? row.scenarioId : undefined,
         groupId: typeof row.groupId === "string" ? row.groupId : undefined,
         family: row.family === "SI" || row.family === "SO" ? row.family : undefined,
-        template: row.template && typeof row.template === "object" && !Array.isArray(row.template) ? row.template as Record<string, unknown> : undefined,
+        template: row.template && typeof row.template === "object" && !Array.isArray(row.template) ? row.template as Partial<SyncTemplate> : undefined,
       });
       return Response.json(normalizeEventRecompute(result), { headers: { "cache-control": "no-store", "x-bluewolf-investigation": "simulator-archive" } });
     } catch (error) {
