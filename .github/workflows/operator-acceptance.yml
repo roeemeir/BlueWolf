@@ -42,6 +42,7 @@ jobs:
             tests/op05-timeline-visibility.test.mjs \
             tests/op05-timeline-window.test.mjs \
             tests/operator-alert-mute.test.mjs \
+            tests/operator-event-alert-linkage.test.mjs \
             tests/display-score-smoothing.test.mjs \
             tests/operator-display-smoothing-ui.test.mjs
       - name: Type-check operator surfaces
