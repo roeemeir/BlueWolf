@@ -42,3 +42,20 @@ test('BW-OFF-010 operator basemap renders the Tel Aviv WMTS even before live WGS
   assert.match(source, /data-empty-demo=\{projection\.empty \? "tel-aviv"/);
   assert.doesNotMatch(source, /if \(!source \|\| !source\.enabled \|\| projection\.empty\) return null/);
 });
+
+
+test('BW-DEV-002 legacy route-bank sentinels are migrated to editable WGS84 geometry', () => {
+  const migrated = profile.ensureTelAvivDemoMapState({
+    mapServers: [{ ...profile.DEFAULT_PUBLIC_WMTS_SOURCE }],
+    settings: { defaultMap: profile.DEFAULT_PUBLIC_WMTS_SOURCE_ID },
+    routes: [
+      { id: 'si', family: 'SI', routeKind: 'compact', geometry: 'CLOSED_ROUTE', mapX: 25, mapY: 35, rotationDeg: 0 },
+      { id: 'so-single', family: 'SO', routeKind: 'single', geometry: 'CLOSED_ROUTE', mapX: 50, mapY: 50, rotationDeg: -20 },
+      { id: 'so-double', family: 'SO', routeKind: 'double', geometry: 'CLOSED_ROUTE', mapX: 75, mapY: 65, rotationDeg: 15 },
+    ],
+  });
+  assert.equal(migrated.routes.length, 3);
+  for (const route of migrated.routes) assert.match(route.geometry, /^LINESTRING\(/);
+  assert.notEqual(migrated.routes[0].geometry, migrated.routes[1].geometry);
+  assert.notEqual(migrated.routes[1].geometry, migrated.routes[2].geometry);
+});
