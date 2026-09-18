@@ -196,7 +196,7 @@ function interpolateLine(points: { latitude: number; longitude: number }[], phas
   };
 }
 function chosenTemplate(templateId: string, family: Family, explicit?: Partial<SyncTemplate> | null): Partial<SyncTemplate> & Pick<SyncTemplate, "id" | "family"> {
-  if (explicit?.id === templateId && explicit.family === family) return explicit;
+  if (explicit?.id === templateId && explicit.family === family) return { ...explicit, id: templateId, family };
   return DEFAULT_WORKSPACE.templates.find((template) => template.id === templateId && template.family === family)
     ?? { id: templateId, family, values: [], soSpec: undefined, siPositions: undefined };
 }
