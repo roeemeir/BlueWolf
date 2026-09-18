@@ -27,6 +27,7 @@ import {
   smoothRuntimeHistoryForDisplay,
   type DisplaySmoothingSeconds,
 } from "@/lib/display-score-smoothing";
+import { ScoreLegend } from "./score-legend";
 import type { ScoreLayer } from "./visuals";
 
 type GroupMeta = { id: string; color: string; name: string };
@@ -141,7 +142,7 @@ export function OperationalTimeline({
     if (count > 0) onCursor(count - 1);
   };
 
-  return <div className="operational-timeline-shell" dir="rtl" data-requirements="OP-04 OP-05 BW-SYNC-013 BW-UI-005">
+  return <div className="operational-timeline-shell" dir="rtl" data-requirements="OP-04 OP-05 BW-SYNC-013 BW-UI-005 BW-UI-013">
     <div className="v04-timeline-controls" style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
       <div className="segmented-control" aria-label="חלון זמן לפי נתוני Core">
         {OPERATOR_TIMELINE_WINDOWS.map((minutes) => <button type="button" key={minutes} className={windowMinutes === minutes ? "active" : ""} onClick={() => setWindowMinutes(minutes)}>{minutes} דק׳</button>)}
@@ -158,6 +159,7 @@ export function OperationalTimeline({
         {groups.map((group) => <button type="button" key={group.id} className={explicitGroupIds.includes(group.id) ? "active" : ""} onClick={() => toggleGroup(group.id)} style={{ borderColor: group.color }}>{group.name}</button>)}
       </div>
     </div>
+    <ScoreLegend layers={layers} showEvents />
     {recomputeOverride && <div className="card-hint" data-op04-version>אירוע {recomputeOverride.eventId} מוצג מ־run {recomputeOverride.runId.slice(0, 12)} · code {recomputeOverride.codeVersion.slice(0, 12)} · config {recomputeOverride.configVersion.slice(0, 12)}</div>}
     <svg className="timeline-svg v04-timeline operational-timeline" viewBox="0 0 1000 260" role="img" aria-label={`היסטוריית ציוני Python Core · ${windowMinutes} דקות לפי זמן הנתונים · smoothing ${smoothingSeconds}s display only`} onClick={(event) => {
       if (count === 0) return;
