@@ -213,7 +213,8 @@
       "BW-UI-008",
       "BW-GOV-007",
       "BW-DOC-003",
-      "BW-DOC-005"
+      "BW-DOC-005",
+      "CFG-01"
     ],
     "partial": [
       "BW-GOV-010",
@@ -239,8 +240,7 @@
       "REP-01",
       "REP-02",
       "REP-03",
-      "REP-04",
-      "CFG-01"
+      "REP-04"
     ],
     "no": [],
     "unspecified": [
@@ -277,7 +277,8 @@
     "BW-UI-008": "A material formation/template context change opens a new lifecycle event; a sustained low displayed score opens the approved alert on that same event. Both event and alert must reach the runtime contract and Operator as separate Core-backed concepts; UI must not synthesize either from smoothed display scores.",
     "BW-GOV-007": "Each development iteration must carry a machine-verified review manifest that partitions all 143 requirements exactly once into protected vs open, selects work only from open requirements, explicitly records manual-reverification items, and blocks release if registry status changes without refreshing that review.",
     "BW-DOC-003": "The algorithmic research documentation must explain every active algorithm decision and every active Core/ingest/event threshold with rationale and an explicit classification as product, calibration, implementation guard or compatibility; CI must fail when active configuration defaults are missing or drift from the catalog.",
-    "BW-DOC-005": "Current-state algorithmic documentation must match active code and explicitly mark historical/superseded behavior. CI must compare the active threshold catalog to live config defaults and reject reintroduction of known stale claims such as SO-only operational runtime or undefined display smoothing."
+    "BW-DOC-005": "Current-state algorithmic documentation must match active code and explicitly mark historical/superseded behavior. CI must compare the active threshold catalog to live config defaults and reject reintroduction of known stale claims such as SO-only operational runtime or undefined display smoothing.",
+    "CFG-01": "Every metric/threshold control on the Developer score screen must open an explanatory visual on click, show the current configured value, identify the changing geometric/motion aspect and the effect on score/eligibility/display, and expose an explicit product-vs-calibration classification that is machine-checked against the active Core threshold catalog."
   },
   "audit": {
     "policy": "Every requirement must be present. Implementation status comes from the Drive Master Spec v2.8 until a current-head audit updates it. Implementation and acceptance evidence are separate; manual-QA failures remain partial until user re-verification; missing evidence is reported, never invented.",
