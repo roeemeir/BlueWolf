@@ -3,6 +3,8 @@ import type { InvestigationPdfReport } from "@/lib/investigation-pdf";
 
 export const INVESTIGATION_REPORT_DATA_SCHEMA = "bluewolf.investigation-report-data.v1" as const;
 export const INVESTIGATION_REPORT_SOURCE = "core-event-archive" as const;
+export const SIMULATION_REPORT_SOURCE = "simulator-archive" as const;
+export type InvestigationReportSource = typeof INVESTIGATION_REPORT_SOURCE | typeof SIMULATION_REPORT_SOURCE;
 
 export type InvestigationReportEvent = InvestigationPdfReport["events"][number] & {
   arena: string | null;
@@ -15,7 +17,7 @@ export type NormalizedInvestigationReport = Omit<InvestigationPdfReport, "events
 
 export type InvestigationReportDataEnvelope = {
   schemaVersion: typeof INVESTIGATION_REPORT_DATA_SCHEMA;
-  source: typeof INVESTIGATION_REPORT_SOURCE;
+  source: InvestigationReportSource;
   report: NormalizedInvestigationReport;
   codeVersion: string;
   configVersion: string;
@@ -47,7 +49,7 @@ function isoOrNull(value: unknown, name: string) {
 export function normalizeInvestigationReportData(value: unknown): InvestigationReportDataEnvelope {
   const row = object(value, "report data envelope");
   if (row.schemaVersion !== INVESTIGATION_REPORT_DATA_SCHEMA) throw new Error("unsupported report data schema");
-  if (row.source !== INVESTIGATION_REPORT_SOURCE) throw new Error("report source is not Core event archive");
+  if (row.source !== INVESTIGATION_REPORT_SOURCE && row.source !== SIMULATION_REPORT_SOURCE) throw new Error("report source is not a supported investigation archive");
   const codeVersion = text(row.codeVersion, "codeVersion");
   const configVersion = text(row.configVersion, "configVersion");
   const reportRow = object(row.report, "report");
@@ -74,7 +76,7 @@ export function normalizeInvestigationReportData(value: unknown): InvestigationR
   });
   return {
     schemaVersion: INVESTIGATION_REPORT_DATA_SCHEMA,
-    source: INVESTIGATION_REPORT_SOURCE,
+    source: row.source as InvestigationReportSource,
     codeVersion,
     configVersion,
     report: { serverId, from, to, generatedAt, events },
