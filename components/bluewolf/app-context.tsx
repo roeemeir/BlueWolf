@@ -144,9 +144,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }
       } else if (category === "templates" || category === "vehicle-ranges") {
         if (payload.runtimeSync?.synced) {
-          toast.success(payload.runtimeSync.restartRequired ? "תצורת SI נשמרה לקונפיגורציית ה־Core; נדרשת הפעלה מחדש של שירות הליבה" : "תצורת SI נשמרה והוחלה", { id: saveToast });
+          toast.success(payload.runtimeSync.restartRequired ? "התצורה נשמרה והועברה ל־Core; נדרשת הפעלה מחדש של שירות הליבה" : "התצורה נשמרה והוחלה", { id: saveToast });
+        } else if (payload.runtimeSync?.reason?.includes("BLUEWOLF_OPERATIONAL_CONFIG is not configured")) {
+          toast.success("התצורה נשמרה והפכה לפעילה ב־Workspace וב־SIM. אין Core תפעולי מחובר בפריסה זו, ולכן אין יעד Runtime נוסף לעדכן.", { id: saveToast });
+        } else if (payload.runtimeSync) {
+          toast.warning(`התצורה נשמרה ב־Workspace, אך סנכרון ה־Core נכשל: ${payload.runtimeSync.reason ?? "סיבה לא ידועה"}`, { id: saveToast });
         } else {
-          toast.warning(`תצורת SI נשמרה ב־Workspace אך לא הוחלה על ה־Core${payload.runtimeSync?.reason ? `: ${payload.runtimeSync.reason}` : " בפריסה זו"}`, { id: saveToast });
+          toast.success("נשמר והפך לפעיל", { id: saveToast });
         }
       } else {
         toast.success("נשמר והפך לפעיל", { id: saveToast });
