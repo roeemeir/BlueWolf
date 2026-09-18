@@ -18,7 +18,18 @@ jobs:
         with:
           node-version: "24"
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - run: npm ci
+      - name: Install Python core for BW-UI-008 lifecycle contract
+        working-directory: core
+        run: python -m pip install -e .
+      - name: Verify BW-UI-008 context event -> low-score alert -> runtime contract
+        working-directory: core/tests
+        run: >-
+          python -m unittest -v
+          test_live_runtime_contract.LiveRuntimeContractTests.test_bw_ui_008_context_change_opens_event_then_low_score_alert_reaches_runtime_contract
       - name: Run operator acceptance regressions
         run: |
           node --test \
