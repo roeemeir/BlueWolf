@@ -1,10 +1,17 @@
 name: Blue Wolf QA Quick Tunnel
 
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - main
     paths:
+      - app/**
+      - components/**
+      - lib/**
+      - core/**
+      - package.json
+      - package-lock.json
       - .github/workflows/qa-quick-tunnel.yml
 
 concurrency:
@@ -22,14 +29,40 @@ jobs:
       BLUEWOLF_SQLITE_PATH: ${{ github.workspace }}/data/qa-preview.sqlite
       BLUEWOLF_HOST: 0.0.0.0
       PORT: "3000"
+      BLUEWOLF_CORE_API_URL: http://127.0.0.1:8090
+      BLUEWOLF_RUNTIME_HOST: 127.0.0.1
+      BLUEWOLF_RUNTIME_PORT: "8090"
+      BLUEWOLF_CONFIG_VERSION: qa-preview
+      BLUEWOLF_CODE_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Install dependencies
-        run: npm ci
+        run: |
+          npm ci
+          python -m pip install --disable-pip-version-check -e './core[service]'
+      - name: Start Python Core QA service
+        run: |
+          nohup bluewolf-runtime > /tmp/bluewolf-core.log 2>&1 &
+          echo $! > /tmp/bluewolf-core.pid
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:8090/healthz >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != "1" ]; then
+            cat /tmp/bluewolf-core.log
+            exit 1
+          fi
       - name: Build verified offline application
         run: npm run build:offline
       - name: Start SQLite offline server
@@ -80,6 +113,7 @@ jobs:
           echo "- URL: $url" >> "$GITHUB_STEP_SUMMARY"
           echo "- Commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
           echo "- Storage: local SQLite only" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Python Core QA: http://127.0.0.1:8090 (provenance + QA endpoints)" >> "$GITHUB_STEP_SUMMARY"
           echo "- Runtime secrets: none" >> "$GITHUB_STEP_SUMMARY"
           echo "BLUEWOLF_QA_URL=$url"
       - name: Publish QA URL artifact
