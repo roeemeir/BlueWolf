@@ -111,6 +111,7 @@ const MANUAL_REVERIFY_REQUIRED = new Set([
 ]);
 
 const VERIFIED = {
+  'CFG-01': ['lib/threshold-explainer.ts', 'components/bluewolf/developer-view.tsx', 'app/globals.css', 'core/docs/ACTIVE_ALGORITHM_THRESHOLD_CATALOG.json', 'tests/cfg01-threshold-explainer.test.mjs', '.github/workflows/ci.yml'],
   'BW-DOC-005': ['core/docs/ACTIVE_ALGORITHM_THRESHOLD_CATALOG.json', 'core/docs/IMPLEMENTATION_STATUS_HE.md', 'core/docs/ALGORITHMIC_CORE_RESEARCH_LOG_HE.md', 'core/docs/V1_SPEC_HE.md', 'core/tests/test_threshold_catalog.py', '.github/workflows/ci.yml'],
   'BW-DOC-003': ['core/docs/ACTIVE_ALGORITHM_THRESHOLD_CATALOG.json', 'core/docs/ALGORITHMIC_CORE_RESEARCH_LOG_HE.md', 'core/tests/test_threshold_catalog.py', '.github/workflows/ci.yml'],
   'BW-GOV-007': ['docs/development-iteration-review.json', 'scripts/verify-development-iteration.mjs', 'tests/development-iteration-review.test.mjs', '.github/workflows/release-gate.yml'],
