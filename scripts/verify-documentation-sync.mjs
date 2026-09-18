@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process';
 import { access, readFile } from 'node:fs/promises';
 import process from 'node:process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const DOCUMENTATION_SYNC_SCHEMA_VERSION = 'bluewolf.documentation-sync.v1';
 export const IMPLEMENTATION_TRACKED_PATHS = [
@@ -99,4 +101,4 @@ async function main() {
   console.log(`documentation-sync: OK ${actual.digest} (${actual.fileCount} implementation files)`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) main();
