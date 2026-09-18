@@ -148,6 +148,7 @@ const VERIFIED = {
   'BW-UI-008': ['core/src/bluewolf_core/live_so_event_runtime.py', 'core/src/bluewolf_runtime_adapter/contract.py', 'core/tests/test_live_runtime_contract.py', 'components/bluewolf/operator-view.tsx', 'components/bluewolf/operational-timeline.tsx', 'tests/operator-event-alert-linkage.test.mjs', '.github/workflows/operator-acceptance.yml'],
   'BW-UI-009': ['components/bluewolf/investigation-workspace.tsx', 'scripts/verify_ui_browser_e2e.py'],
   'BW-UI-010': ['components/bluewolf/operator-view.tsx', 'tests/ui-components.test.mjs'],
+  'BW-UI-013': ['components/bluewolf/score-legend.tsx', 'components/bluewolf/operational-timeline.tsx', 'components/bluewolf/simulation-timeline.tsx', 'app/globals.css', 'tests/ui013-simple-legend.test.mjs', '.github/workflows/ci.yml'],
   'BW-UI-014': ['components/bluewolf/operational-live-map.tsx', 'tests/op02-map-layers.test.mjs', 'tests/map-source-ui.test.mjs'],
   'BW-REP-003': ['components/bluewolf/investigation-workspace.tsx', 'tests/investigation-lifecycle.test.mjs'],
   'BW-REP-004': ['components/bluewolf/investigation-workspace.tsx', 'tests/investigation-contract.test.mjs'],
