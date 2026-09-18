@@ -22,18 +22,18 @@ export function defaultPublicWmtsDemoToken(sourceId: string) {
   return process.env.BLUEWOLF_PUBLIC_WMTS_DEMO_TOKEN?.trim() || "demo";
 }
 
-/**
- * Best-effort live discovery for the public QA WMTS profile. Failure is
- * deliberately non-fatal: an isolated/offline installation must still start,
- * calculate and render the engineering grid without Internet access.
- */
-export async function prepareTelAvivDemoWorkspace(value: unknown): Promise<unknown> {
-  const migrated = ensureTelAvivDemoMapState(value);
-  if (!isObject(migrated) || !Array.isArray(migrated.mapServers)) return migrated;
+type PublicWmtsDiscovery = {
+  catalog: ReturnType<typeof parseWmtsCapabilities>;
+  defaults: ReturnType<typeof defaultWmtsLayerSelections>;
+};
 
-  const sources = normalizeMapSources(migrated.mapServers);
-  const source = sources.find((item) => item.id === DEFAULT_PUBLIC_WMTS_SOURCE_ID);
-  if (!source || source.kind !== "wmts" || source.wmtsCatalog) return migrated;
+let publicWmtsDiscoveryCache: PublicWmtsDiscovery | null = null;
+let publicWmtsDiscoveryRetryAfter = 0;
+const PUBLIC_WMTS_DISCOVERY_RETRY_MS = 30_000;
+
+async function discoverDefaultPublicWmts(source: ReturnType<typeof normalizeMapSources>[number]): Promise<PublicWmtsDiscovery | null> {
+  if (publicWmtsDiscoveryCache) return publicWmtsDiscoveryCache;
+  if (Date.now() < publicWmtsDiscoveryRetryAfter) return null;
 
   const token = defaultPublicWmtsDemoToken(source.id);
   try {
@@ -56,20 +56,43 @@ export async function prepareTelAvivDemoWorkspace(value: unknown): Promise<unkno
     const catalog = sanitizeWmtsCatalogToken(discovered, source, token);
     const defaults = defaultWmtsLayerSelections(catalog);
     if (!defaults.length) throw new Error("public WMTS exposes no Blue-Wolf-compatible layers");
-
-    const state = structuredClone(migrated) as JsonObject;
-    state.mapServers = (state.mapServers as unknown[]).map((raw) => {
-      if (!isObject(raw) || raw.id !== DEFAULT_PUBLIC_WMTS_SOURCE_ID) return raw;
-      return {
-        ...raw,
-        wmtsCatalog: catalog,
-        wmtsLayers: defaults,
-        layer: undefined,
-        tileMatrixSet: undefined,
-      };
-    });
-    return state;
+    publicWmtsDiscoveryCache = { catalog, defaults };
+    publicWmtsDiscoveryRetryAfter = 0;
+    return publicWmtsDiscoveryCache;
   } catch {
-    return migrated;
+    publicWmtsDiscoveryRetryAfter = Date.now() + PUBLIC_WMTS_DISCOVERY_RETRY_MS;
+    return null;
   }
+}
+
+/**
+ * Best-effort live discovery for the public QA WMTS profile. Failure is
+ * deliberately non-fatal: an isolated/offline installation must still start,
+ * calculate and render the engineering grid without Internet access. Successful
+ * discovery is cached in-process so the tile proxy and Workspace GET share the
+ * exact same sanitized catalog without creating a user revision.
+ */
+export async function prepareTelAvivDemoWorkspace(value: unknown): Promise<unknown> {
+  const migrated = ensureTelAvivDemoMapState(value);
+  if (!isObject(migrated) || !Array.isArray(migrated.mapServers)) return migrated;
+
+  const sources = normalizeMapSources(migrated.mapServers);
+  const source = sources.find((item) => item.id === DEFAULT_PUBLIC_WMTS_SOURCE_ID);
+  if (!source || source.kind !== "wmts" || source.wmtsCatalog) return migrated;
+
+  const discovery = await discoverDefaultPublicWmts(source);
+  if (!discovery) return migrated;
+
+  const state = structuredClone(migrated) as JsonObject;
+  state.mapServers = (state.mapServers as unknown[]).map((raw) => {
+    if (!isObject(raw) || raw.id !== DEFAULT_PUBLIC_WMTS_SOURCE_ID) return raw;
+    return {
+      ...raw,
+      wmtsCatalog: discovery.catalog,
+      wmtsLayers: discovery.defaults,
+      layer: undefined,
+      tileMatrixSet: undefined,
+    };
+  });
+  return state;
 }
