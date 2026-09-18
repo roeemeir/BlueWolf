@@ -2,24 +2,15 @@
 
 ## התשובה הקצרה
 
-הפרויקט כבר אינו רק ליבה אלגוריתמית מבודדת. על branch `spec-conformant-vector-core` קיימת כיום שרשרת מבצעית מפורשת:
+הפרויקט כבר אינו ליבה אלגוריתמית מבודדת. השרשרת הפעילה היא:
 
-`InfluxDB2 -> temporal join -> adaptive CoreSession -> structural grouping -> SO live scoring -> Event/Alert runtime -> versioned live contract -> Operator`
+`InfluxDB2 -> temporal join -> adaptive CoreSession -> structural grouping -> family-neutral runtime host -> SI/SO live scoring -> Event/Alert runtime -> RuntimeSnapshot -> Operator`
 
-לצידה קיימים polling awake/idle, rollback לאחר poll כושל, checkpoint אטומי, restart continuity, ASGI runtime service, Windows/OpenShift packaging, live map positions, ו־30 דקות live history קומפקטי ל־Operator.
+לצידה קיימים safe polling/watermark, rollback לאחר poll כושל, checkpoint/restart continuity, SQLite persistence/migrations, ASGI runtime service, Windows/OpenShift packaging, WMTS secret-backed map pipeline ו-live history ל-Operator.
 
-ה־baseline האחרון שנסגר **במלואו** לפני גל השיפורים האחרון הוא:
+**כלל baseline:** מסמך זה אינו מקבע SHA ידני שעלול להתיישן. ה-baseline המחייב הוא ה-current-head שמופיע ב-Full Spec וב-current-head audit של ה-registry, ורק run מלא שאינו cancelled נחשב evidence. Release נשאר חסום עד implementationApproval מפורש של המשתמש במקומות שנדרשים.
 
-`spec-conformant-vector-core @ 9a6de173801b5d1d97411af667eb205298c03ece`
-
-`Blue Wolf CI` run `780` — **success מלא**.
-
-מאז baseline זה נוספו checkpoint cadence, time-based/compact history ו־footprint guards. ה־code head של גל זה לפני commits תיעודיים הוא:
-
-`b3a7e0404f6369baa65bcd9ae40d278cc1a92b64`
-
-ב־Run `796` על head קודם באותו גל עברו בהצלחה Web, `runtime-service`, `operational-pipeline` ו־runtime packaging לפני שה־workflow הוחלף על ידי push נוסף. Run `798` נפתח ל־`b3a7e040`; baseline חדש ייקבע רק לאחר run מלא שאינו cancelled.
-
+**חוזה תיעוד אלגוריתמי:** `ACTIVE_ALGORITHM_THRESHOLD_CATALOG.json` מכסה machine-readably את כל defaults של `CoreConfig`, `LivePollConfig` ו-`EventAlertConfig`, כולל סיווג ורציונל; `test_threshold_catalog.py` מפיל CI אם הקוד והתיעוד נסחפים זה מזה. ערכי legacy שנשמרים רק לתאימות מסומנים במפורש ואינם מוצגים כ-gates פעילים.
 ## מסמכי מקור מרכזיים
 
 - `ADAPTIVE_ROUTE_LIFECYCLE_HE.md` — זמן שחלף אינו evidence; 40 דקות הן memory ceiling בלבד.
