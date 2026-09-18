@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from bluewolf_core.live_si_runtime import LiveSIRuntime
 from bluewolf_core.live_so_event_runtime import LiveSOEventRuntime
 
 from .composite_producer import (
@@ -119,16 +120,22 @@ class SOFamilyRuntimeAdapter(RuntimeFamilyAdapter):
 
 
 class SIFamilyRuntimeAdapter(RuntimeFamilyAdapter):
-    """SI uses the same state envelope; temporal evidence intentionally warms up.
-
-    Live SI scoring derives current metrics from Core evidence and keeps no
-    independently authoritative event runtime yet. The empty runtime object is
-    explicit rather than a special server-level exception, so adding SI temporal
-    state later does not change the outer checkpoint contract.
-    """
+    """SI is a first-class stateful runtime sibling of SO."""
 
     def __init__(self, producer: Any) -> None:
         super().__init__("si", producer)
+
+    def _export_runtime_state(self) -> Mapping[str, object]:
+        return self.producer.runtime.export_state()
+
+    def _restore_runtime_state(self, state: Mapping[str, object]) -> None:
+        current = self.producer.runtime
+        templates = tuple(entry.template for entry in self.producer.templates)
+        self.producer.runtime = LiveSIRuntime.from_state(
+            templates,
+            state,
+            scoring_config=current.scoring_config,
+        )
 
 
 class FamilyRuntimeHost:
