@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from bluewolf_core import ChangeKind, CoreSession, Direction, detect_closed_route
@@ -127,6 +128,29 @@ class AdaptiveRouteChangeTests(unittest.TestCase):
 
         self.assertFalse(delta.changed)
         self.assertEqual(delta.reasons, ())
+
+    def test_bw_core_009_geometry_materiality_threshold_is_configurable(self) -> None:
+        previous = _clockwise_square_route()
+        twelve_percent_larger = replace(
+            previous,
+            route_id="cw-square-larger",
+            long_axis_a_m=previous.long_axis_a_m * 1.12,
+            short_axis_b_m=previous.short_axis_b_m * 1.12,
+            length_m=previous.length_m * 1.12,
+        )
+
+        default_delta = compare_routes(previous, twelve_percent_larger, DetectionConfig())
+        stricter_delta = compare_routes(
+            previous,
+            twelve_percent_larger,
+            DetectionConfig(geometry_change_ratio=0.15),
+        )
+
+        self.assertTrue(default_delta.changed)
+        self.assertIn("long_axis", default_delta.reasons)
+        self.assertIn("short_axis", default_delta.reasons)
+        self.assertFalse(stricter_delta.changed)
+        self.assertEqual(stricter_delta.reasons, ())
 
     def test_change_onset_is_retroactive_to_new_geometry(self) -> None:
         config = DetectionConfig()
