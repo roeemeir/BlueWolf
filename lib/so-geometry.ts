@@ -59,6 +59,39 @@ export function soSmilePoses(count: number, spacing = 245, risePerStep = 22): So
   });
 }
 
+/**
+ * Product law for a mixed SO chain.
+ *
+ * A Single consumes one physical hippodrome unit. A Double consumes two
+ * consecutive physical hippodrome units. Angles are assigned to those physical
+ * units first at exact 30° increments, then each rendered route instance is
+ * placed at the mean pose of the units it consumes. The Double's own ±15°
+ * internal axes therefore land on the two adjacent unit angles and become part
+ * of the same global concave smile instead of behaving like one wide route.
+ */
+export function soSmileChainPoses(
+  chain: readonly SoRouteKind[],
+  spacing = 245,
+  risePerStep = 22,
+): SoSmilePose[] {
+  if (!chain.length) return [];
+  const spans = chain.map((kind) => kind === "double" ? 2 : 1);
+  const totalUnits = spans.reduce((sum, value) => sum + value, 0);
+  const unitCenter = (totalUnits - 1) / 2;
+  let cursor = 0;
+  return spans.map((span, routeIndex) => {
+    const routeUnitCenter = cursor + (span - 1) / 2;
+    const relative = routeUnitCenter - unitCenter;
+    cursor += span;
+    return {
+      routeIndex,
+      rotationDeg: relative * 30,
+      offsetX: relative * spacing,
+      offsetY: Math.abs(relative) * Math.abs(relative) * risePerStep,
+    };
+  });
+}
+
 function rotate(point: SoPoint, degrees: number): SoPoint {
   const radians = degrees * Math.PI / 180;
   const cos = Math.cos(radians);
@@ -170,7 +203,7 @@ function fittedShapeOptions(options: SoGeometryOptions, spacing: number) {
 export function buildSoSmileGeometry(chain: readonly SoRouteKind[], options: SoGeometryOptions = {}): SoRouteGeometry[] {
   const center = { x: options.centerX ?? 0, y: options.centerY ?? 0 };
   const spacing = options.spacing ?? 245;
-  const poses = soSmilePoses(chain.length, spacing, options.risePerStep ?? 22);
+  const poses = soSmileChainPoses(chain, spacing, options.risePerStep ?? 22);
   const shapeOptions = fittedShapeOptions(options, spacing);
   return chain.map((kind, routeIndex) => {
     const pose = poses[routeIndex];
