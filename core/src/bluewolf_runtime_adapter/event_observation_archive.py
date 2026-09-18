@@ -1,4 +1,4 @@
-"""Durable SQLite archive for SO event scoring evidence and recomputations.
+"""Durable SQLite archive for SI/SO event scoring evidence and recomputations.
 
 The archive stores immutable Core evidence frames, including timestamps where
 scoring evidence was not yet sufficient. Investigation recomputation therefore
@@ -28,9 +28,12 @@ from pathlib import Path
 import sqlite3
 from typing import Any, Mapping
 
-from bluewolf_core.event_recompute import SOEventNavigationPoint, SOEventObservationFrame
+from bluewolf_core.event_recompute import SIEventObservationFrame, SOEventNavigationPoint, SOEventObservationFrame
 from bluewolf_core.event_route_evidence import SOEventRouteEvidence, SOEventRoutePoint
+from bluewolf_core.models import PrimitiveMetrics, RouteFamily
+from bluewolf_core.si_scoring import SIScoringMemberInput
 from bluewolf_core.so_scoring import SOScoringObservation
+from bluewolf_core.templates import ObservedMember
 
 
 EVENT_ARCHIVE_SCHEMA_VERSION = 1
@@ -89,6 +92,71 @@ def _observation_from_payload(value: Mapping[str, Any]) -> SOScoringObservation:
         position_reason=str(value.get("position_reason") or "so_template_phase"),
         diagnostics={str(key): item for key, item in diagnostics.items()},
     )
+
+
+def _si_observation_payload(item: SIScoringMemberInput) -> dict[str, Any]:
+    metrics = item.metrics
+    return {
+        "member": {
+            "member_id": item.member.member_id,
+            "vehicle_type": item.member.vehicle_type,
+            "phase": item.member.phase,
+            "route_role": item.member.route_role,
+        },
+        "metrics": {
+            "family": metrics.family.value,
+            "position_error": metrics.position_error,
+            "period_error_ratio": metrics.period_error_ratio,
+            "movement_error_ratio": metrics.movement_error_ratio,
+            "distance_error_b_ratio": metrics.distance_error_b_ratio,
+            "tangent_error_deg": metrics.tangent_error_deg,
+            "curvature_error_ratio": metrics.curvature_error_ratio,
+            "reliability": metrics.reliability,
+            "speed_fraction": metrics.speed_fraction,
+            "active": metrics.active,
+            "wrong_direction_seconds": metrics.wrong_direction_seconds,
+            "position_reason": metrics.position_reason,
+            "diagnostics": dict(metrics.diagnostics),
+        },
+    }
+
+
+def _si_observation_from_payload(value: Mapping[str, Any]) -> SIScoringMemberInput:
+    member_raw = value.get("member")
+    metrics_raw = value.get("metrics")
+    if not isinstance(member_raw, Mapping) or not isinstance(metrics_raw, Mapping):
+        raise ValueError("archived SI observation is malformed")
+    diagnostics = metrics_raw.get("diagnostics", {})
+    if not isinstance(diagnostics, Mapping):
+        raise ValueError("archived SI observation diagnostics must be an object")
+    family = RouteFamily(str(metrics_raw.get("family")))
+    if family is not RouteFamily.SI:
+        raise ValueError("archived SI observation metrics must use SI family")
+    active = metrics_raw.get("active")
+    if active is not None and not isinstance(active, bool):
+        raise ValueError("archived SI observation active must be boolean or null")
+    member = ObservedMember(
+        member_id=str(member_raw["member_id"]),
+        vehicle_type=str(member_raw["vehicle_type"]),
+        phase=float(member_raw["phase"]),
+        route_role=(None if member_raw.get("route_role") is None else str(member_raw["route_role"])),
+    )
+    metrics = PrimitiveMetrics(
+        family=family,
+        position_error=float(metrics_raw["position_error"]),
+        period_error_ratio=float(metrics_raw["period_error_ratio"]),
+        movement_error_ratio=float(metrics_raw["movement_error_ratio"]),
+        distance_error_b_ratio=float(metrics_raw["distance_error_b_ratio"]),
+        tangent_error_deg=(None if metrics_raw.get("tangent_error_deg") is None else float(metrics_raw["tangent_error_deg"])),
+        curvature_error_ratio=(None if metrics_raw.get("curvature_error_ratio") is None else float(metrics_raw["curvature_error_ratio"])),
+        reliability=float(metrics_raw["reliability"]),
+        speed_fraction=float(metrics_raw["speed_fraction"]),
+        active=active,
+        wrong_direction_seconds=float(metrics_raw.get("wrong_direction_seconds", 0.0)),
+        position_reason=str(metrics_raw.get("position_reason") or "si_template_position"),
+        diagnostics={str(key): item for key, item in diagnostics.items()},
+    )
+    return SIScoringMemberInput(member=member, metrics=metrics)
 
 
 def _navigation_payload(item: SOEventNavigationPoint) -> dict[str, Any]:
@@ -183,14 +251,19 @@ def _route_from_payload(value: Mapping[str, Any]) -> SOEventRouteEvidence:
     )
 
 
-def _frame_payload(frame: SOEventObservationFrame) -> str:
+def _frame_payload(frame: SOEventObservationFrame | SIEventObservationFrame) -> str:
+    is_si = isinstance(frame, SIEventObservationFrame)
     return json.dumps(
         {
+            "family": "SI" if is_si else "SO",
             "server_id": frame.server_id,
             "group_id": frame.group_id,
             "active_template_id": frame.active_template_id,
             "pending_reason": frame.pending_reason,
-            "observations": [_observation_payload(item) for item in frame.observations],
+            "observations": [
+                _si_observation_payload(item) if is_si else _observation_payload(item)
+                for item in frame.observations
+            ],
             "navigation": [_navigation_payload(item) for item in frame.navigation],
             "routes": [_route_payload(item) for item in frame.routes],
         },
@@ -206,7 +279,11 @@ def _hash(value: str) -> str:
 
 
 class SOEventObservationArchive:
-    """SQLite-backed immutable event evidence and recomputation archive."""
+    """SQLite-backed immutable SI/SO event evidence and recomputation archive.
+
+    Table names keep the historical SO prefix for backward-compatible on-disk
+    migration; payloads carry an explicit family from this version on.
+    """
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self.path = Path(path).expanduser().resolve(strict=False)
@@ -281,7 +358,7 @@ class SOEventObservationArchive:
                 """
             )
 
-    def record_frame(self, frame: SOEventObservationFrame) -> bool:
+    def record_frame(self, frame: SOEventObservationFrame | SIEventObservationFrame) -> bool:
         payload = _frame_payload(frame)
         payload_hash = _hash(payload)
         timestamp = _iso(frame.sample_time_utc)
@@ -292,7 +369,7 @@ class SOEventObservationArchive:
             ).fetchone()
             if existing is not None:
                 if str(existing["payload_hash"]) != payload_hash:
-                    raise ValueError("conflicting immutable SO event evidence")
+                    raise ValueError("conflicting immutable event evidence")
                 return False
             connection.execute(
                 """
@@ -304,7 +381,7 @@ class SOEventObservationArchive:
             )
         return True
 
-    def read_event(self, event_id: str) -> tuple[SOEventObservationFrame, ...]:
+    def read_event(self, event_id: str) -> tuple[SOEventObservationFrame | SIEventObservationFrame, ...]:
         if not event_id:
             raise ValueError("event_id is required")
         with self._connect() as connection:
@@ -316,19 +393,22 @@ class SOEventObservationArchive:
                 """,
                 (event_id,),
             ).fetchall()
-        frames: list[SOEventObservationFrame] = []
+        frames: list[SOEventObservationFrame | SIEventObservationFrame] = []
         for row in rows:
             payload = json.loads(str(row["payload_json"]))
+            family = str(payload.get("family") or "SO").upper()
+            if family not in {"SI", "SO"}:
+                raise ValueError("archived event family is invalid")
             observations_raw = payload.get("observations", [])
             if not isinstance(observations_raw, list):
-                raise ValueError("archived SO event observations are malformed")
+                raise ValueError("archived event observations are malformed")
             observations = tuple(
-                _observation_from_payload(item)
+                (_si_observation_from_payload(item) if family == "SI" else _observation_from_payload(item))
                 for item in observations_raw
                 if isinstance(item, Mapping)
             )
             if len(observations) != len(observations_raw):
-                raise ValueError("archived SO event observation row is malformed")
+                raise ValueError("archived event observation row is malformed")
             navigation_raw = payload.get("navigation", [])
             if not isinstance(navigation_raw, list):
                 raise ValueError("archived SO event navigation is malformed")
@@ -353,13 +433,14 @@ class SOEventObservationArchive:
             pending_reason = None if pending_raw is None else str(pending_raw)
             active_template_raw = payload.get("active_template_id")
             active_template_id = None if active_template_raw is None else str(active_template_raw)
+            frame_type = SIEventObservationFrame if family == "SI" else SOEventObservationFrame
             frames.append(
-                SOEventObservationFrame(
+                frame_type(
                     event_id=event_id,
                     server_id=int(row["server_id"]),
                     group_id=str(row["group_id"]),
                     sample_time_utc=_parse_time(str(row["sample_time_utc"])),
-                    observations=observations,
+                    observations=observations,  # type: ignore[arg-type]
                     active_template_id=active_template_id,
                     pending_reason=pending_reason,
                     navigation=navigation,
@@ -423,11 +504,15 @@ class SOEventObservationArchive:
             }
             if len(known_templates) > 1:
                 raise ValueError("archived event contains multiple active templates")
+            families = {"SI" if isinstance(frame, SIEventObservationFrame) else "SO" for frame in frames}
+            if len(families) != 1:
+                raise ValueError("archived event contains multiple route families")
             results.append(
                 {
                     "eventId": event_id,
                     "serverId": server_id,
                     "groupId": str(row["group_id"]),
+                    "family": next(iter(families)),
                     "startAt": str(row["start_at"]),
                     "endAt": str(row["end_at"]),
                     "frameCount": int(row["frame_count"]),
@@ -489,4 +574,6 @@ class SOEventObservationArchive:
         return tuple(json.loads(str(row["result_json"])) for row in rows)
 
 
-__all__ = ["EVENT_ARCHIVE_SCHEMA_VERSION", "SOEventObservationArchive"]
+EventObservationArchive = SOEventObservationArchive
+
+__all__ = ["EVENT_ARCHIVE_SCHEMA_VERSION", "EventObservationArchive", "SOEventObservationArchive"]
