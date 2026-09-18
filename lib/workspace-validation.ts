@@ -40,13 +40,19 @@ function validateVehicleRanges(state: JsonObject) {
   if (!Array.isArray(state.vehicleTypes)) return;
   const ranges = state.vehicleTypes.map((value, index) => {
     if (!isObject(value)) throw new Error(`vehicle type ${index + 1} must be an object`);
+    const rawRanges = Array.isArray(value.idRanges) ? value.idRanges : undefined;
+    const idRanges = rawRanges?.map((rawRange, rangeIndex) => {
+      if (!isObject(rawRange)) throw new Error(`vehicle type ${index + 1} range ${rangeIndex + 1} must be an object`);
+      return { minId: Number(rawRange.minId), maxId: Number(rawRange.maxId) };
+    });
     return {
       id: String(value.id ?? `vehicle-${index + 1}`),
       name: String(value.name ?? index + 1),
       minId: Number(value.minId),
       maxId: Number(value.maxId),
+      idRanges,
       workSpeedKmh: Number(value.workSpeedKmh),
-    } as Pick<VehicleType, "id" | "name" | "minId" | "maxId" | "workSpeedKmh">;
+    } as Pick<VehicleType, "id" | "name" | "minId" | "maxId" | "idRanges" | "workSpeedKmh">;
   });
   validateVehicleIdRanges(ranges);
 }
