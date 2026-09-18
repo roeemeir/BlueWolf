@@ -9,7 +9,7 @@ test('BW-UI-005 timeline publishes one evidence timestamp and exposes LIVE retur
   const source = await readFile(path.join(root, 'components/bluewolf/operational-timeline.tsx'), 'utf8');
   const requirementAttribute = source.match(/data-requirements="([^"]+)"/)?.[1] ?? "";
   for (const id of ["OP-04", "OP-05", "BW-SYNC-013", "BW-UI-005"]) {
-    assert.ok(requirementAttribute.split(/\\s+/).includes(id), `missing timeline requirement tag ${id}`);
+    assert.ok(requirementAttribute.split(/\s+/).includes(id), `missing timeline requirement tag ${id}`);
   }
   assert.match(source, /publishOperatorCursor\(serverId, point\.observedAt\)/);
   assert.match(source, /publishOperatorCursor\(serverId, null\)/);
