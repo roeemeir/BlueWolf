@@ -4,6 +4,7 @@ import unittest
 from datetime import timedelta
 
 from bluewolf_core.live_so_event_runtime import TemplateComparisonDimension
+from bluewolf_core.models import ChangeKind
 from bluewolf_runtime_adapter import LIVE_RUNTIME_SCHEMA_VERSION, build_so_live_runtime_snapshot
 from bluewolf_runtime_adapter.contract import RuntimeVehiclePosition
 
@@ -55,6 +56,67 @@ class LiveRuntimeContractTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in group["members"]], [1, 2])
         self.assertTrue(all(row["scoreValid"] for row in group["members"]))
         self.assertEqual(group["event"]["contextKey"], result.context_key)
+
+
+    def test_bw_ui_008_context_change_opens_event_then_low_score_alert_reaches_runtime_contract(self) -> None:
+        runtime, _, registry = _runtime()
+        route = _route(period_s=100.0)
+        constellation = _constellation()
+
+        initial = runtime.process_snapshot(
+            "g1",
+            constellation,
+            _members(route, 0),
+            reference_period_s=100.0,
+            displayed_group_score=90.0,
+            displayed_score_valid=True,
+        )
+        initial_event_id = initial.event.snapshot.event_id
+
+        registry.select_manual("g1", constellation, "same")
+        changed = runtime.process_snapshot(
+            "g1",
+            constellation,
+            _members(route, 10),
+            reference_period_s=100.0,
+            displayed_group_score=40.0,
+            displayed_score_valid=True,
+        )
+        changed_kinds = [change.kind for change in changed.event.changes]
+        self.assertIn(ChangeKind.EVENT_OPENED, changed_kinds)
+        self.assertNotIn(ChangeKind.ALERT_OPENED, changed_kinds)
+        new_event_id = changed.event.snapshot.event_id
+        self.assertNotEqual(new_event_id, initial_event_id)
+        self.assertEqual(changed.event.snapshot.active_template_id, "same")
+
+        alerted = runtime.process_snapshot(
+            "g1",
+            constellation,
+            _members(route, 20),
+            reference_period_s=100.0,
+            displayed_group_score=40.0,
+            displayed_score_valid=True,
+        )
+        alerted_kinds = [change.kind for change in alerted.event.changes]
+        self.assertIn(ChangeKind.ALERT_OPENED, alerted_kinds)
+        self.assertTrue(alerted.event.snapshot.low_score_alert_active)
+        self.assertEqual(alerted.event.snapshot.event_id, new_event_id)
+
+        payload = build_so_live_runtime_snapshot(
+            alerted,
+            server_id=1,
+            observed_at_utc=START + timedelta(seconds=20),
+            arena="arena-a",
+            displayed_group_score=40.0,
+            displayed_score_valid=True,
+            comparison_dimension=TemplateComparisonDimension.SYNC,
+            vehicle_ids={"m1": 1, "m2": 2},
+        )
+        group = payload["groups"]["so"]
+        self.assertEqual(group["event"]["id"], new_event_id)
+        self.assertEqual(group["event"]["contextKey"], alerted.context_key)
+        self.assertEqual(group["alert"]["id"], f"{new_event_id}:low-score")
+        self.assertEqual(group["alert"]["severity"], "warning")
 
     def test_optional_map_position_is_explicit_and_preserves_navigation_heading(self) -> None:
         runtime, _, _ = _runtime()
