@@ -10,6 +10,9 @@ test('BW-OFF-010 developer workbench discovers generic WMTS metadata and keeps t
   assert.match(source, /MatrixSet/);
   assert.match(source, /Opacity/);
   assert.match(source, /Token mode/);
+  assert.match(source, /value="path"/);
+  assert.match(source, /Path placeholder/);
+  assert.match(source, /tokenPathPlaceholder/);
   assert.match(source, /type="password"/);
   assert.match(source, /\/api\/map-sources\/token/);
   assert.match(source, /\/api\/map-sources\/capabilities/);
