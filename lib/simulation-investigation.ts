@@ -195,10 +195,10 @@ function interpolateLine(points: { latitude: number; longitude: number }[], phas
     longitude: first.longitude + (second.longitude - first.longitude) * local,
   };
 }
-function chosenTemplate(templateId: string, family: Family, explicit?: Partial<SyncTemplate> | null) {
+function chosenTemplate(templateId: string, family: Family, explicit?: Partial<SyncTemplate> | null): Partial<SyncTemplate> & Pick<SyncTemplate, "id" | "family"> {
   if (explicit?.id === templateId && explicit.family === family) return explicit;
   return DEFAULT_WORKSPACE.templates.find((template) => template.id === templateId && template.family === family)
-    ?? { id: templateId, family, values: [] };
+    ?? { id: templateId, family, values: [], soSpec: undefined, siPositions: undefined };
 }
 
 export function recomputeSimulationEvent(input: {
