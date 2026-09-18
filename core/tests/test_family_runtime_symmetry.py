@@ -5,6 +5,7 @@ import os
 import unittest
 from unittest.mock import patch
 
+from bluewolf_core.live_si_runtime import LIVE_SI_RUNTIME_STATE_SCHEMA_VERSION
 import bluewolf_runtime_adapter.family_environment_factory as neutral_factory
 from bluewolf_runtime_adapter.family_environment_factory import build_operational_runtime
 from bluewolf_runtime_adapter.family_runtime import (
@@ -68,6 +69,11 @@ class FamilyRuntimeSymmetryTests(unittest.TestCase):
             self.assertEqual(envelope["family"], family)
             self.assertIsInstance(envelope["producer"], dict)
             self.assertIsInstance(envelope["runtime"], dict)
+        self.assertEqual(
+            producer_state["si"]["runtime"]["schemaVersion"],
+            LIVE_SI_RUNTIME_STATE_SCHEMA_VERSION,
+        )
+        self.assertIn("scorers", producer_state["si"]["runtime"])
         self.assertNotIn("liveRuntime", servers[0])
 
     def test_canonical_factory_has_no_dependency_on_legacy_so_environment_factory(self) -> None:
