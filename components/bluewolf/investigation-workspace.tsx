@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { CalendarRange, ChevronDown, Download, FileChartColumn, MapPinned, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
@@ -236,12 +236,14 @@ export function InvestigationWorkspace({ server, onServerChange, dataMode }: { s
   const [loadState, setLoadState] = useState<LoadState>({ kind: "idle" });
   const [pdfState, setPdfState] = useState<PdfState>("idle");
 
-  useEffect(() => {
-    if (dataMode !== "simulation" || from || to) return;
+  const simulationDefaultRange = useMemo(() => {
+    if (dataMode !== "simulation") return { from: "", to: "" };
     const now = new Date();
-    setTo(localDateTimeInput(now));
-    setFrom(localDateTimeInput(new Date(now.getTime() - 7 * 24 * 60 * 60_000)));
-  }, [dataMode, from, to]);
+    return {
+      from: localDateTimeInput(new Date(now.getTime() - 7 * 24 * 60 * 60_000)),
+      to: localDateTimeInput(now),
+    };
+  }, [dataMode]);
 
   const reportSource = dataMode === "simulation" ? "simulation" : "core";
   const reportSourceHeader = dataMode === "simulation" ? "simulator-archive" : "core-event-archive";
@@ -250,8 +252,8 @@ export function InvestigationWorkspace({ server, onServerChange, dataMode }: { s
     let fromIso: string;
     let toIso: string;
     try {
-      fromIso = inputTimeToIso(from, "זמן התחלה");
-      toIso = inputTimeToIso(to, "זמן סוף");
+      fromIso = inputTimeToIso(from || simulationDefaultRange.from, "זמן התחלה");
+      toIso = inputTimeToIso(to || simulationDefaultRange.to, "זמן סוף");
       if (fromIso >= toIso) throw new Error("זמן ההתחלה חייב להיות מוקדם מזמן הסיום");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "טווח הזמן אינו תקין");
@@ -286,7 +288,7 @@ export function InvestigationWorkspace({ server, onServerChange, dataMode }: { s
       }
       if (response.headers.get("x-bluewolf-report-source") !== reportSourceHeader) throw new Error("מקור הדוח אינו תואם למצב הנתונים שנבחר");
       const envelope = normalizeInvestigationReportData(payload);
-      setLoadState({ kind: "ready", envelope, fromLocal: from, toLocal: to });
+      setLoadState({ kind: "ready", envelope, fromLocal: from || simulationDefaultRange.from, toLocal: to || simulationDefaultRange.to });
     } catch (error) {
       setLoadState({ kind: "error", detail: error instanceof Error ? error.message : "טעינת דוח התחקור נכשלה" });
     }
@@ -313,8 +315,8 @@ export function InvestigationWorkspace({ server, onServerChange, dataMode }: { s
     <section className="investigation-range-card glass-panel">
       <div className="investigation-range-head"><div><p className="eyebrow">Investigation</p><h2>תחקור לפי טווח זמן</h2><p>בוחרים טווח פעם אחת. לאחר אישור נטען דוח Web מלא; PDF מופק מאותו dataset בדיוק.</p></div><CalendarRange /></div>
       <div className="investigation-range-grid">
-        <label><span>מתאריך ושעה</span><input aria-label="זמן התחלה לתחקור" type="datetime-local" value={from} onChange={(event) => setFrom(event.target.value)} /></label>
-        <label><span>עד תאריך ושעה</span><input aria-label="זמן סוף לתחקור" type="datetime-local" value={to} onChange={(event) => setTo(event.target.value)} /></label>
+        <label><span>מתאריך ושעה</span><input aria-label="זמן התחלה לתחקור" type="datetime-local" value={from || simulationDefaultRange.from} onChange={(event) => setFrom(event.target.value)} /></label>
+        <label><span>עד תאריך ושעה</span><input aria-label="זמן סוף לתחקור" type="datetime-local" value={to || simulationDefaultRange.to} onChange={(event) => setTo(event.target.value)} /></label>
         <label><span>שרת</span><Select value={server} onValueChange={(value) => { onServerChange(value); setLoadState({ kind: "idle" }); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.servers.filter((item) => item.enabled).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></label>
         <Button className="investigation-confirm" onClick={loadReport} disabled={loadState.kind === "loading"}><FileChartColumn />{loadState.kind === "loading" ? "טוען דוח…" : "אישור והצג דוח"}</Button>
       </div>
