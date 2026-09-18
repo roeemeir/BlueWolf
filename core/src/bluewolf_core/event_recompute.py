@@ -401,6 +401,7 @@ def recompute_so_event(
     ]
     return {
         "schemaVersion": "bluewolf.event-recompute.v1",
+        "family": "SO",
         "runId": resolved_run_id,
         "scenarioId": resolved_scenario_id,
         "eventId": event_id,
