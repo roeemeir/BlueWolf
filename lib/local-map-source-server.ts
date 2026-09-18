@@ -1,4 +1,4 @@
-import { ensureTelAvivDemoMapState } from "./default-map-profile";
+import { DEFAULT_PUBLIC_WMTS_SOURCE_ID, ensureTelAvivDemoMapState } from "./default-map-profile";
 import { defaultPublicWmtsDemoToken, prepareTelAvivDemoWorkspace } from "./default-map-profile-server";
 import { normalizeMapSources, type OperationalMapSource } from "./map-source-config";
 import {
@@ -22,7 +22,7 @@ export async function localMapSource(sourceId: string): Promise<OperationalMapSo
     ? workspace.state
     : { mapServers: [], settings: {} };
   const migrated = ensureTelAvivDemoMapState(rawState);
-  const prepared = sourceId === "omniscale-demo"
+  const prepared = sourceId === DEFAULT_PUBLIC_WMTS_SOURCE_ID
     ? await prepareTelAvivDemoWorkspace(migrated)
     : migrated;
   if (!prepared || typeof prepared !== "object" || Array.isArray(prepared)) throw new Error("local workspace is not configured");
