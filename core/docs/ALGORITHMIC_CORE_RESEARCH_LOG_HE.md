@@ -375,6 +375,43 @@ Shard ייעודי `double-lobe-phase`, נוסף לכל מטריצת ה־CI.
 
 ---
 
+
+---
+
+## Current-head supersession — 18/09/2026
+
+הסעיף הזה גובר על ניסוחים היסטוריים קודמים כאשר הם מתארים מצב שהיה נכון בזמן milestone ישן אך אינו current-state.
+
+### Thresholds and algorithm rationale
+
+`ACTIVE_ALGORITHM_THRESHOLD_CATALOG.json` הוא מקור machine-checked לברירות המחדל הפעילות של `CoreConfig`, `LivePollConfig` ו-`EventAlertConfig`. לכל threshold נשמרים:
+- הערך הפעיל בקוד;
+- classification מפורש: `product`, `calibration`, `implementation_guard` או `compatibility`;
+- rationale הנדסי;
+- source symbol בקוד.
+
+`test_threshold_catalog.py` דורש התאמה מדויקת בין כל שדות הקונפיגורציה הפעילים לקטלוג, ולכן הוספה/שינוי של threshold בקוד בלי עדכון התיעוד נכשלת ב-CI. אותו catalog כולל גם החלטות אלגוריתמיות, alternatives ו-evidence paths אמיתיים.
+
+### SI/SO operational runtime
+
+המצב הפעיל אינו עוד SO-only. SI ו-SO הם first-class sibling runtime families תחת `FamilyRuntimeHost` ו-factory ניטרלי למשפחה. לשתיהן אותו ingest/session host, checkpoint envelope, restore/session-replacement ונתיב publication אטומי; ההבדלים נשארים באלגוריתם המשפחתי.
+
+SI template עובר מקצה לקצה Web → Workspace → operational config → Python config/parser → `LiveSIRuntimeProducer` → SI scoring → RuntimeSnapshot. regression ייעודי מוכיח ששינוי template מ-120° ל-90° משנה score חי ולא רק ציור.
+
+### Displayed score
+
+הניסוח במחקר 13 שלפיו smoothing טרם הוגדר מתאר את מצב אותו milestone בלבד. ב-current-head קיימת שכבת display-only trailing smoothing ב-`lib/display-score-smoothing.ts` עם RAW/5/10/20/30 שניות וברירת מחדל 10 שניות. אותה תוצאה מוצגת בגרף ובכרטיסי הקבוצה לאחר recompute. raw Core score, alerts, events ו-grouping אינם צורכים את הערך המוחלק. `BW-SYNC-013` נשאר partial רק משום שנדרש user visual re-verification.
+
+### Latency evidence
+
+`BW-DATA-010` נמדד ב-CI מול InfluxDB2 2.7 אמיתי: Flux query → temporal join → Core → scoring/publication → RuntimeSnapshot → HTTP. run current-head הייעודי הוא #75, וה-gate נשאר <10s. Reader מדומה אינו נחשב acceptance evidence לסעיף זה.
+
+### Current validation baseline
+
+Current-head: `3c76d8bda4526ec7e36d7cbb3d3d4737ec6628a2`.
+`Blue Wolf CI #2163` — SUCCESS. גם SI Live Runtime #263, Operator #682, BW-OFF-010 #587, BW-DATA-010 #75, BW-OFF-009 #549 ו-BW-OFF-012 #571 עברו SUCCESS על אותו SHA.
+
+
 ## כלל עדכון מעכשיו
 
 כל שינוי אלגוריתמי חדש חייב להוסיף/לעדכן כאן entry באותו commit או ב־documentation commit הצמוד ל־milestone המאומת. דוח ה־Word יישאר גרסה קריאה ומעוצבת של אותו בסיס מחקרי ויעודכן לאחר milestone משמעותי.
