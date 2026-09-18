@@ -1,3 +1,4 @@
+import { buildSimulationInvestigationReport, SIMULATION_ARCHIVE_SOURCE } from "@/lib/simulation-investigation";
 import { buildInvestigationPdf, type InvestigationPdfEvent, type InvestigationPdfReport } from "@/lib/investigation-pdf";
 import { normalizeEventRecompute, normalizeInvestigationEvents } from "@/lib/investigation-contract";
 
@@ -19,7 +20,7 @@ type ReportOverride = {
   requiredConfigVersion?: string | null;
   requiredTemplateVersion?: string | null;
 };
-type ReportRequest = { serverId: number; from?: string | null; to?: string | null; overrides?: ReportOverride[]; format: "pdf" | "data" };
+type ReportRequest = { serverId: number; from?: string | null; to?: string | null; overrides?: ReportOverride[]; format: "pdf" | "data"; source: "core" | "simulation" };
 
 function object(value: unknown, name: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${name} must be an object`);
@@ -55,7 +56,9 @@ function parseRequest(value: unknown): ReportRequest {
     };
   });
   if (new Set(overrides.map((item) => item.eventId)).size !== overrides.length) throw new Error("override event ids must be unique");
-  return { serverId: Number(row.serverId), from, to, overrides, format };
+  const source = row.source === "simulation" ? "simulation" : row.source === undefined || row.source === null || row.source === "" || row.source === "core" ? "core" : null;
+  if (!source) throw new Error("source must be core or simulation");
+  return { serverId: Number(row.serverId), from, to, overrides, format, source };
 }
 
 async function coreJson(baseUrl: string, token: string | undefined, path: string, init?: RequestInit, timeoutMs = 90_000) {
@@ -86,12 +89,42 @@ function provenanceMismatch(eventId: string, field: string, expected: string, ac
 }
 
 export async function POST(request: Request) {
-  const { baseUrl, token } = runtimeConfig();
-  if (!baseUrl) return Response.json({ status: "unavailable", error: "Python Core investigation report is not configured" }, { status: 503 });
   let parsed: ReportRequest;
   try { parsed = parseRequest(await request.json()); }
   catch (error) { return Response.json({ status: "error", error: error instanceof Error ? error.message : "invalid report request" }, { status: 400 }); }
 
+  if (parsed.source === "simulation") {
+    try {
+      const built = buildSimulationInvestigationReport({
+        serverId: parsed.serverId,
+        from: parsed.from,
+        to: parsed.to,
+        overrides: parsed.overrides,
+      });
+      const codeVersion = built.codeVersion;
+      const configVersion = built.configVersion;
+      if (parsed.format === "data") {
+        return Response.json({
+          schemaVersion: "bluewolf.investigation-report-data.v1",
+          source: SIMULATION_ARCHIVE_SOURCE,
+          report: built.report,
+          codeVersion,
+          configVersion,
+        }, { headers: { "cache-control": "no-store", "x-bluewolf-report-source": SIMULATION_ARCHIVE_SOURCE, "x-bluewolf-code-version": codeVersion, "x-bluewolf-config-version": configVersion } });
+      }
+      const pdf = buildInvestigationPdf(built.report);
+      const generatedAt = built.report.generatedAt;
+      const day = generatedAt.slice(0, 10).replaceAll("-", "");
+      const pdfBody = new ArrayBuffer(pdf.byteLength);
+      new Uint8Array(pdfBody).set(pdf);
+      return new Response(pdfBody, { status: 200, headers: { "content-type": "application/pdf", "content-disposition": `attachment; filename="bluewolf-simulation-investigation-${day}.pdf"`, "cache-control": "no-store", "x-bluewolf-report-source": SIMULATION_ARCHIVE_SOURCE, "x-bluewolf-code-version": codeVersion, "x-bluewolf-config-version": configVersion } });
+    } catch (error) {
+      return Response.json({ status: "error", error: error instanceof Error ? error.message : "simulation report failed" }, { status: 422 });
+    }
+  }
+
+  const { baseUrl, token } = runtimeConfig();
+  if (!baseUrl) return Response.json({ status: "unavailable", error: "Python Core investigation report is not configured" }, { status: 503 });
   const query = new URLSearchParams({ serverId: String(parsed.serverId) }); if (parsed.from) query.set("from", parsed.from); if (parsed.to) query.set("to", parsed.to);
   try {
     const listing = normalizeInvestigationEvents(await coreJson(baseUrl, token, `/v1/investigation/events?${query.toString()}`, undefined, 45_000));
