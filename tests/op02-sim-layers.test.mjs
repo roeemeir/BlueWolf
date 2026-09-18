@@ -11,8 +11,8 @@ test('OP-02 SIM exposes observed trace, route and group toggles with 30/60/90 wi
   assert.match(source, /SIM_TRACE_WINDOWS = \[30, 60, 90\]/);
   assert.match(source, /SIM_TRACE_RETENTION_MINUTES = 90/);
   assert.match(source, /observedLayer &&/);
-  assert.match(source, /showTrace &&/);
-  assert.match(source, /showRelations &&/);
+  assert.match(source, /scoreTraceLayer &&/);
+  assert.match(source, /relationLayer &&/);
   assert.match(source, /groupLayer &&/);
   assert.match(source, /showRoutes && routeLayer/);
 });
