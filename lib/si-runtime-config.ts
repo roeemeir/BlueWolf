@@ -1,6 +1,6 @@
 import type { SyncTemplate, VehicleType } from "./bluewolf";
 import { validateSiPositions } from "./si-direct-placement";
-import { validateVehicleIdRanges } from "./vehicle-id-ranges";
+import { validateVehicleIdRanges, vehicleTypeRanges } from "./vehicle-id-ranges";
 
 export type OperationalSiTemplateSlot = {
   id: string;
@@ -20,6 +20,7 @@ export type OperationalSiVehicleType = {
   id: string;
   minId: number;
   maxId: number;
+  ranges: { minId: number; maxId: number }[];
   workSpeedMps: number;
   siRoles: Array<"inner" | "middle" | "outer">;
 };
@@ -44,13 +45,17 @@ function slotId(ring: "inner" | "middle" | "outer", angleDeg: number, vehicleTyp
 export function operationalSiVehicleTypes(vehicleTypes: readonly VehicleType[]): OperationalSiVehicleType[] {
   validateVehicleIdRanges([...vehicleTypes]);
   return [...vehicleTypes]
-    .map((type) => ({
-      id: type.id,
-      minId: type.minId,
-      maxId: type.maxId,
-      workSpeedMps: type.workSpeedKmh / 3.6,
-      siRoles: [...type.siRoles].sort((first, second) => RING_ORDER[first] - RING_ORDER[second]),
-    }))
+    .map((type) => {
+      const ranges = vehicleTypeRanges(type).sort((first, second) => first.minId - second.minId || first.maxId - second.maxId);
+      return {
+        id: type.id,
+        minId: ranges[0].minId,
+        maxId: ranges[0].maxId,
+        ranges,
+        workSpeedMps: type.workSpeedKmh / 3.6,
+        siRoles: [...type.siRoles].sort((first, second) => RING_ORDER[first] - RING_ORDER[second]),
+      };
+    })
     .sort((first, second) => first.minId - second.minId || first.maxId - second.maxId || first.id.localeCompare(second.id));
 }
 
