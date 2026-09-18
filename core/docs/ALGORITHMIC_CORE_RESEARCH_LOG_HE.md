@@ -406,9 +406,9 @@ SI template עובר מקצה לקצה Web → Workspace → operational config 
 
 `BW-DATA-010` נמדד ב-CI מול InfluxDB2 2.7 אמיתי: Flux query → temporal join → Core → scoring/publication → RuntimeSnapshot → HTTP. run current-head הייעודי הוא #75, וה-gate נשאר <10s. Reader מדומה אינו נחשב acceptance evidence לסעיף זה.
 
-### Current validation baseline
+### Historical validation snapshot (superseded by the refresh below)
 
-Current-head: `3c76d8bda4526ec7e36d7cbb3d3d4737ec6628a2`.
+At that milestone the validated head was `3c76d8bda4526ec7e36d7cbb3d3d4737ec6628a2`.
 `Blue Wolf CI #2163` — SUCCESS. גם SI Live Runtime #263, Operator #682, BW-OFF-010 #587, BW-DATA-010 #75, BW-OFF-009 #549 ו-BW-OFF-012 #571 עברו SUCCESS על אותו SHA.
 
 
