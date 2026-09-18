@@ -204,7 +204,7 @@ class InvestigationServiceTests(unittest.TestCase):
                 )
                 self.assertEqual(status, 200)
                 self.assertEqual(listing["schemaVersion"], "bluewolf.investigation-events.v1")
-                self.assertEqual(listing["templates"], [{"id": template.template_id, "name": template.name}])
+                self.assertEqual(listing["templates"], [{"id": template.template_id, "name": template.name, "family": "SO"}])
                 self.assertEqual(listing["events"][0]["eventId"], EVENT_ID)
                 self.assertEqual(listing["events"][0]["frameCount"], 2)
                 self.assertEqual(listing["events"][0]["startAt"], "2026-09-15T06:00:00Z")
