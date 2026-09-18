@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from bluewolf_core.live_si_runtime import LIVE_SI_RUNTIME_STATE_SCHEMA_VERSION
+from bluewolf_core.semantic_session import CoreSession
 import bluewolf_runtime_adapter.family_environment_factory as neutral_factory
 from bluewolf_runtime_adapter.family_environment_factory import build_operational_runtime
 from bluewolf_runtime_adapter.family_runtime import (
@@ -54,6 +55,19 @@ class FamilyRuntimeSymmetryTests(unittest.TestCase):
         self.assertEqual(set(mixed.family_names), {"si", "so"})
         self.assertEqual(so_only.family_names, ("so",))
         self.assertEqual(si_only.family_names, ("si",))
+
+    def test_session_replacement_propagates_identically_to_si_and_so(self) -> None:
+        host = self._build(_config()).pipelines[0].producer
+        self.assertIsInstance(host, FamilyRuntimeHost)
+        assert isinstance(host, FamilyRuntimeHost)
+
+        replacement = CoreSession()
+        host.session = replacement
+
+        self.assertIs(host.session, replacement)
+        self.assertEqual(set(host.family_names), {"si", "so"})
+        for family_name in host.family_names:
+            self.assertIs(host.family(family_name).session, replacement)
 
     def test_si_and_so_use_the_same_namespaced_checkpoint_envelope(self) -> None:
         loop = self._build(_config())
