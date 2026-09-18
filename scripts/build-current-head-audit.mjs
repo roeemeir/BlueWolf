@@ -177,9 +177,9 @@ const VERIFIED = {
   'PROC-01': ['scripts/build-current-head-audit.mjs', 'scripts/verify-full-requirements-registry.mjs', '.github/workflows/release-gate.yml', 'tests/current-head-audit.test.mjs'],
   'OP-01': ['components/bluewolf/operator-view.tsx', 'tests/op01-arena-presentation.test.mjs'],
   'OP-02': ['components/bluewolf/operational-live-map.tsx', 'tests/op02-map-layers.test.mjs', '.github/workflows/op02-map.yml'],
-  'OP-03': ['components/bluewolf/operator-view.tsx', 'lib/speed-units.ts', 'tests/operator-speed-ui.test.mjs', '.github/workflows/op03-speed.yml'],
+  'OP-03': ['components/bluewolf/operator-view.tsx', 'lib/speed-units.ts', 'core/src/bluewolf_runtime_adapter/position_enrichment.py', 'tests/speed-units.test.mjs', 'tests/operator-speed-ui.test.mjs', '.github/workflows/op03-speed.yml'],
   'OP-04': ['components/bluewolf/operator-view.tsx', 'core/src/bluewolf_core/event_recompute.py', 'tests/op04-template-recompute-ui.test.mjs', 'core/tests/test_event_recompute.py'],
-  'OP-05': ['components/bluewolf/operational-timeline.tsx', 'tests/op05-timeline-visibility.test.mjs', 'tests/op05-timeline-window.test.mjs'],
+  'OP-05': ['components/bluewolf/operational-timeline.tsx', 'components/bluewolf/simulation-timeline.tsx', 'lib/operator-timeline.ts', 'tests/op05-timeline-visibility.test.mjs', 'tests/op05-timeline-window.test.mjs', '.github/workflows/ci.yml'],
 };
 
 const SOURCE_STATUS_ORDER = ['yes', 'partial', 'no', 'unspecified'];
