@@ -105,7 +105,7 @@ const MANUAL_REVERIFY_REQUIRED = new Set([
   'SI-01', 'SO-01', 'SO-02', 'UI-01',
   'REP-01', 'REP-02', 'REP-03', 'REP-04',
   'BW-DEV-001',
-  'BW-UI-009', 'BW-UI-010', 'BW-UI-012', 'BW-UI-014',
+  'BW-UI-005', 'BW-UI-009', 'BW-UI-010', 'BW-UI-012', 'BW-UI-014',
   'BW-REP-001', 'BW-REP-003', 'BW-REP-004', 'BW-REP-008',
   'BW-SYNC-013',
 ]);
