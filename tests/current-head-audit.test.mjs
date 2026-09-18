@@ -43,7 +43,7 @@ test('BW-DATA-010 is verified only with real InfluxDB2 end-to-end latency eviden
 
 test('evidence-backed non-manual requirements remain verified on current head', async () => {
   const { registry } = await fixture();
-  const ids = ['BW-OFF-009', 'BW-OFF-011', 'BW-OFF-012', 'BW-UI-007'];
+  const ids = ['BW-OFF-009', 'BW-OFF-011', 'BW-OFF-012', 'BW-UI-007', 'BW-UI-008'];
   for (const id of ids) assert.ok(registry.sourceImplementation.yes.includes(id), `${id}: source status must be yes`);
   const audit = buildCurrentHeadAudit(registry, { headSha: 'test-head', reviewedAt: '2026-09-18T00:00:00.000Z' });
   for (const id of ids) {
