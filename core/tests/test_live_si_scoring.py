@@ -142,6 +142,36 @@ class LiveSIScoringTests(unittest.TestCase):
             100.0,
         )
 
+    def test_checkpoint_restore_preserves_si_temporal_score_without_warmup(self) -> None:
+        route = _route()
+        scorer = LiveSIGroupScorer(_template(1.0 / 3.0))
+        scorer.score_group(
+            "g-si",
+            _members(route, START, 0.0, 1.0 / 3.0),
+            reference_period_s=PERIOD_S,
+        )
+        checkpoint = scorer.export_state()
+
+        restored = LiveSIGroupScorer(_template(1.0 / 3.0))
+        restored.restore_state(checkpoint)
+
+        step = 1.0 / PERIOD_S
+        second = _members(
+            route,
+            START + timedelta(seconds=1),
+            step,
+            1.0 / 3.0 + step,
+        )
+        continuous = scorer.score_group("g-si", second, reference_period_s=PERIOD_S)
+        replayed = restored.score_group("g-si", second, reference_period_s=PERIOD_S)
+
+        self.assertIsNotNone(continuous.scoring)
+        self.assertIsNotNone(replayed.scoring)
+        assert continuous.scoring is not None
+        assert replayed.scoring is not None
+        self.assertEqual(replayed.scoring.group_scores, continuous.scoring.group_scores)
+        self.assertEqual(replayed.scoring.member_scores, continuous.scoring.member_scores)
+
     def test_live_si_metrics_fail_closed_across_large_temporal_gap(self) -> None:
         route = _route()
         scorer = LiveSIGroupScorer(_template(1.0 / 3.0))
