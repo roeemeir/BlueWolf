@@ -412,6 +412,20 @@ Current-head: `3c76d8bda4526ec7e36d7cbb3d3d4737ec6628a2`.
 `Blue Wolf CI #2163` — SUCCESS. גם SI Live Runtime #263, Operator #682, BW-OFF-010 #587, BW-DATA-010 #75, BW-OFF-009 #549 ו-BW-OFF-012 #571 עברו SUCCESS על אותו SHA.
 
 
+
+### Current implementation validation refresh — 18/09/2026
+
+ה־implementation fingerprint הנוכחי לאחר סגירת `BW-DOC-003`, `BW-DOC-005`, `CFG-01` ו-`BW-UI-013` הוא `2a1cf45a2e94af2e` עבור 240 קבצי implementation תחת App/Core/Runtime/Deploy. baseline הקוד המאומת הוא `8e859273560d61af09095352579f37a94c4d45b1`.
+
+אימות exact-head:
+- `Blue Wolf CI #2203` — SUCCESS.
+- `SI Live Runtime #303`, `Operator #722`, `OP-02 #710`, `OP-03 #763`, `UI/PDF #969`, `WKT #1056` — SUCCESS.
+- `BW-DATA-010 #90`, `IN-01 #820`, `BW-OFF-009 #589`, `BW-OFF-010 #627`, `BW-OFF-012 #611`, `BW-CORE-009 #96`, `REP-02 #905`, `REP-03/04 #882` — SUCCESS.
+
+ה־threshold catalog נשאר machine-checked מול הקונפיגורציה הפעילה. `CFG-01` מוסיף לכל metric/threshold המחשה של היבט התנועה/גאומטריה, current value, השפעה על score וסיווג product/calibration. `BW-UI-013` משתמש ב-legend משותף וקומפקטי ל-LIVE/SIM עם שלושה score zones וסגנונות קו רק לשכבות פעילות.
+
+`docs/documentation-sync.json` מקשר בין fingerprint המימוש, Master Specification ב-Google Drive ודוחות המחקר. Release gate מחשב מחדש את fingerprint ולכן שינוי משמעותי ב-`app/`, `components/`, `lib/`, `core/src/`, `deploy/`, `package.json` או `next.config.ts` מחייב refresh מפורש של תיעוד לפני פרסום.
+
 ## כלל עדכון מעכשיו
 
 כל שינוי אלגוריתמי חדש חייב להוסיף/לעדכן כאן entry באותו commit או ב־documentation commit הצמוד ל־milestone המאומת. דוח ה־Word יישאר גרסה קריאה ומעוצבת של אותו בסיס מחקרי ויעודכן לאחר milestone משמעותי.
