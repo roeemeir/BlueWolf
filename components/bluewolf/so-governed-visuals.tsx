@@ -32,6 +32,23 @@ function unit(a: SoPoint, b: SoPoint) {
   const length = Math.max(0.0001, Math.hypot(b.x - a.x, b.y - a.y));
   return { x: (b.x - a.x) / length, y: (b.y - a.y) / length };
 }
+function convexHull(points: SoPoint[]) {
+  if (points.length <= 2) return points;
+  const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
+  const cross = (o: SoPoint, a: SoPoint, b: SoPoint) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lower: SoPoint[] = [];
+  for (const point of sorted) {
+    while (lower.length >= 2 && cross(lower.at(-2)!, lower.at(-1)!, point) <= 0) lower.pop();
+    lower.push(point);
+  }
+  const upper: SoPoint[] = [];
+  for (const point of [...sorted].reverse()) {
+    while (upper.length >= 2 && cross(upper.at(-2)!, upper.at(-1)!, point) <= 0) upper.pop();
+    upper.push(point);
+  }
+  lower.pop(); upper.pop();
+  return [...lower, ...upper];
+}
 
 function VehicleMarker({ x, y, heading, id, color, icon, selected, onClick }: { x: number; y: number; heading: number; id: number; color: string; icon: Parameters<typeof VehicleIconGlyph>[0]["icon"]; selected?: boolean; onClick: () => void }) {
   return <g className={`v04-vehicle ${selected ? "selected" : ""}`} transform={`translate(${x} ${y})`} onClick={onClick} role="button" tabIndex={0} aria-label={`רכב ${id}`} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onClick(); }}>
@@ -79,10 +96,17 @@ export function GovernedLiveMap({ serverId, tick, selectedGroup, selectedVehicle
   });
 
   const [traceFrames, setTraceFrames] = useState<{ server: string; tick: number; points: { x: number; y: number; id: number; sync: number }[] }[]>([]);
+  const [baseLayer, setBaseLayer] = useState(true);
   const [observedLayer, setObservedLayer] = useState(showObservedTrace);
+  const [scoreTraceLayer, setScoreTraceLayer] = useState(showTrace);
   const [routeLayer, setRouteLayer] = useState(true);
   const [groupLayer, setGroupLayer] = useState(showGroups);
+  const [templateLayer, setTemplateLayer] = useState(true);
+  const [relationLayer, setRelationLayer] = useState(showRelations);
+  const [contextLayer, setContextLayer] = useState(showGrid);
   const [traceWindow, setTraceWindow] = useState(traceWindowMinutes);
+  useEffect(() => setScoreTraceLayer(showTrace), [showTrace]);
+  useEffect(() => setRelationLayer(showRelations), [showRelations]);
   useEffect(() => {
     const points = [...siPoints, ...soPoints].map((point) => ({ x: point.x, y: point.y, id: point.vehicle.id, sync: point.vehicle.sync }));
     const retentionTicks = SIM_TRACE_RETENTION_MINUTES * SIM_TICKS_PER_MINUTE;
@@ -101,21 +125,27 @@ export function GovernedLiveMap({ serverId, tick, selectedGroup, selectedVehicle
   }));
   return <div className="simulation-map-layer-shell" dir="rtl" data-requirements="OP-02">
     <div className="v04-map-layer-controls" style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "6px 8px" }}>
+      <button type="button" className={baseLayer ? "active" : ""} onClick={() => setBaseLayer((value) => !value)}>בסיס</button>
       <button type="button" className={observedLayer ? "active" : ""} onClick={() => setObservedLayer((value) => !value)}>עקבה נצפית</button>
+      <button type="button" className={scoreTraceLayer ? "active" : ""} onClick={() => setScoreTraceLayer((value) => !value)}>עקבה לפי ציון</button>
       <button type="button" className={routeLayer ? "active" : ""} onClick={() => setRouteLayer((value) => !value)}>נתיב מזוהה</button>
       <button type="button" className={groupLayer ? "active" : ""} onClick={() => setGroupLayer((value) => !value)}>קבוצות</button>
+      <button type="button" className={templateLayer ? "active" : ""} onClick={() => setTemplateLayer((value) => !value)}>תבנית</button>
+      <button type="button" className={relationLayer && contextLayer ? "active" : ""} onClick={() => { setRelationLayer((value) => !value); setContextLayer((value) => !value); }}>יחסים / רשת</button>
       <span aria-label="חלון עקבה">חלון:</span>
       {SIM_TRACE_WINDOWS.map((minutes) => <button type="button" key={minutes} className={traceWindow === minutes ? "active" : ""} onClick={() => setTraceWindow(minutes)}>{minutes} דק׳</button>)}
     </div>
     <svg className={`map-svg v04-live-map ${mapClass}`} viewBox="0 0 1000 570" role="img" aria-label="מפה חיה של קבוצות SI ו-SO" data-requirements="GEO-01 GEO-02 OP-02">
       <defs><pattern id={`v04-grid-${serverId}`} width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" className="v04-grid-line" /></pattern></defs>
-      <rect width="1000" height="570" fill="var(--map-bg)" /><rect width="1000" height="570" className="v04-map-wash" />{showGrid && <rect width="1000" height="570" fill={`url(#v04-grid-${serverId})`} />}
+      <rect width="1000" height="570" fill="var(--map-bg)" />{baseLayer && <rect width="1000" height="570" className="v04-map-wash" />}{contextLayer && <rect width="1000" height="570" fill={`url(#v04-grid-${serverId})`} />}
       <g className="v04-map-labels"><text x="38" y="45">SI · טבעות</text><text x="455" y="45">SO · שרשרת היפודרומים</text><text x="455" y="68">30° מדויק · רווח פיזי בין מסלולים · ללא חיבור קצוות</text></g>
-      {showRoutes && routeLayer && <g className="v04-routes"><g className={selectedGroup === "si" ? "active" : ""} onClick={() => onSelectGroup("si")}>{(["inner", "middle", "outer"] as const).map((ring) => <circle key={ring} cx={siCenter.x} cy={siCenter.y} r={ringRadius[ring]} className="v04-si-route" />)}</g><g className={selectedGroup === "so" ? "active" : ""} onClick={() => onSelectGroup("so")}>{soRoutes.map((route) => <path key={route.routeIndex} d={route.path} className={`v04-so-route ${route.kind === "double" ? "double" : ""}`} />)}</g></g>}
+      {templateLayer && <g aria-label="שכבת תבנית" opacity=".48">{(["inner", "middle", "outer"] as const).map((ring) => <circle key={`tpl-${ring}`} cx={siCenter.x} cy={siCenter.y} r={ringRadius[ring]} fill="none" stroke={groupLineColor.si} strokeWidth="1.5" strokeDasharray="8 6" />)}{soRoutes.map((route) => <path key={`tpl-${route.routeIndex}`} d={route.path} fill="none" stroke={groupLineColor.so} strokeWidth="1.5" strokeDasharray="8 6" />)}</g>}
+      {showRoutes && routeLayer && <g className="v04-routes"><g className={selectedGroup === "si" ? "active" : ""} onClick={() => onSelectGroup("si")}>{(["inner", "middle", "outer"] as const).map((ring) => <circle key={ring} cx={siCenter.x} cy={siCenter.y} r={ringRadius[ring]} className="v04-si-route" style={{ stroke: groupLineColor.si }} />)}</g><g className={selectedGroup === "so" ? "active" : ""} onClick={() => onSelectGroup("so")}>{soRoutes.map((route) => <path key={route.routeIndex} d={route.path} className={`v04-so-route ${route.kind === "double" ? "double" : ""}`} style={{ stroke: groupLineColor.so, strokeDasharray: "none" }} />)}</g></g>}
       {observedLayer && <g className="observed-trace">{traceLines.map(({ frame, point, prior }) => <line key={`observed:${frame.tick}:${point.id}`} x1={prior.x} y1={prior.y} x2={point.x} y2={point.y} stroke="#7b8790" strokeWidth="2" opacity=".58" />)}</g>}
-      {showTrace && <g className="score-trace">{traceLines.map(({ frame, point, prior }) => <line key={`score:${frame.tick}:${point.id}`} x1={prior.x} y1={prior.y} x2={point.x} y2={point.y} style={{ stroke: traceScoreColor(point.sync) }} />)}</g>}
-      {showRelations && selectedGroup === "so" && <g>{soRoutes.slice(0, -1).map((route, index) => <g key={route.routeIndex}><RelationBadge first={route.center} second={soRoutes[index + 1].center} relation={relations[index] ?? "mixed"} /><DirectionCue a={route.center} b={soRoutes[index + 1].center} relation={relations[index] ?? "mixed"} reverse={relations[index] === "opposite"} /></g>)}</g>}
-      {showRelations && selectedGroup === "si" && <g className="v04-si-relations">{siPoints.map((point, index) => siPoints.slice(index + 1).map((other, offset) => { const pairIndex = index * siPoints.length - (index * (index + 1)) / 2 + offset; const angle = templateValues?.si?.[pairIndex] ?? 120; const middle = lerp(point, other, .5); return <g key={`${point.vehicle.id}-${other.vehicle.id}`}><line x1={point.x} y1={point.y} x2={other.x} y2={other.y} /><rect x={middle.x - 24} y={middle.y - 12} width="48" height="24" rx="12" /><text x={middle.x} y={middle.y + 4} textAnchor="middle">{angle}°</text></g>; }))}</g>}
+      {scoreTraceLayer && <g className="score-trace">{traceLines.map(({ frame, point, prior }) => <line key={`score:${frame.tick}:${point.id}`} x1={prior.x} y1={prior.y} x2={point.x} y2={point.y} style={{ stroke: traceScoreColor(point.sync) }} />)}</g>}
+      {relationLayer && selectedGroup === "so" && <g>{soRoutes.slice(0, -1).map((route, index) => <g key={route.routeIndex}><RelationBadge first={route.center} second={soRoutes[index + 1].center} relation={relations[index] ?? "mixed"} /><DirectionCue a={route.center} b={soRoutes[index + 1].center} relation={relations[index] ?? "mixed"} reverse={relations[index] === "opposite"} /></g>)}</g>}
+      {relationLayer && selectedGroup === "si" && <g className="v04-si-relations">{siPoints.map((point, index) => siPoints.slice(index + 1).map((other, offset) => { const pairIndex = index * siPoints.length - (index * (index + 1)) / 2 + offset; const angle = templateValues?.si?.[pairIndex] ?? 120; const middle = lerp(point, other, .5); return <g key={`${point.vehicle.id}-${other.vehicle.id}`}><line x1={point.x} y1={point.y} x2={other.x} y2={other.y} /><rect x={middle.x - 24} y={middle.y - 12} width="48" height="24" rx="12" /><text x={middle.x} y={middle.y + 4} textAnchor="middle">{angle}°</text></g>; }))}</g>}
+      {groupLayer && <g className="v04-group-shapes"><polygon points={convexHull(siPoints).map((point) => `${point.x},${point.y}`).join(" ")} fill={groupLineColor.si} fillOpacity=".08" stroke={groupLineColor.si} strokeOpacity=".65" strokeWidth="2" /><polygon points={convexHull(soPoints).map((point) => `${point.x},${point.y}`).join(" ")} fill={groupLineColor.so} fillOpacity=".08" stroke={groupLineColor.so} strokeOpacity=".65" strokeWidth="2" /></g>}
       {groupLayer && <g className="v04-vehicles">{siPoints.map((point) => <VehicleMarker key={point.vehicle.id} x={point.x} y={point.y} heading={point.heading} id={point.vehicle.id} color={groupLineColor.si} icon={typeById(point.vehicle.typeId)?.icon ?? "rover"} selected={selectedVehicle === point.vehicle.id} onClick={() => onSelectVehicle(point.vehicle.id, "si")} />)}{soPoints.map((point) => <VehicleMarker key={point.vehicle.id} x={point.x} y={point.y} heading={point.heading} id={point.vehicle.id} color={groupLineColor.so} icon={typeById(point.vehicle.typeId)?.icon ?? "rover"} selected={selectedVehicle === point.vehicle.id} onClick={() => onSelectVehicle(point.vehicle.id, "so")} />)}</g>}
       <g className="v04-map-scale"><path d="M42 520h90" /><text x="42" y="510">100 מ׳</text><text x="955" y="535" textAnchor="end">{animate ? "LIVE" : "SNAPSHOT"}</text></g>
     </svg>
