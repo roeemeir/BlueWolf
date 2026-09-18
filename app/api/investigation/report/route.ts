@@ -105,7 +105,7 @@ export async function POST(request: Request) {
     const generatedAt = new Date().toISOString();
     const reportEvents: InvestigationPdfEvent[] = await mapWithConcurrency(prepared, 3, async ({ event, override, templateId }) => {
       const result = await recomputeEvent(baseUrl, token, event.eventId, templateId!, generatedAt);
-      if (result.eventId !== event.eventId || result.serverId !== parsed.serverId || result.templateId !== templateId) throw new Error(`recompute provenance mismatch for ${event.eventId}`);
+      if (result.eventId !== event.eventId || result.serverId !== parsed.serverId || result.templateId !== templateId || result.family !== event.family) throw new Error(`recompute provenance mismatch for ${event.eventId}`);
       if (override?.requiredCodeVersion && result.codeVersion !== override.requiredCodeVersion) throw provenanceMismatch(event.eventId, "codeVersion", override.requiredCodeVersion, result.codeVersion);
       if (override?.requiredConfigVersion && result.configVersion !== override.requiredConfigVersion) throw provenanceMismatch(event.eventId, "configVersion", override.requiredConfigVersion, result.configVersion);
       if (override?.requiredTemplateVersion && result.templateVersion !== override.requiredTemplateVersion) throw provenanceMismatch(event.eventId, "templateVersion", override.requiredTemplateVersion, result.templateVersion);
