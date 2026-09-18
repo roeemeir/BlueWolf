@@ -112,6 +112,7 @@ const MANUAL_REVERIFY_REQUIRED = new Set([
 
 const VERIFIED = {
   'BW-CORE-009': ['core/src/bluewolf_core/config.py', 'core/src/bluewolf_core/route_change.py', 'core/src/bluewolf_core/session.py', 'core/src/bluewolf_core/live_si_runtime.py', 'core/src/bluewolf_core/live_so_event_runtime.py', 'core/tests/test_route_change.py', 'core/tests/test_si_producer.py', 'core/tests/test_live_so_event_runtime.py', '.github/workflows/core09-material-event.yml'],
+  'BW-DATA-010': ['core/src/bluewolf_ingest/influxdb2.py', 'core/src/bluewolf_ingest/window_reader.py', 'core/src/bluewolf_runtime_adapter/ingest_coordinator.py', 'core/src/bluewolf_runtime_adapter/operational_pipeline.py', 'core/src/bluewolf_runtime_adapter/service.py', 'core/tests/test_latency_budget.py', 'core/tests/test_latency_influx_e2e.py', '.github/workflows/data10-latency.yml'],
   'BW-DEV-002': ['components/bluewolf/route-bank-wkt-workbench.tsx', 'tests/route-bank-wkt.test.mjs'],
   'BW-DEV-003': ['components/bluewolf/route-bank-wkt-workbench.tsx', 'lib/route-bank-geometry.ts', 'scripts/verify_wkt_browser_e2e.py'],
   'BW-DEV-004': ['lib/vehicle-id-ranges.ts', 'tests/vehicle-id-ranges.test.mjs'],
