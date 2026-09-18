@@ -63,6 +63,23 @@ def event_archive_path_from_config(path: str | os.PathLike[str]) -> Path | None:
     return Path(value).expanduser().resolve(strict=False)
 
 
+
+
+def _family_runtimes(producer: object) -> tuple[object, ...]:
+    """Resolve family runtimes from the canonical host or legacy SO wrapper."""
+
+    families = getattr(producer, "families", None)
+    if families is not None:
+        runtimes: list[object] = []
+        for family in families:
+            child = getattr(family, "producer", None)
+            runtime = getattr(child, "runtime", None)
+            if runtime is not None:
+                runtimes.append(runtime)
+        return tuple(runtimes)
+    legacy = getattr(producer, "runtime", None)
+    return () if legacy is None else (legacy,)
+
 def attach_event_archives(
     loop: OperationalRuntimeLoop,
     *,
@@ -75,9 +92,17 @@ def attach_event_archives(
         return None
     observation_archive = SOEventObservationArchive(archive_path)
     lifecycle_archive = SOEventLifecycleArchive(archive_path)
+    attached_runtime_count = 0
     for pipeline in loop.pipelines:
-        pipeline.producer.runtime.observation_sink = observation_archive.record_frame
-        pipeline.producer.runtime.lifecycle_sink = lifecycle_archive.record_change
+        for runtime in _family_runtimes(pipeline.producer):
+            if hasattr(runtime, "observation_sink"):
+                runtime.observation_sink = observation_archive.record_frame
+            if hasattr(runtime, "lifecycle_sink"):
+                runtime.lifecycle_sink = lifecycle_archive.record_change
+            if hasattr(runtime, "observation_sink") or hasattr(runtime, "lifecycle_sink"):
+                attached_runtime_count += 1
+    if loop.pipelines and attached_runtime_count == 0:
+        raise ValueError("operational runtime exposes no event-archive-capable family runtime")
     return observation_archive, lifecycle_archive
 
 
