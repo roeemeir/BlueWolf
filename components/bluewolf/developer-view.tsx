@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Beaker, Check, CheckCircle2, ChevronLeft, Database, Gauge, Layers3, LoaderCircle, MapPinned, Pause, Play, Plus, Save, Search, Server, Settings2, ShieldCheck, SlidersHorizontal, Trash2, UsersRound } from "lucide-react";
+import { Activity, Beaker, Check, CheckCircle2, ChevronLeft, Database, Gauge, Info, Layers3, LoaderCircle, MapPinned, Pause, Play, Plus, Save, Search, Server, Settings2, ShieldCheck, SlidersHorizontal, Trash2, UsersRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +32,7 @@ import {
   type SyncTemplate,
   type VehicleType,
 } from "@/lib/bluewolf";
+import { THRESHOLD_EXPLAINERS, thresholdClassificationLabel } from "@/lib/threshold-explainer";
 import { useWorkspace } from "./app-context";
 import { GtPlayback, RouteBankMap, TemplatePreview, VehicleIconGlyph } from "./visuals";
 
@@ -69,9 +70,66 @@ const thresholdGroups: { title: string; fields: { key: keyof ScoreThresholds; la
   ] },
 ];
 
+function ThresholdExplainerCard({ fieldKey, value, unit, thresholds }: { fieldKey: keyof ScoreThresholds; value: number; unit: string; thresholds: ScoreThresholds }) {
+  const definition = THRESHOLD_EXPLAINERS[fieldKey];
+  const pair = definition.pair;
+  const full = pair ? thresholds[pair.full] : value;
+  const zero = pair ? thresholds[pair.zero] : value;
+  const max = Math.max(zero * 1.18, value * 1.18, 1);
+  const scaleX = (input: number) => 22 + Math.min(1, Math.max(0, input / max)) * 196;
+  const currentX = scaleX(value);
+  const fullX = scaleX(full);
+  const zeroX = scaleX(zero);
+
+  return <div className="threshold-explainer" data-threshold-explainer={fieldKey}>
+    <div className="threshold-explainer-copy">
+      <div className="threshold-explainer-badges">
+        <Badge variant="outline" className={definition.classification === "product" ? "threshold-kind-product" : "threshold-kind-calibration"}>{thresholdClassificationLabel(definition.classification)}</Badge>
+        <Badge variant="outline">ערך נוכחי {value} {unit}</Badge>
+      </div>
+      <strong>{definition.aspect}</strong>
+      <p>{definition.effect}</p>
+      <small>מקור פעיל: {definition.catalogPath}</small>
+    </div>
+    <svg viewBox="0 0 240 126" role="img" aria-label={`המחשת ${fieldKey} בערך ${value} ${unit}`} className="threshold-explainer-visual">
+      {definition.visualKind === "score-band" && <>
+        <line x1="22" x2="218" y1="104" y2="104" className="threshold-axis" />
+        <line x1="22" x2="22" y1="18" y2="104" className="threshold-axis" />
+        <polyline points={`22,24 ${fullX},24 ${zeroX},100 218,100`} className="threshold-score-curve" />
+        <line x1={currentX} x2={currentX} y1="18" y2="106" className="threshold-current-marker" />
+        <circle cx={currentX} cy={value <= full ? 24 : value >= zero ? 100 : 24 + (value - full) / Math.max(1e-9, zero - full) * 76} r="4" className="threshold-current-dot" />
+        <text x="8" y="29">100</text><text x="13" y="103">0</text>
+        <text x={fullX} y="119" textAnchor="middle">100 עד {full}</text>
+        <text x={zeroX} y="119" textAnchor="middle">0 מ־{zero}</text>
+      </>}
+      {definition.visualKind === "eligibility-gate" && <>
+        <line x1="22" x2="218" y1="66" y2="66" className="threshold-axis" />
+        <line x1={currentX} x2={currentX} y1="28" y2="96" className="threshold-current-marker" />
+        <text x="28" y="48">לא observable</text><text x="212" y="48" textAnchor="end">מדדים כיווניים תקפים</text>
+        <text x={currentX} y="112" textAnchor="middle">{value}{unit}</text>
+      </>}
+      {definition.visualKind === "display-window" && <>
+        {[0,1,2,3,4,5,6].map((index) => <circle key={index} cx={28 + index * 30} cy={index % 2 ? 67 : 53} r="5" className="threshold-history-dot" />)}
+        <path d="M58 94 L58 104 L208 104 L208 94" className="threshold-window-bracket" />
+        <line x1="208" x2="208" y1="35" y2="108" className="threshold-current-marker" />
+        <text x="133" y="120" textAnchor="middle">trailing window · {value}s</text>
+      </>}
+      {definition.visualKind === "status-boundary" && <>
+        <line x1="22" x2="218" y1="66" y2="66" className="threshold-status-track" />
+        <line x1={22 + value / 100 * 196} x2={22 + value / 100 * 196} y1="28" y2="96" className="threshold-current-marker" />
+        <text x="22" y="112">0</text><text x="218" y="112" textAnchor="end">100</text>
+        <text x={22 + value / 100 * 196} y="20" textAnchor="middle">{value}</text>
+      </>}
+    </svg>
+  </div>;
+}
+
 function ScoreSection() {
-  const { state, save, revision } = useWorkspace(); const [weights, setWeights] = useState<ScoreWeights>(structuredClone(state.weights)); const [thresholds, setThresholds] = useState<ScoreThresholds>(structuredClone(state.thresholds));
-  return <><SectionHeader eyebrow="קונפיגורציה" title="משקולות וספים" description="הספים נבחרים מגריד מאושר בלבד. אין ערכים מספריים חופשיים."><div className="header-actions"><Button variant="outline" onClick={() => { setWeights(structuredClone(DEFAULT_WORKSPACE.weights)); setThresholds(structuredClone(DEFAULT_WORKSPACE.thresholds)); }}>ברירת מחדל</Button><Button onClick={() => save({ ...state, weights, thresholds }, "scoring", "save-version", `v${revision + 1}`)}><Save />שמור גרסה</Button></div></SectionHeader><div className="weight-grid"><WeightCard title="סנכרון" description="מיקום, מחזור וקצב תנועה." values={weights.sync} labels={{ position: "מיקום", period: "מחזור", motion: "תנועה" }} onChange={(sync) => setWeights({ ...weights, sync })} /><WeightCard title="נתיב" description="מרחק, משיק ועקמומיות." values={weights.route} labels={{ distance: "מרחק", tangent: "משיק", curvature: "עקמומיות" }} onChange={(route) => setWeights({ ...weights, route })} /><WeightCard title="כולל" description="איזון סנכרון מול נתיב." values={weights.total} labels={{ sync: "סנכרון", route: "נתיב" }} onChange={(total) => setWeights({ ...weights, total })} /></div><section className="threshold-panel glass-panel"><div className="panel-title"><div><p className="eyebrow">Grid</p><h3>ספים מאושרים</h3></div><Badge variant="outline">בחירה סגורה</Badge></div><div className="v04-threshold-grid">{thresholdGroups.map((group) => <article key={group.title}><h4>{group.title}</h4>{group.fields.map((field) => <label key={field.key}><span>{field.label}<small>{THRESHOLD_DESCRIPTIONS[field.key]}</small></span><Select value={String(thresholds[field.key])} onValueChange={(value) => setThresholds({ ...thresholds, [field.key]: Number(value) })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{field.options.map((value) => <SelectItem key={value} value={String(value)}>{value} {field.unit}</SelectItem>)}</SelectContent></Select></label>)}</article>)}</div></section></>;
+  const { state, save, revision } = useWorkspace();
+  const [weights, setWeights] = useState<ScoreWeights>(structuredClone(state.weights));
+  const [thresholds, setThresholds] = useState<ScoreThresholds>(structuredClone(state.thresholds));
+  const [openThreshold, setOpenThreshold] = useState<keyof ScoreThresholds | null>(null);
+  return <><SectionHeader eyebrow="קונפיגורציה" title="משקולות וספים" description="הספים נבחרים מגריד מאושר בלבד. כל metric כולל המחשה של השפעת הסף וסיווג מפורש כחוק מוצר או סף כיול."><div className="header-actions"><Button variant="outline" onClick={() => { setWeights(structuredClone(DEFAULT_WORKSPACE.weights)); setThresholds(structuredClone(DEFAULT_WORKSPACE.thresholds)); }}>ברירת מחדל</Button><Button onClick={() => save({ ...state, weights, thresholds }, "scoring", "save-version", `v${revision + 1}`)}><Save />שמור גרסה</Button></div></SectionHeader><div className="weight-grid"><WeightCard title="סנכרון" description="מיקום, מחזור וקצב תנועה." values={weights.sync} labels={{ position: "מיקום", period: "מחזור", motion: "תנועה" }} onChange={(sync) => setWeights({ ...weights, sync })} /><WeightCard title="נתיב" description="מרחק, משיק ועקמומיות." values={weights.route} labels={{ distance: "מרחק", tangent: "משיק", curvature: "עקמומיות" }} onChange={(route) => setWeights({ ...weights, route })} /><WeightCard title="כולל" description="איזון סנכרון מול נתיב." values={weights.total} labels={{ sync: "סנכרון", route: "נתיב" }} onChange={(total) => setWeights({ ...weights, total })} /></div><section className="threshold-panel glass-panel"><div className="panel-title"><div><p className="eyebrow">Grid</p><h3>ספים מאושרים</h3></div><div className="threshold-kind-legend"><Badge variant="outline" className="threshold-kind-product">חוק מוצר</Badge><Badge variant="outline" className="threshold-kind-calibration">סף כיול</Badge><Badge variant="outline">בחירה סגורה</Badge></div></div><div className="v04-threshold-grid">{thresholdGroups.map((group) => <article key={group.title}><h4>{group.title}</h4>{group.fields.map((field) => <div className="threshold-control" key={field.key}><div className="threshold-control-head"><span>{field.label}<small>{THRESHOLD_DESCRIPTIONS[field.key]}</small></span><button type="button" className="threshold-help-button" aria-expanded={openThreshold === field.key} aria-controls={`threshold-help-${field.key}`} onClick={() => setOpenThreshold(openThreshold === field.key ? null : field.key)}><Info />המחשה</button></div><Select value={String(thresholds[field.key])} onValueChange={(value) => setThresholds({ ...thresholds, [field.key]: Number(value) })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{field.options.map((value) => <SelectItem key={value} value={String(value)}>{value} {field.unit}</SelectItem>)}</SelectContent></Select>{openThreshold === field.key && <div id={`threshold-help-${field.key}`}><ThresholdExplainerCard fieldKey={field.key} value={thresholds[field.key]} unit={field.unit} thresholds={thresholds} /></div>}</div>)}</article>)}</div></section></>;
 }
 
 function countLabel(counts: Record<string, number>, vehicleTypes: VehicleType[]) { return vehicleTypes.map((type) => `${type.name}×${counts[type.id] ?? 0}`).filter((entry) => !entry.endsWith("×0")).join(" · ") || "ללא רכבים"; }
