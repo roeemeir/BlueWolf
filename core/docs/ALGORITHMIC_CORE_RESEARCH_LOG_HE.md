@@ -14,6 +14,28 @@
 
 אם קיים חוסר או סתירה סמנטית, יומן המחקר אינו רשאי להמציא דרישה; עוצרים ומעדכנים את מסמך האפיון המתאים לפני שינוי קוד.
 
+## חוזה תיעוד וספים פעילים — current-head
+
+כדי למנוע מצב שבו דוח המחקר מתאר אלגוריתם אחד והקוד מריץ אחר, נוסף `ACTIVE_ALGORITHM_THRESHOLD_CATALOG.json`. הקטלוג מכסה 85 שדות config פעילים/תאימות מ-`CoreConfig`, `LivePollConfig` ו-`EventAlertConfig`, וכן 12 החלטות אלגוריתמיות מרכזיות. לכל threshold נשמרים:
+
+- הערך המדויק בקוד.
+- סיווג: `product`, `calibration`, `implementation_guard` או `compatibility`.
+- rationale הנדסי שמסביר למה הערך/המנגנון קיים.
+- source symbol בקוד.
+- עבור החלטות אלגוריתמיות: alternatives שנדחו ו-evidence/regressions.
+
+`test_threshold_catalog.py` רץ ב-fundamentals shard ומשווה את הקטלוג ישירות ל-defaults של dataclasses. שינוי default ללא עדכון התיעוד נכשל ב-CI; שדה compatibility אינו רשאי להופיע כ-active gate.
+
+### Supersessions שנשמרים במפורש ולא מוסתרים
+
+| נושא | Baseline V1 היסטורי | current-head פעיל | סיבה |
+|---|---|---|---|
+| Route acquisition | המתנה קבועה 5 דקות | evidence-driven; legacy timers = 0 | זמן שחלף אינו evidence |
+| Material geometry change | 20% | 10% default, configurable | BW-CORE-009 |
+| Change confirmation | 120s timer | evidence purity + retrospective onset; 120s compatibility בלבד | מונע latency שרירותי ו-intermediate replacement |
+| Active Influx polling | 5s | 3s active poll + 5s safe watermark | BW-DATA-010 מוכיח <10s עם InfluxDB2 אמיתי |
+
+`V1_SPEC_HE.md` שומר את הנוסחים ההיסטוריים לצורך traceability אך מסמן אותם `superseded` ומציג לפניהם current-head override. ה-Full Spec נשאר מקור האמת המחייב.
 ## תבנית חובה לכל milestone אלגוריתמי חדש
 
 ### Problem / Observation
