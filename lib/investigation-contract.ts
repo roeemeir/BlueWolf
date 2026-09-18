@@ -1,7 +1,7 @@
 export const INVESTIGATION_EVENTS_SCHEMA = "bluewolf.investigation-events.v1" as const;
 export const EVENT_RECOMPUTE_SCHEMA = "bluewolf.event-recompute.v1" as const;
 
-export type InvestigationTemplate = { id: string; name: string };
+export type InvestigationTemplate = { id: string; name: string; family: "SI" | "SO" };
 export type EventLifecycleStatus = "unknown" | "active" | "finalizing" | "closed";
 export type EventLifecycleChange = {
   occurredAt: string;
@@ -25,6 +25,7 @@ export type InvestigationEventIndex = {
   eventId: string;
   serverId: number;
   groupId: string;
+  family: "SI" | "SO";
   startAt: string;
   endAt: string;
   frameCount: number;
@@ -203,9 +204,11 @@ export function normalizeInvestigationEvents(value: unknown): InvestigationEvent
   if (!Array.isArray(row.templates)) throw new Error("templates must be an array");
   const templates = row.templates.map((item, index) => {
     const template = object(item, `template ${index + 1}`);
-    return { id: text(template.id, "template id"), name: text(template.name, "template name") };
+    const family = (template.family === undefined ? "SO" : text(template.family, "template family")) as "SI" | "SO";
+    if (family !== "SI" && family !== "SO") throw new Error("template family must be SI or SO");
+    return { id: text(template.id, "template id"), name: text(template.name, "template name"), family };
   });
-  if (new Set(templates.map((template) => template.id)).size !== templates.length) throw new Error("template ids must be unique");
+  if (new Set(templates.map((template) => `${template.family}:${template.id}`)).size !== templates.length) throw new Error("template ids must be unique within each family");
   const events = row.events.map((item, index) => {
     const event = object(item, `event ${index + 1}`);
     const eventServerId = integer(event.serverId, "event serverId");
@@ -214,6 +217,11 @@ export function normalizeInvestigationEvents(value: unknown): InvestigationEvent
       eventId: text(event.eventId, "eventId"),
       serverId: eventServerId,
       groupId: text(event.groupId, "groupId"),
+      family: (() => {
+        const family = (event.family === undefined ? "SO" : text(event.family, "event family")) as "SI" | "SO";
+        if (family !== "SI" && family !== "SO") throw new Error("event family must be SI or SO");
+        return family;
+      })(),
       startAt: time(event.startAt, "startAt"),
       endAt: time(event.endAt, "endAt"),
       frameCount: integer(event.frameCount, "frameCount"),
