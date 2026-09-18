@@ -216,7 +216,9 @@
       "BW-DOC-005",
       "CFG-01",
       "BW-UI-013",
-      "BW-GOV-010"
+      "BW-GOV-010",
+      "OP-03",
+      "OP-05"
     ],
     "partial": [
       "BW-SYNC-013",
@@ -243,10 +245,7 @@
       "REP-04"
     ],
     "no": [],
-    "unspecified": [
-      "OP-03",
-      "OP-05"
-    ]
+    "unspecified": []
   },
   "sourceImplementationApproval": {
     "default": "pending",
@@ -261,9 +260,9 @@
   "explicitAcceptanceCriteria": {
     "OP-01": "שינוי זירת נתיב אינו משנה תוצאות מבצעיות.",
     "OP-02": "כל שכבה ניתנת לכיבוי והדלקה בנפרד ב-SIM ובמקור אמת; אין השלמת עקבות מעבר לחורי נתונים או בין אירועים.",
-    "OP-03": "1 קשר = 1.852 קמ״ש = 1852/3600 מטר לשנייה.",
+    "OP-03": "Every vehicle speed shown to the operator must be in knots. The display boundary must use the exact conversion 1 knot = 1.852 km/h = 1852/3600 m/s, preserve source units in the runtime contract, and fail closed on missing or invalid speed.",
     "OP-04": "תבניות בעלות שגיאות שונות נותנות ציונים שונים על אותו קלט; רענון שומר את ההחלטה.",
-    "OP-05": "בחירת קבוצה במפה אינה מסתירה קבוצה אחרת בגרף ללא פעולת סינון.",
+    "OP-05": "The score timeline must offer 30/60/90-minute windows measured from the newest data timestamp, display all groups by default with explicit group filtering, keep map selection as emphasis only, and render total as solid, sync as dashed and route as dotted in both operational and simulation timelines.",
     "GEO-01": "מדידה גאומטרית של הזוויות והמרווח, ולא השוואת צילום בלבד. בכמות זוגית אין איבר מרכזי יחיד; הסידור סימטרי סביב הציר האופקי.",
     "GEO-02": "החלפת סוג רכב בלבד אינה מזיזה אותו ואינה הופכת כיוון.",
     "SO-01": "סדר והיפוכו מוצגים פעם אחת; אין מחיקה של סדר לא שקול.",
