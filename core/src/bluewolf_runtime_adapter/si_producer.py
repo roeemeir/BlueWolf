@@ -229,9 +229,14 @@ class LiveSIRuntimeProducer:
             if group.server_id == self.server_id and group.family is RouteFamily.SI
         )
         active_ids = {group.group_id for group in active_groups}
-        for ended in self._structurally_active_groups - active_ids:
-            self.runtime.remove_group(ended)
+        for ended in sorted(self._structurally_active_groups - active_ids):
+            self.runtime.end_group(
+                ended,
+                poll.window.end_time_utc,
+                reason="structural_group_ended",
+            )
         self._structurally_active_groups = active_ids
+        self.runtime.advance_events(poll.window.end_time_utc)
 
         sample_index = self._sample_index(poll.samples, self.server_id)
         payloads: list[tuple[str, datetime, dict[str, object]]] = []
@@ -259,13 +264,16 @@ class LiveSIRuntimeProducer:
             if members is None:
                 skipped[group.group_id] = "runtime_member_evidence_incomplete_or_route_mismatch"
                 continue
-            scorer = self.runtime.scorer(group.group_id, assignment.template)
-            result = scorer.score_group(
+            displayed = self.displayed_score_resolver(group.group_id, observed_at)
+            runtime_result = self.runtime.process_snapshot(
                 group.group_id,
+                assignment.template,
                 members,
                 reference_period_s=group.base_period_s,
+                displayed_group_score=displayed.score,
+                displayed_score_valid=displayed.valid,
             )
-            displayed = self.displayed_score_resolver(group.group_id, observed_at)
+            result = runtime_result.live_scoring
             one = build_si_live_runtime_snapshot(
                 result,
                 members,
@@ -278,6 +286,32 @@ class LiveSIRuntimeProducer:
             )
             payload = one["groups"]["si"]
             payload["detectedRoutes"] = _detected_route_payload(members)
+            if runtime_result.event is not None:
+                event = runtime_result.event.snapshot
+                payload["event"] = {
+                    "id": event.event_id,
+                    "contextKey": event.context_key,
+                    "startedAt": event.event_start_utc.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+                    "active": True,
+                }
+                if event.low_score_alert_active:
+                    payload["alert"] = {
+                        "id": f"{event.event_id}:low-score",
+                        "title": "ציון קבוצה נמוך",
+                        "detail": "הציון המוצג נמצא מתחת לסף ההתראה למשך הזמן הנדרש.",
+                        "severity": "warning",
+                    }
+                if event.suggested_template_id and event.active_template_id:
+                    suggested_score = runtime_result.comparison_scores.get(event.suggested_template_id)
+                    active_score = runtime_result.comparison_scores.get(event.active_template_id)
+                    if suggested_score is not None and active_score is not None:
+                        payload["recommendation"] = {
+                            "templateId": event.suggested_template_id,
+                            "activeTemplateId": event.active_template_id,
+                            "dimension": self.runtime.comparison_dimension,
+                            "improvementPoints": float(suggested_score - active_score),
+                            "ready": True,
+                        }
             payloads.append((group.group_id, _utc(observed_at), payload))
 
         if not payloads:
