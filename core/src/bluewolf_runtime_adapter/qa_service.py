@@ -305,7 +305,7 @@ class QaEnabledASGI:
         archive = event_archive
         lifecycle_archive = _resolved_lifecycle_archive(archive)
         if archive is None or lifecycle_archive is None:
-            await self._send_json(send, 503, {"status": "unavailable", "error": "SO event evidence archive is not configured"}, surface=b"core-event-archive")
+            await self._send_json(send, 503, {"status": "unavailable", "error": "event evidence archive is not configured"}, surface=b"core-event-archive")
             return
         try:
             request = await self._read_json(receive)
