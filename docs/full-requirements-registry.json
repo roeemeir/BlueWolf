@@ -215,10 +215,10 @@
       "BW-DOC-003",
       "BW-DOC-005",
       "CFG-01",
-      "BW-UI-013"
+      "BW-UI-013",
+      "BW-GOV-010"
     ],
     "partial": [
-      "BW-GOV-010",
       "BW-SYNC-013",
       "BW-DEV-001",
       "BW-UI-005",
@@ -279,7 +279,8 @@
     "BW-DOC-003": "The algorithmic research documentation must explain every active algorithm decision and every active Core/ingest/event threshold with rationale and an explicit classification as product, calibration, implementation guard or compatibility; CI must fail when active configuration defaults are missing or drift from the catalog.",
     "BW-DOC-005": "Current-state algorithmic documentation must match active code and explicitly mark historical/superseded behavior. CI must compare the active threshold catalog to live config defaults and reject reintroduction of known stale claims such as SO-only operational runtime or undefined display smoothing.",
     "CFG-01": "Every metric/threshold control on the Developer score screen must open an explanatory visual on click, show the current configured value, identify the changing geometric/motion aspect and the effect on score/eligibility/display, and expose an explicit product-vs-calibration classification that is machine-checked against the active Core threshold catalog.",
-    "BW-UI-013": "The Operator score legend must stay compact and shared across live and simulation timelines: exactly three score zones with explicit ranges, clear separators, line-style entries only for currently visible score layers, and at most one event-band item; group filtering remains outside the legend."
+    "BW-UI-013": "The Operator score legend must stay compact and shared across live and simulation timelines: exactly three score zones with explicit ranges, clear separators, line-style entries only for currently visible score layers, and at most one event-band item; group filtering remains outside the legend.",
+    "BW-GOV-010": "Before release, the governed Master Specification and research/status documentation must be explicitly synchronized to the current implementation fingerprint. A deterministic fingerprint over app/, components/, lib/, core/src/, deploy/, package.json and next.config.ts must match docs/documentation-sync.json, and the release gate must fail closed on drift."
   },
   "audit": {
     "policy": "Every requirement must be present. Implementation status comes from the Drive Master Spec v2.8 until a current-head audit updates it. Implementation and acceptance evidence are separate; manual-QA failures remain partial until user re-verification; missing evidence is reported, never invented.",
