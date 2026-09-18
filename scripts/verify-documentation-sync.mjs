@@ -29,7 +29,7 @@ function implementationRows() {
       if (!match) throw new Error(`cannot parse git index row: ${line}`);
       return { sha: match[1], path: match[2] };
     })
-    .sort((a, b) => a.path.localeCompare(b.path));
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
 function fnv1a64Ascii(text) {
