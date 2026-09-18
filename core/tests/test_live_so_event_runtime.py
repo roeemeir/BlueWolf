@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import timedelta
 
 from bluewolf_core.event_alert import EventAlertEngine
@@ -250,6 +251,53 @@ class LiveSOEventRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(changed.live_scoring.selection.template_id, "same")
         self.assertIn(ChangeKind.EVENT_OPENED, [change.kind for change in changed.event.changes])
+
+    def test_bw_core_009_material_route_replacement_opens_new_so_event_without_group_split(self) -> None:
+        runtime, _, _ = _runtime()
+        lifecycle = []
+        runtime.lifecycle_sink = lifecycle.append
+        route = _route(period_s=100.0)
+        constellation = _constellation()
+
+        first = runtime.process_snapshot(
+            "g1",
+            constellation,
+            _members(route, 0),
+            reference_period_s=100.0,
+            displayed_group_score=90.0,
+            displayed_score_valid=True,
+        )
+        first_event_id = first.event.snapshot.event_id
+
+        replacement_route = replace(
+            route,
+            route_id="so-route-material-replacement",
+            long_axis_a_m=route.long_axis_a_m * 1.12,
+            short_axis_b_m=route.short_axis_b_m * 1.12,
+            length_m=route.length_m * 1.12,
+        )
+        changed = runtime.process_snapshot(
+            "g1",
+            constellation,
+            _members(replacement_route, 5),
+            reference_period_s=100.0,
+            displayed_group_score=90.0,
+            displayed_score_valid=True,
+        )
+
+        self.assertEqual(changed.event.snapshot.group_id, "g1")
+        self.assertNotEqual(changed.event.snapshot.event_id, first_event_id)
+        self.assertIn(
+            ChangeKind.EVENT_OPENED,
+            [change.kind for change in changed.event.changes],
+        )
+        endings = [
+            change for change in lifecycle
+            if change.kind is ChangeKind.EVENT_ENDING
+            and change.event_id == first_event_id
+        ]
+        self.assertEqual(len(endings), 1)
+        self.assertEqual(endings[0].details["reason"], "context_changed")
 
     def test_checkpoint_roundtrip_preserves_recommendation_evidence(self) -> None:
         runtime, bank, _ = _runtime()
