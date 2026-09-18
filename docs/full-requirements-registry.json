@@ -204,13 +204,13 @@
       "TEST-01",
       "ARCH-01",
       "ARCH-02",
-      "PROC-01"
+      "PROC-01",
+      "BW-DATA-010"
     ],
     "partial": [
       "BW-GOV-007",
       "BW-GOV-010",
       "BW-SYNC-013",
-      "BW-DATA-010",
       "BW-OFF-009",
       "BW-OFF-011",
       "BW-OFF-012",
@@ -268,7 +268,8 @@
     "GEO-02": "החלפת סוג רכב בלבד אינה מזיזה אותו ואינה הופכת כיוון.",
     "SO-01": "סדר והיפוכו מוצגים פעם אחת; אין מחיקה של סדר לא שקול.",
     "REP-04": "השוואה למידע האירוע במקור ולגרף באותו טווח.",
-    "ARCH-02": "SI ו-SO נבנים דרך אותו family-neutral runtime contract; SI-only, SO-only ו-SI+SO משתמשים באותו host contract; לשתי המשפחות אותו namespaced state/checkpoint envelope ו-restart/restore parity; אין תלות של SI ב-SO factory ואין תלות של SO ב-SI; וכל poll מפורסם דרך נתיב atomic RuntimeSnapshot יחיד."
+    "ARCH-02": "SI ו-SO נבנים דרך אותו family-neutral runtime contract; SI-only, SO-only ו-SI+SO משתמשים באותו host contract; לשתי המשפחות אותו namespaced state/checkpoint envelope ו-restart/restore parity; אין תלות של SI ב-SO factory ואין תלות של SO ב-SI; וכל poll מפורסם דרך נתיב atomic RuntimeSnapshot יחיד.",
+    "BW-DATA-010": "במצב active, מעטפת הזמן מקצה לקצה עד RuntimeSnapshot/HTTP תהיה קטנה מ-10 שניות ותימדד ב-CI עם InfluxDB2 אמיתי: Flux query, temporal join, Core, scoring/publication וקריאת /v1/live-runtime. Reader מדומה לבדו אינו ראיית קבלה."
   },
   "audit": {
     "policy": "Every requirement must be present. Implementation status comes from the Drive Master Spec v2.8 until a current-head audit updates it. Implementation and acceptance evidence are separate; manual-QA failures remain partial until user re-verification; missing evidence is reported, never invented.",
