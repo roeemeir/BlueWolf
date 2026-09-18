@@ -13,6 +13,7 @@ const {
   minimumRouteGap,
   pointAtSoPhase,
   soSmilePoses,
+  soSmileChainPoses,
 } = await vite.ssrLoadModule('/lib/so-geometry.ts');
 
 test('GEO-01 uses exact 30 degree neighboring axes with a horizontal odd center', () => {
@@ -32,6 +33,27 @@ test('GEO-01 even smile is symmetric without inventing a center route', () => {
   assert.equal(even[0].offsetY, even[3].offsetY);
   assert.equal(even[1].offsetY, even[2].offsetY);
   assert.ok(even.every((pose) => pose.rotationDeg !== 0));
+});
+
+test('SO mixed smile counts a Double as two consecutive 30 degree hippodrome units', () => {
+  const poses = soSmileChainPoses(['single', 'double', 'single'], 100, 10);
+  assert.deepEqual(poses.map((pose) => pose.rotationDeg), [-45, 0, 45]);
+  assert.equal(poses[0].offsetX, -poses[2].offsetX);
+  assert.equal(poses[0].offsetY, poses[2].offsetY);
+
+  // The rendered Double has internal axes at -15/+15 around its mean pose.
+  // Together with the neighboring Singles this yields -45,-15,+15,+45:
+  // exactly 30 degrees between every physical hippodrome in one concave smile.
+  const physicalAxes = [
+    poses[0].rotationDeg,
+    poses[1].rotationDeg - 15,
+    poses[1].rotationDeg + 15,
+    poses[2].rotationDeg,
+  ];
+  assert.deepEqual(physicalAxes, [-45, -15, 15, 45]);
+  for (let index = 1; index < physicalAxes.length; index += 1) {
+    assert.equal(physicalAxes[index] - physicalAxes[index - 1], 30);
+  }
 });
 
 test('GEO-01 neighboring routes keep a real gap and are not endpoint-connected', () => {
