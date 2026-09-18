@@ -87,11 +87,15 @@ class ActiveThresholdCatalogTests(unittest.TestCase):
         self.assertIn("RAW/5/10/20/30", research)
         self.assertIn("Reader מדומה אינו נחשב acceptance evidence", research)
 
-    def test_documented_current_baseline_is_not_older_than_threshold_catalog_baseline(self) -> None:
-        docs_root = Path(__file__).resolve().parents[1] / "docs"
+    def test_documented_current_baseline_matches_governed_documentation_sync(self) -> None:
+        core_root = Path(__file__).resolve().parents[1]
+        repo_root = core_root.parent
+        docs_root = core_root / "docs"
         implementation = (docs_root / "IMPLEMENTATION_STATUS_HE.md").read_text(encoding="utf-8")
         research = (docs_root / "ALGORITHMIC_CORE_RESEARCH_LOG_HE.md").read_text(encoding="utf-8")
-        current = "3c76d8bda4526ec7e36d7cbb3d3d4737ec6628a2"
+        sync = json.loads((repo_root / "docs" / "documentation-sync.json").read_text(encoding="utf-8"))
+        current = sync["masterDocument"]["verifiedImplementationBaseline"]
+        self.assertRegex(current, r"^[0-9a-f]{40}$")
         self.assertIn(current, implementation)
         self.assertIn(current, research)
 
