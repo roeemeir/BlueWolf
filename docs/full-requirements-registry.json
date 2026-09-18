@@ -209,7 +209,8 @@
       "BW-OFF-009",
       "BW-OFF-011",
       "BW-OFF-012",
-      "BW-UI-007"
+      "BW-UI-007",
+      "BW-UI-008"
     ],
     "partial": [
       "BW-GOV-007",
@@ -217,7 +218,6 @@
       "BW-SYNC-013",
       "BW-DEV-001",
       "BW-UI-005",
-      "BW-UI-008",
       "BW-UI-009",
       "BW-UI-010",
       "BW-UI-012",
@@ -273,7 +273,8 @@
     "BW-OFF-009": "Accelerated full-workday (8h logical active polling) soak must complete with bounded sample/archive persistence and deployment retention/pruning wiring; no unbounded growth or restart-dependent loss is accepted.",
     "BW-OFF-011": "Server-wide and per-group settings must persist in separate SQLite scopes with independent revisions; stale writes conflict only inside their own scope and cross-scope fields are rejected.",
     "BW-OFF-012": "A legacy SQLite workspace must migrate transactionally without losing workspace state, revision or audit evidence; migration ledger must be idempotent and older migration markers must be adopted safely.",
-    "BW-UI-007": "Audible alerts expose mute for 5/15/30 minutes and until restart; mute is session-local, automatically expires for timed modes, can be cleared, and is never persisted to Workspace."
+    "BW-UI-007": "Audible alerts expose mute for 5/15/30 minutes and until restart; mute is session-local, automatically expires for timed modes, can be cleared, and is never persisted to Workspace.",
+    "BW-UI-008": "A material formation/template context change opens a new lifecycle event; a sustained low displayed score opens the approved alert on that same event. Both event and alert must reach the runtime contract and Operator as separate Core-backed concepts; UI must not synthesize either from smoothed display scores."
   },
   "audit": {
     "policy": "Every requirement must be present. Implementation status comes from the Drive Master Spec v2.8 until a current-head audit updates it. Implementation and acceptance evidence are separate; manual-QA failures remain partial until user re-verification; missing evidence is reported, never invented.",
