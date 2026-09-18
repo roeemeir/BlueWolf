@@ -57,7 +57,9 @@ export function validateDevelopmentIterationReview(review, registry) {
 
   for (const id of selectedSet) if (!openSet.has(id)) errors.push(`selectedForWork contains protected/non-open requirement: ${id}`);
   for (const id of manualSet) if (!openSet.has(id)) errors.push(`manualReverifyRequired contains protected/non-open requirement: ${id}`);
-  if (openSet.size > 0 && selectedSet.size === 0) errors.push('selectedForWork must not be empty while open requirements remain');
+  for (const id of selectedSet) if (manualSet.has(id)) errors.push(`selectedForWork contains manual re-verification requirement: ${id}`);
+  const engineeringOpen = [...openSet].filter((id) => !manualSet.has(id));
+  if (engineeringOpen.length > 0 && selectedSet.size === 0) errors.push('selectedForWork must not be empty while non-manual open requirements remain');
 
   return errors;
 }
