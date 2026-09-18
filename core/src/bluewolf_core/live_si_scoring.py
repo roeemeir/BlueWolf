@@ -28,6 +28,8 @@ from .templates import ObservedMember, SynchronizationTemplate
 
 
 _EPS = 1e-12
+LIVE_SI_METRICS_STATE_SCHEMA_VERSION = "bluewolf.live-si-metrics.v1"
+LIVE_SI_SCORER_STATE_SCHEMA_VERSION = "bluewolf.live-si-scorer.v1"
 DiagnosticValue = float | str | bool
 
 
@@ -111,6 +113,42 @@ def _utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
+def _iso(value: datetime) -> str:
+    return _utc(value).isoformat().replace("+00:00", "Z")
+
+
+def _state_time(value: object, label: str) -> datetime:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{label} must be an ISO timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{label} must be an ISO timestamp") from exc
+    return _utc(parsed)
+
+
+def _state_number(value: object, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be numeric")
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError(f"{label} must be finite")
+    return result
+
+
+def _point_state(point: CanonicalPoint) -> dict[str, float]:
+    return {"x": float(point.x_m), "y": float(point.y_m)}
+
+
+def _state_point(value: object, label: str) -> CanonicalPoint:
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{label} must be an object")
+    return CanonicalPoint(
+        _state_number(value.get("x"), f"{label}.x"),
+        _state_number(value.get("y"), f"{label}.y"),
+    )
+
+
 def _signed_cycle_delta(current: float, previous: float) -> float:
     return ((current - previous + 0.5) % 1.0) - 0.5
 
@@ -141,6 +179,67 @@ class LiveSIMetricsEngine:
 
     def reset_member(self, member_id: str) -> None:
         self._state.pop(member_id, None)
+
+    def export_state(self) -> dict[str, object]:
+        return {
+            "schemaVersion": LIVE_SI_METRICS_STATE_SCHEMA_VERSION,
+            "maxContiguousGapSeconds": self.max_contiguous_gap_s,
+            "members": [
+                {
+                    "memberId": member_id,
+                    "routeId": row.route_id,
+                    "lastTimeUtc": _iso(row.last_time_utc),
+                    "lastPhase": row.last_phase,
+                    "lastPoint": _point_state(row.last_point),
+                    "points": [_point_state(point) for point in row.points],
+                    "wrongDirectionSeconds": row.wrong_direction_seconds,
+                }
+                for member_id, row in sorted(self._state.items())
+            ],
+        }
+
+    def restore_state(self, state: Mapping[str, object]) -> None:
+        if state.get("schemaVersion") != LIVE_SI_METRICS_STATE_SCHEMA_VERSION:
+            raise ValueError("unsupported live SI metrics state schema")
+        gap = _state_number(state.get("maxContiguousGapSeconds"), "maxContiguousGapSeconds")
+        if abs(gap - self.max_contiguous_gap_s) > 1e-9:
+            raise ValueError("live SI metrics state uses a different contiguous-gap configuration")
+        raw_members = state.get("members")
+        if not isinstance(raw_members, list):
+            raise ValueError("live SI metrics members must be a list")
+        restored: dict[str, _MemberTemporalState] = {}
+        for index, raw in enumerate(raw_members):
+            if not isinstance(raw, Mapping):
+                raise ValueError(f"live SI metrics member {index} must be an object")
+            member_id = raw.get("memberId")
+            route_id = raw.get("routeId")
+            if not isinstance(member_id, str) or not member_id:
+                raise ValueError("live SI metrics memberId is required")
+            if member_id in restored:
+                raise ValueError("live SI metrics memberIds must be unique")
+            if not isinstance(route_id, str) or not route_id:
+                raise ValueError("live SI metrics routeId is required")
+            phase = _state_number(raw.get("lastPhase"), "lastPhase")
+            if not 0.0 <= phase < 1.0:
+                raise ValueError("live SI metrics lastPhase must be in [0,1)")
+            raw_points = raw.get("points")
+            if not isinstance(raw_points, list) or not 1 <= len(raw_points) <= 3:
+                raise ValueError("live SI metrics points must contain one to three points")
+            wrong_direction = _state_number(
+                raw.get("wrongDirectionSeconds", 0.0),
+                "wrongDirectionSeconds",
+            )
+            if wrong_direction < 0.0:
+                raise ValueError("wrongDirectionSeconds must be non-negative")
+            restored[member_id] = _MemberTemporalState(
+                route_id=route_id,
+                last_time_utc=_state_time(raw.get("lastTimeUtc"), "lastTimeUtc"),
+                last_phase=phase,
+                last_point=_state_point(raw.get("lastPoint"), "lastPoint"),
+                points=[_state_point(point, "points[]") for point in raw_points],
+                wrong_direction_seconds=wrong_direction,
+            )
+        self._state = restored
 
     def observe(self, item: LiveSIMemberInput, *, reference_period_s: float) -> LiveSIMetricResult:
         if not math.isfinite(reference_period_s) or reference_period_s <= 0.0:
@@ -300,6 +399,27 @@ class LiveSIGroupScorer:
         self.metrics_engine = metrics_engine or LiveSIMetricsEngine()
         self.minimum_valid_vehicles = minimum_valid_vehicles
 
+    def export_state(self) -> dict[str, object]:
+        return {
+            "schemaVersion": LIVE_SI_SCORER_STATE_SCHEMA_VERSION,
+            "templateId": self.template.template_id,
+            "minimumValidVehicles": self.minimum_valid_vehicles,
+            "metricsEngine": self.metrics_engine.export_state(),
+        }
+
+    def restore_state(self, state: Mapping[str, object]) -> None:
+        if state.get("schemaVersion") != LIVE_SI_SCORER_STATE_SCHEMA_VERSION:
+            raise ValueError("unsupported live SI scorer state schema")
+        if state.get("templateId") != self.template.template_id:
+            raise ValueError("live SI scorer state belongs to a different template")
+        minimum = state.get("minimumValidVehicles")
+        if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum != self.minimum_valid_vehicles:
+            raise ValueError("live SI scorer state uses a different minimum-valid-vehicles configuration")
+        raw_metrics = state.get("metricsEngine")
+        if not isinstance(raw_metrics, Mapping):
+            raise ValueError("live SI scorer metricsEngine state must be an object")
+        self.metrics_engine.restore_state(raw_metrics)
+
     def score_group(
         self,
         group_id: str,
@@ -354,6 +474,8 @@ class LiveSIGroupScorer:
 
 
 __all__ = [
+    "LIVE_SI_METRICS_STATE_SCHEMA_VERSION",
+    "LIVE_SI_SCORER_STATE_SCHEMA_VERSION",
     "LiveSIGroupScorer",
     "LiveSIGroupScoringResult",
     "LiveSIMemberInput",
