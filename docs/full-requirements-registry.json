@@ -2,10 +2,10 @@
   "schemaVersion": "bluewolf.full-requirements-registry.v1",
   "sourceDocument": {
     "driveFileId": "1pcjq50LchceDYsCqek_jqxkkRYbnef4l",
-    "title": "Blue_Wolf_Full_Specification_HE_v2_7.docx",
-    "sourceVersion": "2.7",
-    "sourceModifiedAt": "2026-09-17T19:07:22.540Z",
-    "lastSyncedHead": "9413843a8e1ac60466beb25306f2dbd9755f875f"
+    "title": "Blue_Wolf_Full_Specification_HE_v2_8.docx",
+    "sourceVersion": "2.8",
+    "sourceModifiedAt": "2026-09-18T02:44:04.286Z",
+    "lastSyncedHead": "5427f9054a33053f0067067bc98d0c4cde8ff121"
   },
   "requirementCount": 143,
   "idFamilies": [
@@ -271,7 +271,7 @@
     "ARCH-02": "SI ו-SO נבנים דרך אותו family-neutral runtime contract; SI-only, SO-only ו-SI+SO משתמשים באותו host contract; לשתי המשפחות אותו namespaced state/checkpoint envelope ו-restart/restore parity; אין תלות של SI ב-SO factory ואין תלות של SO ב-SI; וכל poll מפורסם דרך נתיב atomic RuntimeSnapshot יחיד."
   },
   "audit": {
-    "policy": "Every requirement must be present. Implementation status comes from the Drive Master Spec v2.7 until a current-head audit updates it. Implementation and acceptance evidence are separate; manual-QA failures remain partial until user re-verification; missing evidence is reported, never invented.",
+    "policy": "Every requirement must be present. Implementation status comes from the Drive Master Spec v2.8 until a current-head audit updates it. Implementation and acceptance evidence are separate; manual-QA failures remain partial until user re-verification; missing evidence is reported, never invented.",
     "requirements": {}
   }
 }
