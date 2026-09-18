@@ -70,9 +70,9 @@ test('OP-02 SIM exposes observed trace, score trace, route, group and template l
   assert.match(map, /observedLayer/);
   assert.match(map, /routeLayer/);
   assert.match(map, /groupLayer/);
-  assert.match(map, /showTrace && <g className="score-trace"/);
-  assert.match(map, /showRelations && selectedGroup === "so"/);
-  assert.match(map, /showRelations && selectedGroup === "si"/);
+  assert.match(map, /scoreTraceLayer && <g className="score-trace"/);
+  assert.match(map, /relationLayer && selectedGroup === "so"/);
+  assert.match(map, /relationLayer && selectedGroup === "si"/);
   assert.match(operator, /showRelations=\{showRelations\}/);
   assert.match(operator, /showTrace=\{showTrace\}/);
 });
