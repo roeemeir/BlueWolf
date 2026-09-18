@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import math
 from types import SimpleNamespace
@@ -209,6 +210,40 @@ class SIProducerTests(unittest.TestCase):
         self.assertLess(changed_group["sync"], exact_group["sync"])
         self.assertEqual({member["ring"] for member in exact_group["members"]}, {"outer"})
         self.assertEqual(len(exact_group["detectedRoutes"]), 2)
+
+    def test_bw_core_009_material_route_replacement_opens_new_si_event_without_group_split(self) -> None:
+        route, _, producer = _producer(1.0 / 3.0)
+        first = producer.publish_poll(_poll(route, START, 0.0, 1.0 / 3.0))
+        self.assertIsNotNone(first.snapshot)
+        first_group = first.snapshot["groups"]["si"]  # type: ignore[index]
+        first_event_id = first_group["event"]["id"]
+
+        replacement_route = replace(
+            route,
+            route_id="si-route-material-replacement",
+            long_axis_a_m=route.long_axis_a_m * 1.12,
+            short_axis_b_m=route.short_axis_b_m * 1.12,
+            length_m=route.length_m * 1.12,
+        )
+        producer.session = _Session(replacement_route)  # type: ignore[assignment]
+        step = 1.0 / PERIOD
+        changed = producer.publish_poll(
+            _poll(
+                replacement_route,
+                START + timedelta(seconds=1),
+                step,
+                1.0 / 3.0 + step,
+            )
+        )
+
+        self.assertIsNotNone(changed.snapshot)
+        changed_group = changed.snapshot["groups"]["si"]  # type: ignore[index]
+        self.assertEqual(changed_group["id"], "g-si")
+        self.assertNotEqual(changed_group["event"]["id"], first_event_id)
+        self.assertEqual(
+            {item["routeId"] for item in changed_group["detectedRoutes"]},
+            {"si-route-material-replacement"},
+        )
 
     def test_family_checkpoint_restore_preserves_si_runtime_without_rewarmup(self) -> None:
         route, _, producer = _producer(1.0 / 3.0)
