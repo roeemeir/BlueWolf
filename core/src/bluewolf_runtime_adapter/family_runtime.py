@@ -107,6 +107,8 @@ class SOFamilyRuntimeAdapter(RuntimeFamilyAdapter):
             state,
             scoring_config=current.scorer.scoring_config,
             event_config=current.event_engine.config,
+            observation_sink=current.observation_sink,
+            lifecycle_sink=current.lifecycle_sink,
         )
         if invalidated:
             ids = ", ".join(item.template_id for item in invalidated)
@@ -135,6 +137,9 @@ class SIFamilyRuntimeAdapter(RuntimeFamilyAdapter):
             templates,
             state,
             scoring_config=current.scoring_config,
+            event_config=current.event_engine.config,
+            observation_sink=current.observation_sink,
+            lifecycle_sink=current.lifecycle_sink,
         )
 
 
