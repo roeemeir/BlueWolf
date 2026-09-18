@@ -9,6 +9,7 @@ import {
   scoreLayerDasharray,
   type OperatorTimelineWindowMinutes,
 } from "@/lib/operator-timeline";
+import { ScoreLegend } from "./score-legend";
 import { groupLineColor, type GroupKey, type ScoreLayer } from "./visuals";
 
 const GROUPS: { id: GroupKey; name: string }[] = [
@@ -53,7 +54,7 @@ export function SimulationTimeline({
     return next.length === GROUPS.length ? [] : next;
   });
 
-  return <div className="simulation-timeline-shell" dir="rtl" data-requirements="OP-05">
+  return <div className="simulation-timeline-shell" dir="rtl" data-requirements="OP-05 BW-UI-013">
     <div className="v04-timeline-controls" style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
       <div className="segmented-control" aria-label="חלון זמן של סימולציה">
         {OPERATOR_TIMELINE_WINDOWS.map((minutes) => <button type="button" key={minutes} className={windowMinutes === minutes ? "active" : ""} onClick={() => setWindowMinutes(minutes)}>{minutes} דק׳</button>)}
@@ -63,6 +64,7 @@ export function SimulationTimeline({
         {GROUPS.map((group) => <button type="button" key={group.id} className={explicitGroups.includes(group.id) ? "active" : ""} onClick={() => toggleGroup(group.id)} style={{ borderColor: groupLineColor[group.id] }}>{group.name}</button>)}
       </div>
     </div>
+    <ScoreLegend layers={layers} />
     <svg className="timeline-svg v04-timeline" viewBox="0 0 1000 260" role="img" aria-label={`גרף סימולציה · ${windowMinutes} דקות לפי זמן הנתונים`} onClick={(event) => {
       if (!count) return;
       const rect = event.currentTarget.getBoundingClientRect();
@@ -76,6 +78,6 @@ export function SimulationTimeline({
       <text x={left} y="254" className="chart-label">−{windowMinutes} דק׳</text>
       <text x={right} y="254" textAnchor="end" className="chart-label">עכשיו בנתוני SIM</text>
     </svg>
-    <div className="card-hint" style={{ marginTop: 4 }}>כולל — רציף · סנכרון — מקווקו · נתיב — נקודות. בחירת קבוצה במפה משנה הדגשה בלבד.</div>
+    <div className="card-hint" style={{ marginTop: 4 }}>בחירת קבוצה במפה משנה הדגשה בלבד; המקרא מציג רק שכבות פעילות ואינו משמש מסנן.</div>
   </div>;
 }
