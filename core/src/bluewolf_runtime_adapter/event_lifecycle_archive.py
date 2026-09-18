@@ -1,7 +1,7 @@
-"""Immutable SQLite archive for investigation event lifecycle evidence.
+"""Immutable SQLite archive for SI/SO investigation event lifecycle evidence.
 
 This archive is reporting-only. It stores event/alert/recommendation transitions
-emitted by ``LiveSOEventRuntime`` and never participates in route detection,
+emitted by family runtimes and never participates in route detection,
 grouping, scoring or template selection.
 """
 from __future__ import annotations
@@ -193,4 +193,6 @@ class SOEventLifecycleArchive:
         }
 
 
-__all__ = ["LIFECYCLE_SCHEMA_VERSION", "SOEventLifecycleArchive"]
+EventLifecycleArchive = SOEventLifecycleArchive
+
+__all__ = ["EventLifecycleArchive", "LIFECYCLE_SCHEMA_VERSION", "SOEventLifecycleArchive"]
