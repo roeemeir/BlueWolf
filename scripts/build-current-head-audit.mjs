@@ -127,7 +127,7 @@ const VERIFIED = {
   'BW-OFF-005': ['components/bluewolf/route-bank-wkt-workbench.tsx', 'scripts/verify_wkt_browser_e2e.py'],
   'BW-OFF-006': ['scripts/verify-offline-http.mjs', '.github/workflows/wkt-e2e.yml'],
   'BW-OFF-009': ['.github/workflows/off09-workday.yml', 'scripts/verify-offline-http.mjs'],
-  'BW-OFF-010': ['lib/wmts-capabilities.ts', 'lib/map-source-config.ts', 'lib/default-map-profile.ts', 'app/api/map-sources/capabilities/route.ts', 'tests/wmts-capabilities.test.mjs', 'tests/map-source-config.test.mjs', 'tests/default-map-profile.test.mjs', 'scripts/verify-omniscale-wmts.mjs', '.github/workflows/off10-map-sources.yml'],
+  'BW-OFF-010': ['lib/wmts-capabilities.ts', 'lib/map-source-config.ts', 'lib/default-map-profile.ts', 'lib/local-map-source-server.ts', 'app/api/map-sources/capabilities/route.ts', 'tests/wmts-capabilities.test.mjs', 'tests/map-source-config.test.mjs', 'tests/map-source-secret-store.test.mjs', 'tests/default-map-profile.test.mjs', 'scripts/verify-omniscale-wmts.mjs', '.github/workflows/off10-map-sources.yml'],
   'BW-OFF-011': ['app/api/workspace/scope/route.ts', 'tests/workspace-scopes.test.mjs'],
   'BW-OFF-012': ['lib/sqlite-migrations.ts', 'tests/sqlite-migrations.test.mjs', '.github/workflows/off12-migrations.yml'],
   'BW-SYNC-003': ['lib/si-direct-placement.ts', 'components/bluewolf/si-template-governance-workbench.tsx', 'tests/si-direct-template-ui.test.mjs'],
@@ -225,7 +225,7 @@ export function buildCurrentHeadAudit(registry, { headSha = 'working-tree', revi
           reviewedAt,
           ...evidence,
           gap: id === 'BW-SYNC-013'
-            ? 'Automated display-only smoothing evidence exists, but the product smoothing decision still requires explicit user approval.'
+            ? 'Display-only smoothing is implemented consistently across timeline, current group cards and historical cursor while raw Core scores remain unchanged; this requirement stays partial until explicit user visual re-verification.'
             : 'Automated fix evidence exists, but this requirement remains partial until the user re-verifies the previously failed manual QA behavior.',
         };
       } else {
