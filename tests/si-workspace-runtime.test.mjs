@@ -57,6 +57,7 @@ test("BW-SYNC-012 workspace save invokes server-only SI runtime sync and reports
   assert.match(route, /category === "templates" \|\| category === "vehicle-ranges"/);
   assert.match(route, /import\("@\/lib\/si-runtime-sync"\)/);
   assert.match(route, /syncSiTemplatesToOperationalConfig\(siRuntime\.templates, siRuntime\.vehicleTypes\)/);
-  assert.match(context, /תצורת SI נשמרה ב־Workspace אך לא הוחלה על ה־Core/);
-  assert.match(context, /תצורת SI נשמרה לקונפיגורציית ה־Core; נדרשת הפעלה מחדש של שירות הליבה/);
+  assert.match(context, /התצורה נשמרה והועברה ל־Core; נדרשת הפעלה מחדש של שירות הליבה/);
+  assert.match(context, /התצורה נשמרה והפכה לפעילה ב־Workspace וב־SIM\. אין Core תפעולי מחובר/);
+  assert.match(context, /התצורה נשמרה ב־Workspace, אך סנכרון ה־Core נכשל/);
 });
