@@ -1,21 +1,9 @@
 import type { SoRouteKind } from "@/lib/bluewolf";
 
-/**
- * GEO-01 / GEO-02 source of truth for SO rendering and motion.
- *
- * Geometry is deliberately independent of vehicle type. The same transformed
- * centerline is consumed by the template generator, previews and live map.
- * A Double is one continuous closed route with an exact 30° axis break; it has
- * no internal U-turn seam and does not fall back to an elongated straight capsule.
- */
+/** GEO-01/GEO-02: identical physical geometry for the SO generator, preview and live simulation. */
 export type SoPoint = { x: number; y: number };
 export type SoPointWithHeading = SoPoint & { heading: number };
-export type SoSmilePose = {
-  routeIndex: number;
-  rotationDeg: number;
-  offsetX: number;
-  offsetY: number;
-};
+export type SoSmilePose = { routeIndex: number; rotationDeg: number; offsetX: number; offsetY: number };
 export type SoRouteGeometry = {
   routeIndex: number;
   kind: SoRouteKind;
@@ -24,7 +12,6 @@ export type SoRouteGeometry = {
   points: SoPoint[];
   path: string;
 };
-
 export type SoGeometryOptions = {
   centerX?: number;
   centerY?: number;
@@ -37,7 +24,6 @@ export type SoGeometryOptions = {
 };
 
 export const DOUBLE_HIPPODROME_BREAK_DEG = 30;
-
 export const SO_DIRECT_PHASES: Record<SoRouteKind, readonly number[]> = {
   single: [0, 0.5],
   double: [0, 0.25, 0.5, 0.75],
@@ -52,23 +38,12 @@ export function soSmilePoses(count: number, spacing = 245, risePerStep = 22): So
       routeIndex,
       rotationDeg: relative * 30,
       offsetX: relative * spacing,
-      // A symmetric shallow smile. Odd layouts have one horizontal center;
-      // even layouts are mirrored around the horizontal axis with no fake center.
       offsetY: Math.abs(relative) * Math.abs(relative) * risePerStep,
     };
   });
 }
 
-/**
- * Product law for a mixed SO chain.
- *
- * A Single consumes one physical hippodrome unit. A Double consumes two
- * consecutive physical hippodrome units. Angles are assigned to those physical
- * units first at exact 30° increments, then each rendered route instance is
- * placed at the mean pose of the units it consumes. The Double's own ±15°
- * internal axes therefore land on the two adjacent unit angles and become part
- * of the same global concave smile instead of behaving like one wide route.
- */
+/** A Double occupies two consecutive physical hippodrome slots in the 30-degree chain. */
 export function soSmileChainPoses(
   chain: readonly SoRouteKind[],
   spacing = 245,
@@ -87,7 +62,7 @@ export function soSmileChainPoses(
       routeIndex,
       rotationDeg: relative * 30,
       offsetX: relative * spacing,
-      offsetY: Math.abs(relative) * Math.abs(relative) * risePerStep,
+      offsetY: relative * relative * risePerStep,
     };
   });
 }
@@ -111,7 +86,6 @@ function singleHippodromePoints(radius: number, halfLeg: number, samples: number
     points.push({ x: halfLeg + Math.cos(angle) * radius, y: Math.sin(angle) * radius });
   }
   points.push({ x: -halfLeg, y: radius });
-  // Closing is left to SVG Z / the sampler, so the initial point is not duplicated.
   for (let index = 1; index < samples; index += 1) {
     const angle = Math.PI / 2 + index * Math.PI / samples;
     points.push({ x: -halfLeg + Math.cos(angle) * radius, y: Math.sin(angle) * radius });
@@ -119,18 +93,25 @@ function singleHippodromePoints(radius: number, halfLeg: number, samples: number
   return points;
 }
 
+/**
+ * A continuous Double, with an inverted-V centerline in screen coordinates:
+ * left endpoint BELOW the center, right endpoint BELOW the center. The physical
+ * axes read left-to-right as -15° then +15°, matching the neighboring Singles
+ * in the global concave smile. The previous +15°/-15° ordering drew a local V.
+ */
 function bentDoubleHippodromePoints(radius: number, segmentLength: number, samples: number): SoPoint[] {
   const halfBreak = DOUBLE_HIPPODROME_BREAK_DEG / 2 * Math.PI / 180;
-  const tangentLeft = { x: Math.cos(halfBreak), y: Math.sin(halfBreak) };
-  const tangentRight = { x: Math.cos(halfBreak), y: -Math.sin(halfBreak) };
+  const tangentLeft = { x: Math.cos(halfBreak), y: -Math.sin(halfBreak) };
+  const tangentRight = { x: Math.cos(halfBreak), y: Math.sin(halfBreak) };
   const normalLeft = { x: -tangentLeft.y, y: tangentLeft.x };
   const normalRight = { x: -tangentRight.y, y: tangentRight.x };
   const leftEnd = { x: -segmentLength * tangentLeft.x, y: -segmentLength * tangentLeft.y };
   const joint = { x: 0, y: 0 };
   const rightEnd = { x: segmentLength * tangentRight.x, y: segmentLength * tangentRight.y };
-  const offset = (point: SoPoint, normal: SoPoint, amount: number): SoPoint => ({ x: point.x + normal.x * amount, y: point.y + normal.y * amount });
+  const offset = (point: SoPoint, normal: SoPoint, amount: number): SoPoint => ({
+    x: point.x + normal.x * amount, y: point.y + normal.y * amount,
+  });
 
-  // Upper/outer leg. The two offset pieces meet at the central 30° break.
   const points: SoPoint[] = [
     offset(leftEnd, normalLeft, radius),
     offset(joint, normalLeft, radius),
@@ -138,21 +119,17 @@ function bentDoubleHippodromePoints(radius: number, segmentLength: number, sampl
     offset(rightEnd, normalRight, radius),
   ];
 
-  // Right outer turn: +normal -> -normal through the forward tangent.
   const rightNormalAngle = Math.atan2(normalRight.y, normalRight.x);
   for (let index = 1; index <= samples; index += 1) {
     const angle = rightNormalAngle - index * Math.PI / samples;
     points.push({ x: rightEnd.x + Math.cos(angle) * radius, y: rightEnd.y + Math.sin(angle) * radius });
   }
-
-  // Lower/return leg back through the same physical break without an internal U-turn.
   points.push(
     offset(joint, normalRight, -radius),
     offset(joint, normalLeft, -radius),
     offset(leftEnd, normalLeft, -radius),
   );
 
-  // Left outer turn. Omit the final point because SVG Z closes to the first point.
   const negativeLeftNormalAngle = Math.atan2(-normalLeft.y, -normalLeft.x);
   for (let index = 1; index < samples; index += 1) {
     const angle = negativeLeftNormalAngle - index * Math.PI / samples;
@@ -161,7 +138,6 @@ function bentDoubleHippodromePoints(radius: number, segmentLength: number, sampl
   return points;
 }
 
-/** Closed clockwise SO polyline. Single is a capsule; Double has an exact 30° internal axis break. */
 export function localHippodromePoints(
   kind: SoRouteKind,
   {
@@ -182,16 +158,24 @@ export function pointsToClosedPath(points: readonly SoPoint[]) {
   return points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(3)},${point.y.toFixed(3)}`).join(" ") + " Z";
 }
 
-function fittedShapeOptions(options: SoGeometryOptions, spacing: number) {
+function fittedShapeOptions(options: SoGeometryOptions, spacing: number, chain: readonly SoRouteKind[], poses: readonly SoSmilePose[]) {
   const radius = options.radius ?? 22;
   const singleHalfLeg = options.singleHalfLeg ?? 54;
   const doubleHalfLeg = options.doubleHalfLeg ?? 104;
-  // Keep a visible gap of roughly half a single half-leg. If a caller requests a
-  // compact layout, scale all routes uniformly instead of allowing overlap.
-  const desiredGap = Math.max(8, singleHalfLeg * 0.5);
-  const nominalExtent = Math.hypot(doubleHalfLeg + radius, radius);
-  const availableExtent = Math.max(8, (spacing - desiredGap) / 2);
-  const scale = Math.min(1, availableExtent / nominalExtent);
+  // Fit neighboring physical outlines rather than assuming that every route has
+  // the extent of a Double. This keeps mixed chains compact without overlapping.
+  const extent = (kind: SoRouteKind) => kind === "double"
+    ? doubleHalfLeg + radius
+    : singleHalfLeg + radius;
+  let scale = 1;
+  for (let index = 1; index < chain.length; index += 1) {
+    const previous = poses[index - 1];
+    const current = poses[index];
+    const centerDistance = Math.hypot(current.offsetX - previous.offsetX, current.offsetY - previous.offsetY);
+    const combinedExtent = extent(chain[index - 1]) + extent(chain[index]);
+    // Leave a small physical buffer, not the former half-leg-wide gap.
+    scale = Math.min(scale, Math.max(0.05, (centerDistance - 7) / combinedExtent));
+  }
   return {
     radius: radius * scale,
     singleHalfLeg: singleHalfLeg * scale,
@@ -204,7 +188,7 @@ export function buildSoSmileGeometry(chain: readonly SoRouteKind[], options: SoG
   const center = { x: options.centerX ?? 0, y: options.centerY ?? 0 };
   const spacing = options.spacing ?? 245;
   const poses = soSmileChainPoses(chain, spacing, options.risePerStep ?? 22);
-  const shapeOptions = fittedShapeOptions(options, spacing);
+  const shapeOptions = fittedShapeOptions(options, spacing, chain, poses);
   return chain.map((kind, routeIndex) => {
     const pose = poses[routeIndex];
     const local = localHippodromePoints(kind, shapeOptions);
@@ -228,11 +212,7 @@ function normalizedPhase(value: number) {
   return ((value % 1) + 1) % 1;
 }
 
-/**
- * Sample the same physical route used for rendering and return its tangent heading.
- * Reversing direction MUST NOT change the physical placement: reverse only negates
- * the tangent vector at the same phase point.
- */
+/** Sample the rendered physical outline; reversing negates heading but not position. */
 export function pointAtSoPhase(points: readonly SoPoint[], phase: number, reverse = false): SoPointWithHeading {
   if (points.length < 2) throw new Error("SO geometry requires at least two points");
   const closed = [...points, points[0]];
@@ -266,7 +246,7 @@ export function soPhasesForRoute(kind: SoRouteKind) {
   return SO_DIRECT_PHASES[kind];
 }
 
-/** Gap between route centerlines. Positive means the two rendered routes do not touch. */
+/** Closest sampled points on two physical outlines (positive when they do not touch). */
 export function minimumRouteGap(first: SoRouteGeometry, second: SoRouteGeometry) {
   let minimum = Number.POSITIVE_INFINITY;
   for (const left of first.points) {
