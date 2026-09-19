@@ -16,6 +16,17 @@ const {
   soSmileChainPoses,
 } = await vite.ssrLoadModule('/lib/so-geometry.ts');
 
+function doublePhysicalAxes(points) {
+  const left = points[1];
+  const leftStart = points[0];
+  const right = points[3];
+  const rightStart = points[2];
+  return [
+    Math.atan2(left.y - leftStart.y, left.x - leftStart.x) * 180 / Math.PI,
+    Math.atan2(right.y - rightStart.y, right.x - rightStart.x) * 180 / Math.PI,
+  ];
+}
+
 test('GEO-01 uses exact 30 degree neighboring axes with a horizontal odd center', () => {
   const odd = soSmilePoses(5);
   assert.deepEqual(odd.map((pose) => pose.rotationDeg), [-60, -30, 0, 30, 60]);
@@ -41,49 +52,58 @@ test('SO mixed smile counts a Double as two consecutive 30 degree hippodrome uni
   assert.equal(poses[0].offsetX, -poses[2].offsetX);
   assert.equal(poses[0].offsetY, poses[2].offsetY);
 
-  // The rendered Double has internal axes at -15/+15 around its mean pose.
-  // Together with the neighboring Singles this yields -45,-15,+15,+45:
-  // exactly 30 degrees between every physical hippodrome in one concave smile.
+  const localDoubleAxes = doublePhysicalAxes(localHippodromePoints('double'));
+  assert.ok(Math.abs(localDoubleAxes[0] + 15) < 1e-9);
+  assert.ok(Math.abs(localDoubleAxes[1] - 15) < 1e-9);
   const physicalAxes = [
     poses[0].rotationDeg,
-    poses[1].rotationDeg - 15,
-    poses[1].rotationDeg + 15,
+    poses[1].rotationDeg + localDoubleAxes[0],
+    poses[1].rotationDeg + localDoubleAxes[1],
     poses[2].rotationDeg,
   ];
-  assert.deepEqual(physicalAxes, [-45, -15, 15, 45]);
   for (let index = 1; index < physicalAxes.length; index += 1) {
-    assert.equal(physicalAxes[index] - physicalAxes[index - 1], 30);
+    assert.ok(Math.abs(physicalAxes[index] - physicalAxes[index - 1] - 30) < 1e-9);
   }
+});
+
+test('SO Double and neighboring Singles form the SAME global concavity, not a local V', () => {
+  const local = localHippodromePoints('double', { radius: 22, doubleHalfLeg: 104 });
+  const localCenter = (local[1].y + local[2].y) / 2;
+  const leftCenter = (local[0].y + local.at(-19).y) / 2;
+  const rightCenter = (local[3].y + local[22].y) / 2;
+  assert.ok(leftCenter > localCenter, 'left Double end must be below center in screen coordinates');
+  assert.ok(rightCenter > localCenter, 'right Double end must be below center in screen coordinates');
+  const routes = buildSoSmileGeometry(['single', 'double', 'single'], {
+    centerX: 500, centerY: 180, spacing: 170, risePerStep: 22,
+    radius: 22, singleHalfLeg: 54, doubleHalfLeg: 104,
+  });
+  assert.equal(routes.length, 3);
+  assert.ok(routes[0].center.y > routes[1].center.y);
+  assert.ok(routes[2].center.y > routes[1].center.y);
+  assert.ok(minimumRouteGap(routes[0], routes[1]) > 1);
+  assert.ok(minimumRouteGap(routes[1], routes[2]) > 1);
 });
 
 test('GEO-01 neighboring routes keep a real gap and are not endpoint-connected', () => {
   const routes = buildSoSmileGeometry(['single', 'double', 'single'], {
-    centerX: 500,
-    centerY: 180,
-    spacing: 245,
-    risePerStep: 22,
-    radius: 22,
-    singleHalfLeg: 54,
-    doubleHalfLeg: 104,
+    centerX: 500, centerY: 180, spacing: 245, risePerStep: 22,
+    radius: 22, singleHalfLeg: 54, doubleHalfLeg: 104,
   });
   assert.ok(minimumRouteGap(routes[0], routes[1]) > 1);
   assert.ok(minimumRouteGap(routes[1], routes[2]) > 1);
 });
 
-test('SO Double is one continuous route with an exact 30 degree central break and no internal U-turn seam', () => {
+test('SO Double is one continuous route with an exact signed 30 degree central break and no internal U-turn seam', () => {
   assert.equal(DOUBLE_HIPPODROME_BREAK_DEG, 30);
   const single = localHippodromePoints('single');
   const double = localHippodromePoints('double');
   const singleX = Math.max(...single.map((point) => point.x)) - Math.min(...single.map((point) => point.x));
   const doubleX = Math.max(...double.map((point) => point.x)) - Math.min(...double.map((point) => point.x));
   assert.ok(doubleX > singleX * 1.5);
-
-  const firstLeg = { x: double[1].x - double[0].x, y: double[1].y - double[0].y };
-  const secondLeg = { x: double[3].x - double[2].x, y: double[3].y - double[2].y };
-  const firstHeading = Math.atan2(firstLeg.y, firstLeg.x) * 180 / Math.PI;
-  const secondHeading = Math.atan2(secondLeg.y, secondLeg.x) * 180 / Math.PI;
-  assert.ok(Math.abs(Math.abs(firstHeading - secondHeading) - 30) < 1e-9);
-
+  const [firstHeading, secondHeading] = doublePhysicalAxes(double);
+  assert.ok(Math.abs(firstHeading + 15) < 1e-9);
+  assert.ok(Math.abs(secondHeading - 15) < 1e-9);
+  assert.ok(Math.abs(secondHeading - firstHeading - 30) < 1e-9);
   const unique = new Set(double.map((point) => `${point.x.toFixed(5)}:${point.y.toFixed(5)}`));
   assert.equal(unique.size, double.length);
 });
@@ -93,7 +113,6 @@ test('GEO-02 route phase and tangent heading are independent of vehicle type and
   const storm = pointAtSoPhase(route.points, 0.25, false);
   const lightning = pointAtSoPhase(route.points, 0.25, false);
   assert.deepEqual(storm, lightning);
-
   const reversed = pointAtSoPhase(route.points, 0.25, true);
   assert.ok(Math.abs(reversed.x - storm.x) < 1e-9);
   assert.ok(Math.abs(reversed.y - storm.y) < 1e-9);
