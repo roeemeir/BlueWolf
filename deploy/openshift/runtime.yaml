@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bluewolf-runtime
+  labels:
+    app.kubernetes.io/name: bluewolf-runtime
+    app.kubernetes.io/part-of: bluewolf
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bluewolf-runtime
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bluewolf-runtime
+        app.kubernetes.io/part-of: bluewolf
+    spec:
+      containers:
+        - name: runtime
+          # Replace this image with the image produced from deploy/runtime/Dockerfile.
+          image: bluewolf-runtime:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: BLUEWOLF_RUNTIME_HOST
+              value: "0.0.0.0"
+            - name: BLUEWOLF_RUNTIME_PORT
+              value: "8080"
+            - name: BLUEWOLF_RUNTIME_STALE_SECONDS
+              value: "15"
+            - name: BLUEWOLF_RUNTIME_EXPIRE_SECONDS
+              value: "60"
+            # The joined navigation archive is deployment-owned and resides on
+            # the same persistent volume as restart state.  Retention bounds
+            # both latest rows and revision history; tune explicitly if the
+            # target installation requires a longer forensic horizon.
+            - name: BLUEWOLF_SAMPLE_ARCHIVE_PATH
+              value: "/var/lib/bluewolf/joined-samples.sqlite3"
+            - name: BLUEWOLF_ARCHIVE_RETENTION_DAYS
+              value: "30"
+            - name: BLUEWOLF_ARCHIVE_PRUNE_INTERVAL_SECONDS
+              value: "3600"
+            # The mounted JSON is deployment-owned. Start from
+            # deploy/runtime/operational-config.example.json and replace all
+            # example server, vehicle, template and Influx metadata explicitly.
+            - name: BLUEWOLF_OPERATIONAL_CONFIG
+              value: "/etc/bluewolf/runtime.json"
+            # Persistence is deployment-specific, so the path is supplied here
+            # instead of baking a Linux-only path into the portable JSON example.
+            # If persistence.path is also present in runtime.json it must resolve
+            # to this same file or startup fails closed.
+            - name: BLUEWOLF_OPERATIONAL_STATE_PATH
+              value: "/var/lib/bluewolf/runtime-state.json"
+            - name: BLUEWOLF_CORE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bluewolf-runtime-secrets
+                  key: core-api-token
+            - name: BLUEWOLF_INFLUX_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: bluewolf-runtime-secrets
+                  key: influx-token
+          volumeMounts:
+            - name: operational-config
+              mountPath: /etc/bluewolf
+              readOnly: true
+            - name: operational-state
+              mountPath: /var/lib/bluewolf
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+      volumes:
+        - name: operational-config
+          configMap:
+            name: bluewolf-runtime-config
+            items:
+              - key: runtime.json
+                path: runtime.json
+        # Provision this PVC according to the target cluster's storage policy.
+        # The repository intentionally does not guess a StorageClass or capacity.
+        - name: operational-state
+          persistentVolumeClaim:
+            claimName: bluewolf-runtime-state
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bluewolf-runtime
+  labels:
+    app.kubernetes.io/name: bluewolf-runtime
+    app.kubernetes.io/part-of: bluewolf
+spec:
+  selector:
+    app.kubernetes.io/name: bluewolf-runtime
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

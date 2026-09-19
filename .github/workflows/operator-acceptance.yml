@@ -1,0 +1,49 @@
+name: Blue Wolf Operator Acceptance
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: bluewolf-operator-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  operator-acceptance:
+    name: OP-01..05 + BW-UI-008 + BW-SYNC-013
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - name: Install Python core for BW-UI-008 lifecycle contract
+        working-directory: core
+        run: python -m pip install -e .
+      - name: Verify BW-UI-008 context event -> low-score alert -> runtime contract
+        working-directory: core/tests
+        run: >-
+          python -m unittest -v
+          test_live_runtime_contract.LiveRuntimeContractTests.test_bw_ui_008_context_change_opens_event_then_low_score_alert_reaches_runtime_contract
+      - name: Run operator acceptance regressions
+        run: |
+          node --test \
+            tests/op01-arena-presentation.test.mjs \
+            tests/op02-map-layers.test.mjs \
+            tests/operator-speed-ui.test.mjs \
+            tests/speed-units.test.mjs \
+            tests/op04-template-recompute-ui.test.mjs \
+            tests/op04-shared-result.test.mjs \
+            tests/op05-timeline-visibility.test.mjs \
+            tests/op05-timeline-window.test.mjs \
+            tests/operator-alert-mute.test.mjs \
+            tests/operator-event-alert-linkage.test.mjs \
+            tests/display-score-smoothing.test.mjs \
+            tests/operator-display-smoothing-ui.test.mjs
+      - name: Type-check operator surfaces
+        run: npx tsc --noEmit

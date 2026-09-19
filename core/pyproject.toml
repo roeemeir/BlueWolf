@@ -10,7 +10,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "Proprietary" }
 authors = [{ name = "Blue Wolf" }]
-dependencies = []
+dependencies = [
+  "numpy>=2,<3",
+  "shapely>=2,<3",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -18,6 +21,19 @@ dev = [
   "ruff>=0.12,<1",
   "mypy>=1.16,<2",
 ]
+influx = [
+  "influxdb-client>=1.50,<2",
+]
+service = [
+  "uvicorn>=0.35,<1",
+]
+operational = [
+  "influxdb-client>=1.50,<2",
+  "uvicorn>=0.35,<1",
+]
+
+[project.scripts]
+bluewolf-runtime = "bluewolf_runtime_adapter.qa_service:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -41,4 +57,3 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 strict = true
 packages = ["bluewolf_core"]
-

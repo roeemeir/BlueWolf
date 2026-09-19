@@ -1,0 +1,160 @@
+from __future__ import annotations
+
+import unittest
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from bluewolf_core.models import VehicleSample
+from bluewolf_runtime_adapter.position_enrichment import (
+    PositionEnrichedLiveRuntimeProducer,
+    enrich_runtime_snapshot_positions,
+)
+from bluewolf_runtime_adapter.producer import LiveRuntimeProducer, RuntimePublicationResult
+
+
+START = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+
+
+def _sample(
+    when: datetime,
+    *,
+    latitude: float,
+    longitude: float,
+    east: float | None = None,
+    north: float | None = None,
+) -> VehicleSample:
+    return VehicleSample(
+        sample_time_utc=when,
+        server_id=1,
+        vehicle_number=10,
+        vehicle_identifier=101,
+        active=True,
+        latitude_deg=latitude,
+        longitude_deg=longitude,
+        altitude_m=None,
+        velocity_north_mps=north,
+        velocity_east_mps=east,
+        reliability=1.0,
+        field_quality={},
+    )
+
+
+def _snapshot(observed_at: datetime):
+    group = {
+        "key": "so",
+        "id": "g1",
+        "family": "SO",
+        "observedAt": observed_at.isoformat().replace("+00:00", "Z"),
+        "members": [{"id": 101}],
+    }
+    return {
+        "schemaVersion": "bluewolf.live-runtime.v1",
+        "serverId": "1",
+        "observedAt": observed_at.isoformat().replace("+00:00", "Z"),
+        "groups": {"so": group},
+        "groupList": [group],
+    }
+
+
+class RuntimePositionEnrichmentTests(unittest.TestCase):
+    def test_uses_exact_group_timestamp_heading_and_ground_speed(self) -> None:
+        snapshot = _snapshot(START)
+        enriched = enrich_runtime_snapshot_positions(
+            snapshot,
+            (
+                _sample(START, latitude=12.0, longitude=34.0, east=3.0, north=4.0),
+                _sample(
+                    START + timedelta(seconds=5),
+                    latitude=13.0,
+                    longitude=35.0,
+                    east=0.0,
+                    north=1.0,
+                ),
+            ),
+        )
+        member = enriched["groupList"][0]["members"][0]
+        self.assertEqual(member["latitude"], 12.0)
+        self.assertEqual(member["longitude"], 34.0)
+        self.assertAlmostEqual(member["headingDeg"], 36.86989764584402)
+        self.assertAlmostEqual(member["speedMps"], 5.0)
+        legacy = enriched["groups"]["so"]["members"][0]
+        self.assertEqual(legacy["latitude"], 12.0)
+        self.assertAlmostEqual(legacy["speedMps"], 5.0)
+
+    def test_does_not_backfill_from_newer_or_older_sample(self) -> None:
+        snapshot = _snapshot(START)
+        enriched = enrich_runtime_snapshot_positions(
+            snapshot,
+            (
+                _sample(START - timedelta(seconds=1), latitude=11.0, longitude=33.0),
+                _sample(START + timedelta(seconds=1), latitude=13.0, longitude=35.0),
+            ),
+        )
+        member = enriched["groupList"][0]["members"][0]
+        self.assertNotIn("latitude", member)
+        self.assertNotIn("longitude", member)
+        self.assertNotIn("headingDeg", member)
+        self.assertNotIn("speedMps", member)
+
+    def test_zero_speed_omits_heading_but_keeps_zero_speed_and_position(self) -> None:
+        snapshot = _snapshot(START)
+        enriched = enrich_runtime_snapshot_positions(
+            snapshot,
+            (_sample(START, latitude=12.0, longitude=34.0, east=0.0, north=0.0),),
+        )
+        member = enriched["groupList"][0]["members"][0]
+        self.assertEqual(member["latitude"], 12.0)
+        self.assertEqual(member["longitude"], 34.0)
+        self.assertNotIn("headingDeg", member)
+        self.assertEqual(member["speedMps"], 0.0)
+
+    def test_missing_velocity_component_does_not_invent_speed(self) -> None:
+        snapshot = _snapshot(START)
+        enriched = enrich_runtime_snapshot_positions(
+            snapshot,
+            (_sample(START, latitude=12.0, longitude=34.0, east=1.0, north=None),),
+        )
+        member = enriched["groupList"][0]["members"][0]
+        self.assertNotIn("headingDeg", member)
+        self.assertNotIn("speedMps", member)
+
+    def test_position_producer_commits_once_only_after_enrichment(self) -> None:
+        class RecordingStore:
+            def __init__(self) -> None:
+                self.published = []
+
+            def publish(self, snapshot) -> None:
+                self.published.append(snapshot)
+
+        producer = object.__new__(PositionEnrichedLiveRuntimeProducer)
+        real_store = RecordingStore()
+        producer.store = real_store
+        snapshot = _snapshot(START)
+        sample = _sample(START, latitude=12.0, longitude=34.0, east=1.0, north=0.0)
+        poll = SimpleNamespace(samples=(sample,))
+
+        def parent_publish(instance, supplied_poll):
+            self.assertIs(instance, producer)
+            self.assertIs(supplied_poll, poll)
+            # Simulate the parent producer's direct commit. It must be routed
+            # away from the real store while enrichment is still pending.
+            instance.store.publish(snapshot)
+            return RuntimePublicationResult(snapshot, ("g1",), {})
+
+        with patch.object(LiveRuntimeProducer, "publish_poll", autospec=True, side_effect=parent_publish):
+            result = producer.publish_poll(poll)
+
+        self.assertIs(producer.store, real_store)
+        self.assertEqual(len(real_store.published), 1)
+        committed = real_store.published[0]
+        member = committed["groupList"][0]["members"][0]
+        self.assertEqual(member["latitude"], 12.0)
+        self.assertEqual(member["longitude"], 34.0)
+        self.assertAlmostEqual(member["headingDeg"], 90.0)
+        self.assertAlmostEqual(member["speedMps"], 1.0)
+        self.assertIs(result.snapshot, committed)
+
+
+if __name__ == "__main__":
+    unittest.main()

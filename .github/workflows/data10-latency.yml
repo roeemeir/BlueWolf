@@ -1,0 +1,71 @@
+name: Blue Wolf BW-DATA-010 Latency
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: bw-data10-latency-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  active-update-latency:
+    name: Real InfluxDB2-to-HTTP <=10s latency budget
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BLUEWOLF_LATENCY_INFLUX_URL: http://127.0.0.1:18086
+      BLUEWOLF_LATENCY_INFLUX_ORG: bluewolf
+      BLUEWOLF_LATENCY_INFLUX_BUCKET: navigation
+      BLUEWOLF_LATENCY_INFLUX_TOKEN: bluewolf-ci-latency-token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python core/runtime
+        working-directory: core
+        run: python -m pip install -e '.[service,influx]'
+
+      - name: Verify deterministic Core-to-HTTP scheduling budget
+        working-directory: core/tests
+        run: python -m unittest -v test_latency_budget
+
+      - name: Start real InfluxDB2
+        run: |
+          docker run -d --name bluewolf-latency-influx \
+            -p 18086:8086 \
+            -e DOCKER_INFLUXDB_INIT_MODE=setup \
+            -e DOCKER_INFLUXDB_INIT_USERNAME=bluewolf \
+            -e DOCKER_INFLUXDB_INIT_PASSWORD=bluewolf-ci-password \
+            -e DOCKER_INFLUXDB_INIT_ORG=bluewolf \
+            -e DOCKER_INFLUXDB_INIT_BUCKET=navigation \
+            -e DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=bluewolf-ci-latency-token \
+            influxdb:2.7
+          ready=0
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --show-error http://127.0.0.1:18086/health >/tmp/influx-health.json; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != "1" ]; then
+            docker logs bluewolf-latency-influx
+            exit 1
+          fi
+          cat /tmp/influx-health.json
+
+      - name: Verify real InfluxDB2 -> join -> Core -> RuntimeSnapshot -> HTTP budget
+        working-directory: core/tests
+        run: python -m unittest -v test_latency_influx_e2e
+
+      - name: Dump Influx logs on failure
+        if: failure()
+        run: docker logs bluewolf-latency-influx || true
+
+      - name: Stop real InfluxDB2
+        if: always()
+        run: docker rm -f bluewolf-latency-influx >/dev/null 2>&1 || true

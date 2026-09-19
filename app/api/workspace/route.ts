@@ -1,11 +1,17 @@
 import { desc, eq, sql } from "drizzle-orm";
 
-import { getDb } from "@/db";
 import { auditEntries, workspaces } from "@/db/schema";
+import { DEFAULT_WORKSPACE, type InfluxSettings, type SyncTemplate, type VehicleType } from "@/lib/bluewolf";
+import { prepareTelAvivDemoWorkspace } from "@/lib/default-map-profile-server";
+import { readLocalWorkspace, writeLocalWorkspace } from "@/lib/sqlite-workspace";
+import { normalizeAndValidateWorkspaceState } from "@/lib/workspace-validation";
+
+const localStorage = () => process.env.BLUEWOLF_STORAGE === "sqlite";
 
 const workspacePattern = /^[a-zA-Z0-9_-]{8,80}$/;
 
 function getWorkspaceId(request: Request) {
+  if (localStorage()) return "installation";
   const value = request.headers.get("x-bluewolf-workspace") ?? "";
   return workspacePattern.test(value) ? value : null;
 }
@@ -18,11 +24,42 @@ function errorMessage(error: unknown) {
   return message;
 }
 
+function influxFromState(value: unknown): InfluxSettings {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !("influx" in value)) throw new Error("influx settings are missing from workspace");
+  return (value as { influx: InfluxSettings }).influx;
+}
+
+function siRuntimeFromState(value: unknown): { templates: SyncTemplate[]; vehicleTypes: VehicleType[] } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("workspace state is missing");
+  const row = value as { templates?: unknown; vehicleTypes?: unknown };
+  if (!Array.isArray(row.templates)) throw new Error("templates are missing from workspace");
+  if (!Array.isArray(row.vehicleTypes)) throw new Error("vehicle types are missing from workspace");
+  return { templates: row.templates as SyncTemplate[], vehicleTypes: row.vehicleTypes as VehicleType[] };
+}
+
+async function preparedLocalWorkspace(workspaceId: string) {
+  const current = await readLocalWorkspace(workspaceId);
+  // A GET must never create a user revision. Existing optimistic revisions are
+  // user-owned, and an empty installation can expose the out-of-box Tel Aviv
+  // WMTS profile without committing it. The first real PUT therefore remains
+  // revision 1 and browser/WKT/restart contracts stay deterministic.
+  const source = current.state ?? DEFAULT_WORKSPACE;
+  const prepared = await prepareTelAvivDemoWorkspace(source);
+  const normalized = normalizeAndValidateWorkspaceState(prepared);
+  return {
+    ...current,
+    state: normalized,
+    revision: Number(current.revision ?? 0),
+  };
+}
+
 export async function GET(request: Request) {
   const workspaceId = getWorkspaceId(request);
   if (!workspaceId) return Response.json({ error: "workspace id is required" }, { status: 400 });
 
   try {
+    if (localStorage()) return Response.json(await preparedLocalWorkspace(workspaceId));
+    const { getDb } = await import("@/db");
     const db = getDb();
     const [row] = await db.select().from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
     const logs = await db.select().from(auditEntries).where(eq(auditEntries.workspaceId, workspaceId)).orderBy(desc(auditEntries.id)).limit(20);
@@ -37,10 +74,34 @@ export async function PUT(request: Request) {
   if (!workspaceId) return Response.json({ error: "workspace id is required" }, { status: 400 });
 
   try {
-    const body = await request.json() as { state?: unknown; category?: string; action?: string; detail?: string };
-    const state = JSON.stringify(body.state ?? {});
+    const body = await request.json() as { state?: unknown; category?: string; action?: string; detail?: string; expectedRevision?: number };
+    const normalizedState = normalizeAndValidateWorkspaceState(body.state ?? {});
+    const state = JSON.stringify(normalizedState);
     if (state.length > 750_000) return Response.json({ error: "workspace state is too large" }, { status: 413 });
 
+    if (localStorage()) {
+      let runtimeSync = null;
+      const category = body.category ?? "";
+      if (category === "influx") {
+        try {
+          const { syncInfluxToOperationalConfig } = await import("@/lib/influx-runtime-sync");
+          runtimeSync = await syncInfluxToOperationalConfig(influxFromState(normalizedState));
+        } catch (error) {
+          return Response.json({ error: `Influx runtime config sync failed: ${errorMessage(error)}` }, { status: 502 });
+        }
+      } else if (category === "templates" || category === "vehicle-ranges") {
+        try {
+          const { syncSiTemplatesToOperationalConfig } = await import("@/lib/si-runtime-sync");
+          const siRuntime = siRuntimeFromState(normalizedState);
+          runtimeSync = await syncSiTemplatesToOperationalConfig(siRuntime.templates, siRuntime.vehicleTypes);
+        } catch (error) {
+          return Response.json({ error: `SI runtime config sync failed: ${errorMessage(error)}` }, { status: 502 });
+        }
+      }
+      const result = await writeLocalWorkspace(workspaceId, state, (body.category ?? "configuration").slice(0,40), (body.action ?? "save").slice(0,80), (body.detail ?? "").slice(0,500), body.expectedRevision);
+      return Response.json({ ...result, runtimeSync }, { status: result.conflict ? 409 : 200 });
+    }
+    const { getDb } = await import("@/db");
     const db = getDb();
     const current = await db.select({ revision: workspaces.revision }).from(workspaces).where(eq(workspaces.id, workspaceId)).limit(1);
     const nextRevision = (current[0]?.revision ?? 0) + 1;
@@ -56,8 +117,8 @@ export async function PUT(request: Request) {
         detail: (body.detail ?? "").slice(0, 500),
       }),
     ]);
-    return Response.json({ ok: true, revision: nextRevision });
+    return Response.json({ ok: true, revision: nextRevision, runtimeSync: null });
   } catch (error) {
-    return Response.json({ error: errorMessage(error) }, { status: 500 });
+    return Response.json({ error: errorMessage(error) }, { status: 400 });
   }
 }
