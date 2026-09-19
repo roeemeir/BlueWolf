@@ -1,4 +1,5 @@
 import type { LiveRuntimeGroup, LiveRuntimeSnapshot } from "./live-runtime";
+import { operatorAlertWording } from "./operational-alert-he";
 
 export type LiveNotification = {
   key: string;
@@ -7,6 +8,10 @@ export type LiveNotification = {
   alertId: string;
   title: string;
   detail: string;
+  /** Exact Core/SIM input is preserved for diagnostics and evidence audit. */
+  sourceTitle: string;
+  sourceDetail: string;
+  recognized: boolean;
   severity: "warning" | "critical";
   activeSince: string | null;
   sourceLabel: "SIM" | "CORE";
@@ -30,13 +35,17 @@ export function currentRuntimeNotifications(snapshot: LiveRuntimeSnapshot | null
     const key = `${snapshot.serverId}:${group.id}:${alert.id}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    const wording = operatorAlertWording(alert.title, alert.detail);
     notifications.push({
       key,
       serverId: snapshot.serverId,
       groupId: group.id,
       alertId: alert.id,
-      title: alert.title,
-      detail: alert.detail,
+      title: wording.title,
+      detail: wording.detail,
+      sourceTitle: wording.sourceTitle,
+      sourceDetail: wording.sourceDetail,
+      recognized: wording.recognized,
       severity: alert.severity,
       activeSince: alert.activeSince ?? null,
       sourceLabel: snapshot.source.kind === "simulation" ? "SIM" : "CORE",
