@@ -5,15 +5,22 @@ import test from 'node:test';
 
 const root = process.cwd();
 
-test('developer mode is tabbed and template authoring is split into SI and SO tabs', async () => {
+test('developer mode is tabbed with independent settings, QA, score and SI/SO authoring', async () => {
   const source = await readFile(path.join(root, 'components/bluewolf/developer-governance-workbench.tsx'), 'utf8');
+  const general = await readFile(path.join(root, 'components/bluewolf/general-settings-workbench.tsx'), 'utf8');
 
   assert.match(source, /className="developer-primary-tabs"/);
   assert.match(source, /aria-label="בחירת אזור במצב מפתחים"/);
-  for (const value of ['templates', 'routes', 'gt', 'vehicles', 'sources', 'system']) {
+  for (const value of ['templates', 'routes', 'gt', 'sources', 'score', 'settings', 'qa']) {
     assert.match(source, new RegExp(`TabsTrigger value="${value}"`));
     assert.match(source, new RegExp(`TabsContent value="${value}"`));
   }
+  assert.doesNotMatch(source, /TabsTrigger value="vehicles"/);
+  assert.doesNotMatch(source, /TabsTrigger value="system"/);
+  assert.match(source, /TabsContent value="settings"><GeneralSettingsWorkbench/);
+  assert.match(general, /<VehicleRangeWorkbench/);
+  assert.match(source, /TabsContent value="qa"><QaTruthWorkbench/);
+  assert.match(source, /TabsContent value="score"><div className="governed-score-only"><DeveloperView/);
 
   assert.match(source, /className="developer-template-tabs"/);
   assert.match(source, /TabsTrigger value="si"/);
