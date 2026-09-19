@@ -16,6 +16,12 @@ function normalizedAngle(angleDeg: number) {
   return ((angleDeg % 360) + 360) % 360;
 }
 
+/** Physical undirected angular separation, not a signed phase offset. */
+export function siAngularSeparation(firstDeg: number, secondDeg: number) {
+  const delta = normalizedAngle(secondDeg - firstDeg);
+  return Math.min(delta, 360 - delta);
+}
+
 export function placeSiVehicle(
   positions: readonly SiPosition[],
   vehicleType: Pick<VehicleType, "id" | "siRoles">,
@@ -37,11 +43,12 @@ export function removeSiVehicle(positions: readonly SiPosition[], index: number)
   return positions.filter((_, itemIndex) => itemIndex !== index);
 }
 
+/** Pair rules are a deterministic projection of the actual marked coordinates. */
 export function deriveSiPairRules(positions: readonly SiPosition[]): SiPairRule[] {
   return positions.flatMap((first, firstIndex) => positions.slice(firstIndex + 1).map((second, offset) => ({
     first: firstIndex,
     second: firstIndex + offset + 1,
-    angle: normalizedAngle(second.angleDeg - first.angleDeg),
+    angle: siAngularSeparation(first.angleDeg, second.angleDeg),
   })));
 }
 
