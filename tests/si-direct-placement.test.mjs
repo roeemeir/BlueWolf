@@ -9,6 +9,7 @@ after(async () => { await vite.close(); });
 const {
   placeSiVehicle,
   deriveSiPairRules,
+  siAngularSeparation,
   validateSiPositions,
 } = await vite.ssrLoadModule('/lib/si-direct-placement.ts');
 const { canonicalTemplateKey } = await vite.ssrLoadModule('/lib/bluewolf.ts');
@@ -33,7 +34,7 @@ test('SI direct placement enforces ring law, 30 degree resolution and occupied s
   assert.deepEqual(result, { ok: false, reason: 'slot-occupied' });
 });
 
-test('SI pair angles are derived from positions rather than entered independently', () => {
+test('SI pair angles are the actual shortest angular separation between positions', () => {
   const positions = [
     { typeId: 'inner', ring: 'inner', angleDeg: 0 },
     { typeId: 'middle', ring: 'middle', angleDeg: 120 },
@@ -41,9 +42,20 @@ test('SI pair angles are derived from positions rather than entered independentl
   ];
   assert.deepEqual(deriveSiPairRules(positions), [
     { first: 0, second: 1, angle: 120 },
-    { first: 0, second: 2, angle: 240 },
+    { first: 0, second: 2, angle: 120 },
     { first: 1, second: 2, angle: 120 },
   ]);
+  assert.equal(siAngularSeparation(0, 240), 120);
+  assert.equal(validateSiPositions(positions, vehicleTypes), null);
+});
+
+test('SI regression: same bearing on separate rings is 0 degrees, never a fabricated 120-degree relation', () => {
+  const positions = [
+    { typeId: 'inner', ring: 'inner', angleDeg: 0 },
+    { typeId: 'middle', ring: 'middle', angleDeg: 120 },
+    { typeId: 'outer', ring: 'outer', angleDeg: 120 },
+  ];
+  assert.deepEqual(deriveSiPairRules(positions).map((pair) => pair.angle), [120, 120, 0]);
   assert.equal(validateSiPositions(positions, vehicleTypes), null);
 });
 
