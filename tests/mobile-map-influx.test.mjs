@@ -15,7 +15,7 @@ for (const [name, source] of [["SIM", simulation], ["Core", core]]) {
       assert.ok(source.includes(`>${label}</button>`), `${name}: missing ${label}`);
     }
     for (const layer of ["observed-trace", "score-trace"]) assert.ok(source.includes(`className="${layer}"`), `${name}: missing ${layer} SVG layer`);
-    assert.match(source, /onClick=\{\(\) => setObservedTrace|onClick=\{\(\) => setObservedLayer/);
+    assert.match(source, /onClick=\{\(\) => set(?:ShowObservedTrace|ObservedLayer)/);
   });
 }
 
