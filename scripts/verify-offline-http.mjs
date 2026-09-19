@@ -41,7 +41,16 @@ async function start() {
 async function read() {
   const response = await fetch(origin + "/api/workspace");
   assert.equal(response.status, 200);
-  return response.json();
+  const payload = await response.json();
+  // GET intentionally enriches an old workspace with a usable WMTS base layer.
+  // This presentation migration must not turn the user-owned revision or WKT
+  // state into a different persistence version. Test both independently.
+  assert.ok(payload.state.mapServers.some(source => source.id === "omniscale-demo" && source.enabled));
+  assert.equal(payload.state.settings.defaultMap, "omniscale-demo");
+  return payload;
+}
+function persistedFixtureFields(state) {
+  return { routes: state.routes, templates: state.templates, gtSegments: state.gtSegments };
 }
 async function write(state, revision) {
   return fetch(origin + "/api/workspace", {
@@ -87,7 +96,7 @@ try {
   const saved = await write(state, 0);
   assert.equal(saved.status, 200);
   assert.equal((await saved.json()).revision, 1);
-  assert.deepEqual((await read()).state, state);
+  assert.deepEqual(persistedFixtureFields((await read()).state), state);
   const afterFirstSave = await versions();
   assert.equal(afterFirstSave.schemaVersion, "bluewolf.workspace-versions.v1");
   assert.deepEqual(afterFirstSave.versions.map(row => row.revision), [1]);
@@ -97,7 +106,7 @@ try {
   await stop();
   await start();
   const restarted = await read();
-  assert.deepEqual(restarted.state, state);
+  assert.deepEqual(persistedFixtureFields(restarted.state), state);
   assert.equal(restarted.revision, 1);
   assert.equal(restarted.logs.length, 1, "Rejected save must not append an audit record");
 
@@ -113,17 +122,17 @@ try {
   assert.equal(recoveredPayload.revision, 3);
   assert.equal(recoveredPayload.restoredFrom, 1);
   const recoveredState = await read();
-  assert.deepEqual(recoveredState.state, state);
+  assert.deepEqual(persistedFixtureFields(recoveredState.state), state);
   assert.equal(recoveredState.revision, 3);
   assert.deepEqual((await versions()).versions.map(row => row.revision), [3, 2, 1]);
 
   await stop();
   await start();
   const recoveredAfterRestart = await read();
-  assert.deepEqual(recoveredAfterRestart.state, state);
+  assert.deepEqual(persistedFixtureFields(recoveredAfterRestart.state), state);
   assert.equal(recoveredAfterRestart.revision, 3);
   assert.equal(recoveredAfterRestart.logs[0].category, "recovery");
-  console.log("PASS: offline local assets/fonts, SQLite save/version history, stale-write rejection, restore and process restart persistence");
+  console.log("PASS: offline local assets/fonts, WMTS default, SQLite save/version history, stale-write rejection, restore and process restart persistence");
 } catch (error) {
   console.error(output);
   throw error;
