@@ -21,6 +21,12 @@ export function validateVehicleIdRanges(vehicleTypes: Pick<VehicleType, "id" | "
     if (!Number.isFinite(type.workSpeedKmh) || type.workSpeedKmh <= 0) {
       throw new Error(`מהירות העבודה של ${type.name} חייבת להיות חיובית`);
     }
+    // The single-range legacy aliases remain persisted alongside idRanges.
+    // Reject malformed aliases as well: a valid new range must not conceal
+    // a corrupt legacy interval that another consumer could still read.
+    if (!Number.isInteger(type.minId) || !Number.isInteger(type.maxId) || type.minId < 0 || type.maxId < type.minId) {
+      throw new Error(`טווח המזהים של ${type.name} אינו חוקי`);
+    }
     const configured = vehicleTypeRanges(type);
     if (!configured.length) throw new Error(`ל-${type.name} חייב להיות לפחות טווח מזהים אחד`);
     return configured.map((range, rangeIndex) => {
