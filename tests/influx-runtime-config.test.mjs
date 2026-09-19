@@ -122,8 +122,9 @@ test("IN-01 active developer surface exposes all three join names and special va
   assert.match(ui, /sourceValue/);
   assert.match(ui, /mappedValue/);
   assert.match(ui, /special map/);
-  assert.match(governance, /<InfluxGovernanceWorkbench \/>/);
-  assert.match(governance, /button:nth-child\(4\)/);
+  assert.match(governance, /<TabsTrigger value="sources">/);
+  assert.match(governance, /<TabsContent value="sources">.*<InfluxGovernanceWorkbench \/>/);
+  assert.doesNotMatch(governance, /button:nth-child\(4\)/);
 });
 
 test("IN-01 workspace persistence is wired to server-only runtime sync and reports application truthfully", async () => {
