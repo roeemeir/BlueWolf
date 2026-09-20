@@ -50,17 +50,22 @@ function downloadPdf(bytes: Uint8Array, generatedAt: string) {
 
 export function InvestigationReportPanel({ server }: { server: string }) {
   const { state } = useWorkspace();
-  const [from, setFrom] = useState(""); const [to, setTo] = useState(""); const [report, setReport] = useState<ReportState>({ kind: "idle" });
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [report, setReport] = useState<ReportState>({ kind: "idle" });
   const [rangeReady, setRangeReady] = useState(false);
   const edits = state.investigationEdits as Record<string, InvestigationEdit>;
 
-  // Initialize on the client to avoid server/client clock hydration mismatch.
-  // This only changes the selected range; it never truncates the stored archive.
+  // Client-only clock initialization prevents SSR timezone hydration drift.
+  // React's effect callback must not synchronously set component state.
   useEffect(() => {
-    const now = Date.now();
-    setFrom(localDateTimeInput(now - 24 * 60 * 60 * 1000));
-    setTo(localDateTimeInput(now));
-    setRangeReady(true);
+    const timer = window.setTimeout(() => {
+      const now = Date.now();
+      setFrom(localDateTimeInput(now - 24 * 60 * 60 * 1000));
+      setTo(localDateTimeInput(now));
+      setRangeReady(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const selectFullArchive = () => { setFrom(""); setTo(""); setReport({ kind: "idle" }); };
