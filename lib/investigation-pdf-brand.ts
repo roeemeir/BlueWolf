@@ -1,4 +1,5 @@
 import type { InvestigationPdfReport } from "@/lib/investigation-pdf";
+import { OFFLINE_FAVICON_SVG } from "@/lib/investigation-pdf-logo-offline";
 
 const WIDTH = 1190;
 const HEIGHT = 1684;
@@ -27,15 +28,39 @@ function shortDate(value: string | null | undefined): string {
   return new Intl.DateTimeFormat("he-IL", { dateStyle: "medium", timeStyle: "short", hour12: false }).format(parsed);
 }
 
-/** Load the exact same /favicon.svg displayed by components/bluewolf/wolf-logo.tsx. */
-async function loadAppLogo(): Promise<HTMLImageElement | null> {
-  if (typeof Image === "undefined") return null;
+/** Never let a stalled icon request hold the investigation PDF indefinitely. */
+async function loadImageSource(src: string, maxWaitMs: number): Promise<HTMLImageElement | null> {
   return await new Promise((resolve) => {
     const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => resolve(null);
-    image.src = "/favicon.svg";
+    let settled = false;
+    const complete = (value: HTMLImageElement | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      image.onload = null;
+      image.onerror = null;
+      resolve(value);
+    };
+    const timer = setTimeout(() => complete(null), maxWaitMs);
+    image.onload = () => complete(image);
+    image.onerror = () => complete(null);
+    try { image.src = src; } catch { complete(null); }
   });
+}
+
+/** Prefer the live app favicon; fall back to an exact bundled copy offline. */
+async function loadAppLogo(): Promise<HTMLImageElement | null> {
+  if (typeof Image === "undefined") {
+    console.warn("Blue Wolf PDF: browser Image unavailable; rendering a text-only cover");
+    return null;
+  }
+  const primary = await loadImageSource("/favicon.svg", 2500);
+  if (primary) return primary;
+  console.warn("Blue Wolf PDF: /favicon.svg unavailable; trying the bundled offline copy");
+  const inline = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(OFFLINE_FAVICON_SVG)}`;
+  const fallback = await loadImageSource(inline, 2500);
+  if (!fallback) console.warn("Blue Wolf PDF: embedded favicon failed; rendering a text-only cover");
+  return fallback;
 }
 
 function roundedPanel(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, fill: string, stroke?: string) {
@@ -67,6 +92,7 @@ function toJpeg(canvas: HTMLCanvasElement): BrandedPdfPage {
 /** A browser-rendered, RTL cover with no inferred event or score evidence. */
 export async function buildInvestigationBrandedCover(report: InvestigationPdfReport): Promise<BrandedPdfPage> {
   if (typeof document === "undefined") throw new Error("Blue Wolf PDF cover requires browser rendering");
+  if ("fonts" in document) await document.fonts.ready;
   const canvas = document.createElement("canvas");
   canvas.width = WIDTH;
   canvas.height = HEIGHT;
@@ -85,8 +111,10 @@ export async function buildInvestigationBrandedCover(report: InvestigationPdfRep
   ctx.fill();
   ctx.restore();
   const logo = await loadAppLogo();
-  if (logo) ctx.drawImage(logo, WIDTH - 245, 132, 142, 142);
-  else label(ctx, "זאב כחול", WIDTH - 104, 194, 26, "#ffffff", 700);
+  if (logo) {
+    try { ctx.drawImage(logo, WIDTH - 245, 132, 142, 142); }
+    catch (error) { console.warn("Blue Wolf PDF: logo could not be drawn; text branding remains", error); }
+  }
   label(ctx, "זאב כחול", WIDTH - 280, 198, 52, "#ffffff", 700);
   label(ctx, "דוח תחקור אירועים", WIDTH - 105, 342, 48, "#ffffff", 700);
   label(ctx, "ניתוח הנדסי · נתוני האירועים בטווח שנבחר", WIDTH - 105, 397, 25, "#cceaff", 400);
