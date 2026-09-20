@@ -2,8 +2,8 @@ import type { EventRecomputeResult } from "./investigation-contract";
 
 /** An upstream HTTP-200 result is not evidence that it belongs to the selected
  * server/event/template. Fail closed rather than presenting another group as
- * the requested investigation. This helper must live outside app/**/route.ts:
- * Next.js route modules only permit supported handler/configuration exports. */
+ * the requested investigation. This helper must live outside a Next.js route
+ * handler module, which only permits supported handler/configuration exports. */
 export function verifyRecomputeResponseIdentity(request: Record<string, unknown>, result: EventRecomputeResult): string | null {
   if (typeof request.eventId !== "string" || !request.eventId.trim()) return "recomputation request is missing eventId";
   if (typeof request.templateId !== "string" || !request.templateId.trim()) return "recomputation request is missing templateId";
