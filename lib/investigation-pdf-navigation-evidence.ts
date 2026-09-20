@@ -14,6 +14,11 @@ export type MemberNavigationEvidence = {
   last: ObservedPosition;
 };
 
+/** Navigation samples are expected every 1–2 seconds; larger gaps must never
+ * be joined by a visually invented straight track. Match the map trace's
+ * conservative 10-second continuity guard, without synthesizing a position. */
+export const PDF_NAVIGATION_MAX_GAP_MS = 10_000;
+
 function validPosition(latitude: number | null, longitude: number | null): boolean {
   return latitude !== null && longitude !== null
     && Number.isFinite(latitude) && Number.isFinite(longitude)
@@ -21,10 +26,10 @@ function validPosition(latitude: number | null, longitude: number | null): boole
 }
 
 /**
- * A navigation gap terminates a drawn segment. First/last refer to the first
- * and last ACTUALLY OBSERVED samples inside both the event and report window,
- * not to a projected position at the event boundary. No navigation evidence
- * means no member record and therefore no position marker on the PDF.
+ * A missing frame, invalid WGS84 pair or excessive time gap terminates a
+ * drawn segment. First/last refer to the first and last ACTUALLY OBSERVED
+ * samples inside both event and report window, not an inferred boundary
+ * position. No navigation evidence means no PDF position marker.
  */
 export function investigationEventNavigationEvidence(
   event: InvestigationPdfEvent,
@@ -40,15 +45,18 @@ export function investigationEventNavigationEvidence(
   for (const memberId of memberIds) {
     const segments: ObservedPosition[][] = [];
     let current: ObservedPosition[] = [];
+    let lastObservedMs: number | null = null;
     let vehicleIdentifier: number | null = null;
-    const breakSegment = () => { if (current.length) segments.push(current); current = []; };
+    const breakSegment = () => { if (current.length) segments.push(current); current = []; lastObservedMs = null; };
     for (const frame of orderedFrames) {
       const at = Date.parse(frame.observedAt);
       if (!Number.isFinite(at) || at < start || at > end) { breakSegment(); continue; }
       const row = frame.navigation.find((item) => item.memberId === memberId);
       if (!row || !validPosition(row.latitude, row.longitude)) { breakSegment(); continue; }
+      if (lastObservedMs !== null && (at - lastObservedMs > PDF_NAVIGATION_MAX_GAP_MS || at <= lastObservedMs)) breakSegment();
       vehicleIdentifier = row.vehicleIdentifier;
       current.push({ observedAt: frame.observedAt, latitude: row.latitude as number, longitude: row.longitude as number });
+      lastObservedMs = at;
     }
     breakSegment();
     if (!segments.length) continue;
