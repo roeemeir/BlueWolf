@@ -1,4 +1,10 @@
 import type { InvestigationPdfEvent } from "@/lib/investigation-pdf";
+import {
+  continuousObservedNavigationSegment,
+  OBSERVED_NAVIGATION_MAX_DISPLAY_GAP_MS,
+  OBSERVED_NAVIGATION_MAX_DISPLAY_SPEED_MPS,
+  validObservedWgs84,
+} from "./observed-navigation-continuity";
 
 /** A recorded WGS84 position, never an interpolated or planned route point. */
 export type ObservedPosition = {
@@ -14,29 +20,14 @@ export type MemberNavigationEvidence = {
   last: ObservedPosition;
 };
 
-/** Navigation samples are expected every 1–2 seconds; larger gaps must never
- * be joined by a visually invented straight track. Match the map trace's
- * conservative 10-second continuity guard, without synthesizing a position. */
-export const PDF_NAVIGATION_MAX_GAP_MS = 10_000;
-/** Presentation-only anti-teleport guard. This deliberately generous 1 km/s
- * bound rejects gross coordinate glitches, not a Core speed or score rule.
- * Keep both raw fixes as isolated observed points rather than silently hiding
- * evidence or drawing a false straight segment between them. */
-export const PDF_NAVIGATION_MAX_DISPLAY_SPEED_MPS = 1_000;
+/** Navigation gaps and gross GPS jumps must obey precisely the operator map's
+ * shared observed-evidence presentation guard, not independent PDF thresholds.
+ * Neither display cutoff is a physical Core speed or scoring rule. */
+export const PDF_NAVIGATION_MAX_GAP_MS = OBSERVED_NAVIGATION_MAX_DISPLAY_GAP_MS;
+export const PDF_NAVIGATION_MAX_DISPLAY_SPEED_MPS = OBSERVED_NAVIGATION_MAX_DISPLAY_SPEED_MPS;
 
 function validPosition(latitude: number | null, longitude: number | null): boolean {
-  return latitude !== null && longitude !== null
-    && Number.isFinite(latitude) && Number.isFinite(longitude)
-    && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180;
-}
-
-function greatCircleDistanceM(first: ObservedPosition, second: ObservedPosition): number {
-  const radians = Math.PI / 180;
-  const dLatitude = (second.latitude - first.latitude) * radians;
-  const dLongitude = (second.longitude - first.longitude) * radians;
-  const a = Math.sin(dLatitude / 2) ** 2
-    + Math.cos(first.latitude * radians) * Math.cos(second.latitude * radians) * Math.sin(dLongitude / 2) ** 2;
-  return 2 * 6_371_008.8 * Math.asin(Math.min(1, Math.sqrt(Math.max(0, a))));
+  return latitude !== null && longitude !== null && validObservedWgs84({ latitude, longitude });
 }
 
 /**
@@ -79,10 +70,8 @@ export function investigationEventNavigationEvidence(
       }
       const observed: ObservedPosition = { observedAt: frame.observedAt, latitude: row.latitude as number, longitude: row.longitude as number };
       if (lastObservedMs !== null) {
-        const elapsedMs = at - lastObservedMs;
         const prior = current.at(-1);
-        if (elapsedMs > PDF_NAVIGATION_MAX_GAP_MS || elapsedMs <= 0
-          || (prior && greatCircleDistanceM(prior, observed) > PDF_NAVIGATION_MAX_DISPLAY_SPEED_MPS * elapsedMs / 1_000)) {
+        if (!prior || !continuousObservedNavigationSegment(prior, observed, at - lastObservedMs)) {
           breakSegment();
         }
       }
