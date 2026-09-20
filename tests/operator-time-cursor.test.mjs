@@ -69,3 +69,14 @@ test('BW-UI-005 rejects invalid WGS84 and chooses the newest valid past fix with
   assert.deepEqual(traceUpToCursor(trace, Number.NaN), []);
   assert.deepEqual(traceUpToCursor(trace, null), trace);
 });
+
+test('BW-UI-005 an eventless history group accepts only its explicit group-id trace fallback', () => {
+  const eventlessHistory = [{ ...history[0], groups: [{ ...history[0].groups[0], event: undefined }] }];
+  const at = Date.parse(p0);
+  const previousEvent = { ...trace[0], timeMs: at, eventId: 'e1', vehicleId: 10 };
+  const permittedFallback = { ...trace[0], timeMs: at, eventId: 'g1', vehicleId: 11 };
+  const frame = resolveOperatorCursorFrame(eventlessHistory, [previousEvent, permittedFallback], p0);
+  assert.ok(frame);
+  assert.deepEqual(frame.vehicles.map((row) => row.vehicleId), [11]);
+  assert.equal(frame.vehicles[0].eventId, 'g1');
+});
