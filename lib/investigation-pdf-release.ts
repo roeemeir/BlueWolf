@@ -1,6 +1,7 @@
 import type { InvestigationPdfReport } from "@/lib/investigation-pdf";
 import { buildInvestigationPdfBrowser, jpegPagesToPdf } from "@/lib/investigation-pdf-browser";
 import { buildInvestigationBrandedCover } from "@/lib/investigation-pdf-brand";
+import { buildInvestigationEventSynopsisPages } from "@/lib/investigation-pdf-event-synopsis";
 import { buildInvestigationPdfWithLifecycle, extractCanvasJpegPages } from "@/lib/investigation-pdf-lifecycle";
 import { buildInvestigationWmtsMapPages } from "@/lib/investigation-pdf-wmts";
 
@@ -37,7 +38,11 @@ export async function buildInvestigationReleasePdf(report: InvestigationPdfRepor
     if (eventPageCount < 1 || cursor + eventPageCount > engineeringPages.length) {
       throw new Error(`REP-02: invalid engineering chapter pagination for event ${event.result.eventId}`);
     }
-    pages.push(...engineeringPages.slice(cursor, cursor + eventPageCount), mapPages[index + 1]);
+    pages.push(
+      ...engineeringPages.slice(cursor, cursor + eventPageCount),
+      ...buildInvestigationEventSynopsisPages(event, index, report.events.length),
+      mapPages[index + 1],
+    );
     cursor += eventPageCount;
   }
   // These are original lifecycle pages, not invented or re-rendered evidence.
