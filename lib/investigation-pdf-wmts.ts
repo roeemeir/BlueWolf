@@ -1,4 +1,6 @@
 import type { InvestigationPdfEvent, InvestigationPdfReport } from "@/lib/investigation-pdf";
+import { investigationEventColor } from "@/lib/investigation-pdf-browser";
+import { investigationEventNavigationEvidence } from "@/lib/investigation-pdf-navigation-evidence";
 import { normalizeMapSources, type OperationalMapSource } from "@/lib/map-source-config";
 import { createOperationalProjection, type OperationalProjection } from "@/lib/operational-map-projection";
 import { wmtsProjectionKind, wmtsScreenTiles, type WmtsLayerSelection, type WmtsTileMatrixSet } from "@/lib/wmts-capabilities";
@@ -11,7 +13,6 @@ const TEXT = "#102433";
 const MUTED = "#52666f";
 const LINE = "#cfd9dc";
 const ROUTE = "#17242b";
-const SERIES = ["#126b87", "#6d4fc2", "#ad5f16", "#2e7c56", "#a63e74", "#4f6670", "#7b5b23"];
 
 export type InvestigationWmtsJpegPage = { jpeg: Uint8Array; width: number; height: number };
 type GeoPoint = { latitude: number; longitude: number };
@@ -71,11 +72,8 @@ function drawGrid(ctx: CanvasRenderingContext2D, x: number, y: number, width: nu
 }
 
 function eventPoints(event: InvestigationPdfEvent, fromMs = Number.NEGATIVE_INFINITY, toMs = Number.POSITIVE_INFINITY): GeoPoint[] {
-  const navigation = event.result.points
-    .filter((frame) => { const value = Date.parse(frame.observedAt); return Number.isFinite(value) && value >= fromMs && value <= toMs; })
-    .flatMap((frame) => frame.navigation)
-    .filter((row) => row.latitude !== null && row.longitude !== null)
-    .map((row) => ({ latitude: row.latitude as number, longitude: row.longitude as number }));
+  const navigation = investigationEventNavigationEvidence(event, fromMs, toMs)
+    .flatMap((member) => member.segments.flat());
   return [...navigation, ...event.result.routes.flatMap((route) => route.centerline)];
 }
 
@@ -101,7 +99,8 @@ function renderProfile(source: OperationalMapSource): WmtsRenderProfile | null {
 async function loadDefaultProfile(): Promise<WmtsRenderProfile | null> {
   if (typeof window === "undefined") return null;
   let payload: WorkspacePayload | null = null;
-  const workspaceId = window.localStorage.getItem("bluewolf-workspace-id") ?? "";
+  let workspaceId = "";
+  try { workspaceId = window.localStorage.getItem("bluewolf-workspace-id") ?? ""; } catch { /* restricted browser storage */ }
   try {
     const headers = new Headers();
     if (workspaceId) headers.set("x-bluewolf-workspace", workspaceId);
@@ -175,9 +174,35 @@ async function drawWmtsLayers(
   return rendered;
 }
 
-function drawEvidence(ctx: CanvasRenderingContext2D, events: readonly InvestigationPdfEvent[], projection: OperationalProjection, x: number, y: number, fromMs: number, toMs: number) {
+function drawPositionMarker(
+  ctx: CanvasRenderingContext2D, projection: OperationalProjection, x: number, y: number,
+  position: GeoPoint, color: string, caption: string, first: boolean,
+) {
+  const projected = projection.project(position.latitude, position.longitude);
+  const px = x + projected.x;
+  const py = y + projected.y;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(px, py, 9, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.48;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+  text(ctx, caption, px - 13, py + (first ? -13 : 26), 15, 700, color);
+}
+
+function drawEvidence(
+  ctx: CanvasRenderingContext2D, events: readonly InvestigationPdfEvent[],
+  projection: OperationalProjection, x: number, y: number,
+  fromMs: number, toMs: number, firstEventIndex: number,
+) {
   events.forEach((event, eventIndex) => {
-    const color = SERIES[eventIndex % SERIES.length];
+    const color = investigationEventColor(firstEventIndex + eventIndex);
+    const navigation = investigationEventNavigationEvidence(event, fromMs, toMs);
     ctx.save();
     ctx.strokeStyle = ROUTE;
     ctx.lineWidth = 2;
@@ -192,27 +217,32 @@ function drawEvidence(ctx: CanvasRenderingContext2D, events: readonly Investigat
     }
     ctx.strokeStyle = color;
     ctx.lineWidth = 4;
-    const memberIds = Array.from(new Set(event.result.points.flatMap((frame) => frame.navigation.map((row) => row.memberId))));
-    for (const memberId of memberIds) {
-      let drawing = false;
-      ctx.beginPath();
-      for (const frame of event.result.points) {
-        const at = Date.parse(frame.observedAt);
-        const row = frame.navigation.find((item) => item.memberId === memberId);
-        if (!Number.isFinite(at) || at < fromMs || at > toMs || !row || row.latitude === null || row.longitude === null) {
-          if (drawing) { ctx.stroke(); ctx.beginPath(); drawing = false; }
-          continue;
-        }
-        const point = projection.project(row.latitude, row.longitude);
-        if (!drawing) { ctx.moveTo(x + point.x, y + point.y); drawing = true; } else ctx.lineTo(x + point.x, y + point.y);
+    for (const member of navigation) {
+      for (const segment of member.segments) {
+        if (segment.length < 2) continue;
+        ctx.beginPath();
+        segment.forEach((row, index) => {
+          const point = projection.project(row.latitude, row.longitude);
+          if (index === 0) ctx.moveTo(x + point.x, y + point.y);
+          else ctx.lineTo(x + point.x, y + point.y);
+        });
+        ctx.stroke();
       }
-      if (drawing) ctx.stroke();
+      // Only observed positions are eligible: never infer an event-boundary
+      // location from a route centerline, extrapolation, or another vehicle.
+      const vehicle = `רכב ${member.vehicleIdentifier}`;
+      drawPositionMarker(ctx, projection, x, y, member.first, color, `תחילה · ${vehicle}`, true);
+      drawPositionMarker(ctx, projection, x, y, member.last, color, `סוף · ${vehicle}`, false);
     }
     ctx.restore();
   });
 }
 
-async function mapPage(title: string, subtitle: string, events: readonly InvestigationPdfEvent[], points: GeoPoint[], profile: WmtsRenderProfile | null, fromMs: number, toMs: number) {
+async function mapPage(
+  title: string, subtitle: string, events: readonly InvestigationPdfEvent[],
+  points: GeoPoint[], profile: WmtsRenderProfile | null,
+  fromMs: number, toMs: number, firstEventIndex: number,
+) {
   const { canvas, ctx } = makeCanvas();
   text(ctx, title, WIDTH - MARGIN, 88, 36, 700);
   text(ctx, subtitle, WIDTH - MARGIN, 126, 18, 400, MUTED);
@@ -225,11 +255,14 @@ async function mapPage(title: string, subtitle: string, events: readonly Investi
   if (points.length) {
     const projection = createOperationalProjection(points, mapWidth, mapHeight, 20, 20, profile?.projectionMode ?? "local-wgs84");
     if (profile) rendered = await drawWmtsLayers(ctx, profile, projection, mapX, mapY, mapWidth, mapHeight);
-    drawEvidence(ctx, events, projection, mapX, mapY, fromMs, toMs);
+    drawEvidence(ctx, events, projection, mapX, mapY, fromMs, toMs, firstEventIndex);
+  } else {
+    text(ctx, "אין עדות ניווט או נתיב בטווח הנבחר", mapX + mapWidth - 30, mapY + 95, 23, 600, MUTED);
   }
   const layerLabel = profile
     ? profile.layers.map((layer) => `${layer.layer} (${Math.round(layer.opacity * 100)}%)`).join(" · ")
     : "ללא WMTS זמין";
+  text(ctx, "תחילה וסוף = מדידת הניווט הראשונה והאחרונה שנצפו בטווח; אין השלמת מיקום חסר", WIDTH - MARGIN, HEIGHT - 109, 14, 400, MUTED);
   text(ctx, `רקע: ${profile?.source.name ?? "Engineering grid"} · ${layerLabel}`, WIDTH - MARGIN, HEIGHT - 86, 15, 400, MUTED);
   text(ctx, rendered > 0 ? `WMTS tiles בדוח: ${rendered} · דרך proxy/cache מקומי` : "לא התקבל tile רקע; הדוח ממשיך עם engineering grid ללא תלות באינטרנט", WIDTH - MARGIN, HEIGHT - 54, 14, 400, MUTED);
   return jpeg(canvas);
@@ -241,11 +274,13 @@ export async function buildInvestigationWmtsMapPages(report: InvestigationPdfRep
   const toMs = report.to ? Date.parse(report.to) : Number.POSITIVE_INFINITY;
   const pages: InvestigationWmtsJpegPage[] = [];
   const summaryPoints = report.events.flatMap((event) => eventPoints(event, fromMs, toMs));
-  pages.push(await mapPage("מפת רקע מבצעית — טווח התחקור", `${report.from ?? "תחילת הארכיון"} ← ${report.to ?? "סוף הארכיון"}`, report.events, summaryPoints, profile, fromMs, toMs));
+  pages.push(await mapPage("מפת רקע מבצעית — טווח התחקור", `${report.from ?? "תחילת הארכיון"} ← ${report.to ?? "סוף הארכיון"}`, report.events, summaryPoints, profile, fromMs, toMs, 0));
   for (const [index, event] of report.events.entries()) {
     const eventFrom = Date.parse(event.result.startAt);
     const eventTo = Date.parse(event.result.endAt);
-    pages.push(await mapPage(`מפת WMTS · אירוע ${index + 1}`, `${event.result.eventId} · קבוצה ${event.result.groupId}`, [event], eventPoints(event), profile, eventFrom, eventTo));
+    const eventFromMs = Math.max(fromMs, eventFrom);
+    const eventToMs = Math.min(toMs, eventTo);
+    pages.push(await mapPage(`מפת WMTS · אירוע ${index + 1}`, `${event.result.eventId} · קבוצה ${event.result.groupId}`, [event], eventPoints(event, eventFromMs, eventToMs), profile, eventFromMs, eventToMs, index));
   }
   return pages;
 }
