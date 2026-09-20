@@ -1,4 +1,4 @@
-import { recomputeSimulationEvent } from "@/lib/simulation-investigation";
+import { recomputeSimulationEvent, simulationEvents } from "@/lib/simulation-investigation";
 import { normalizeEventRecompute } from "@/lib/investigation-contract";
 import { verifyRecomputeResponseIdentity } from "@/lib/investigation-recompute-identity";
 import type { SyncTemplate } from "@/lib/bluewolf";
@@ -15,16 +15,30 @@ export async function POST(request: Request) {
   const row = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
   if (row.source === "simulation") {
     try {
-      const result = recomputeSimulationEvent({
-        serverId: Number(row.serverId),
-        eventId: String(row.eventId ?? ""),
+      // Simulation evidence is only valid for a recorded event in the selected
+      // server's current archive. The simulator's lower-level fallback can
+      // generate QA trajectories for arbitrary ids, which must never be
+      // presented by this archive-facing endpoint as an observed event.
+      const now = new Date();
+      const serverId = Number(row.serverId);
+      const eventId = typeof row.eventId === "string" ? row.eventId : "";
+      const selectedEvent = simulationEvents(serverId, now).find((event) => event.eventId === eventId);
+      if (!selectedEvent) throw new Error("selected simulation event is not present in this server archive");
+      if (row.groupId !== undefined && row.groupId !== selectedEvent.groupId) throw new Error("simulation groupId does not match selected event");
+      if (row.family !== undefined && row.family !== selectedEvent.family) throw new Error("simulation family does not match selected event");
+      const result = normalizeEventRecompute(recomputeSimulationEvent({
+        serverId,
+        eventId,
         templateId: String(row.templateId ?? ""),
         scenarioId: typeof row.scenarioId === "string" ? row.scenarioId : undefined,
-        groupId: typeof row.groupId === "string" ? row.groupId : undefined,
-        family: row.family === "SI" || row.family === "SO" ? row.family : undefined,
+        groupId: selectedEvent.groupId,
+        family: selectedEvent.family,
         template: row.template && typeof row.template === "object" && !Array.isArray(row.template) ? row.template as Partial<SyncTemplate> : undefined,
-      });
-      return Response.json(normalizeEventRecompute(result), { headers: { "cache-control": "no-store", "x-bluewolf-investigation": "simulator-archive" } });
+        now,
+      }));
+      const identityError = verifyRecomputeResponseIdentity(row, result);
+      if (identityError) throw new Error(identityError);
+      return Response.json(result, { headers: { "cache-control": "no-store", "x-bluewolf-investigation": "simulator-archive" } });
     } catch (error) {
       return Response.json({ status: "error", error: error instanceof Error ? error.message : "simulation recomputation failed" }, { status: 422 });
     }
