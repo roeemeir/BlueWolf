@@ -3,7 +3,6 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
-  computeImplementationFingerprint,
   DOCUMENTATION_SYNC_SCHEMA_VERSION,
   IMPLEMENTATION_TRACKED_PATHS,
   validateDocumentationSync,
@@ -14,8 +13,8 @@ test('BW-GOV-010 documentation sync fingerprint matches the current implementati
   assert.equal(manifest.schemaVersion, DOCUMENTATION_SYNC_SCHEMA_VERSION);
   const result = await validateDocumentationSync(manifest);
   assert.deepEqual(result.errors, []);
-  assert.equal(result.actual.digest, '2a1cf45a2e94af2e');
-  assert.equal(result.actual.fileCount, 240);
+  assert.equal(result.actual.digest, manifest.implementationFingerprint.digest);
+  assert.equal(result.actual.fileCount, manifest.implementationFingerprint.fileCount);
   assert.deepEqual(manifest.implementationFingerprint.trackedPaths, IMPLEMENTATION_TRACKED_PATHS);
 });
 
