@@ -1,3 +1,5 @@
+import { continuousObservedNavigationSegment, validObservedWgs84 } from "./observed-navigation-continuity";
+
 export type ScoreTracePoint = {
   timeMs: number; groupId: string; eventId: string; vehicleId: number;
   latitude: number; longitude: number; sync: number | null;
@@ -15,8 +17,7 @@ export function traceScoreColor(score: number | null): string {
 function validTraceFix(point: ScoreTracePoint): boolean {
   return Number.isFinite(point.timeMs)
     && Number.isInteger(point.vehicleId)
-    && Number.isFinite(point.latitude) && point.latitude >= -90 && point.latitude <= 90
-    && Number.isFinite(point.longitude) && point.longitude >= -180 && point.longitude <= 180;
+    && validObservedWgs84(point);
 }
 
 /** A vehicle can have adjacent event/group evidence at the same source time.
@@ -76,7 +77,9 @@ export function traceSegments<T extends ScoreTracePoint>(points: T[], maxGapMs =
     const key = JSON.stringify([point.vehicleId, point.groupId, point.eventId]);
     const prior = latest.get(key);
     if (prior && prior.timeMs === priorTimeByVehicle.get(point.vehicleId)
-      && point.timeMs > prior.timeMs && point.timeMs - prior.timeMs <= maxGapMs) segments.push([prior, point]);
+      && continuousObservedNavigationSegment(prior, point, point.timeMs - prior.timeMs, maxGapMs)) {
+      segments.push([prior, point]);
+    }
     latest.set(key, point);
   }
   return segments;
