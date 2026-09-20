@@ -37,6 +37,18 @@ test('SO gap: returns the perpendicular segment clearance, not a diagonal vertex
   assert.equal(closedOutlineClearance(first, [{ x: Number.NaN, y: 1 }, { x: 2, y: 2 }, { x: 3, y: 3 }]), 0);
 });
 
+test('SO gap: collapsed outlines are never reported as positively separated closed routes', () => {
+  const valid = rectangle(10, 10, 14, 14);
+  const collinear = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }];
+  const repeated = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
+  for (const collapsed of [collinear, repeated]) {
+    assert.equal(closedOutlineClearance(collapsed, valid), 0);
+    assert.equal(closedOutlineClearance(valid, collapsed), 0);
+    assert.equal(minimumRouteGap({ points: collapsed }, { points: valid }), 0);
+  }
+  assert.ok(closedOutlineClearance(rectangle(0, 0, 2, 2), valid) > 0, 'valid disjoint outlines remain accepted');
+});
+
 test('SO generated mixed smile has positive continuous clearance between physical neighbors', () => {
   for (const chain of [['single', 'double', 'single'], ['double', 'single', 'double'], ['single', 'single', 'double', 'single']]) {
     const routes = buildSoSmileGeometry(chain, { centerX: 500, centerY: 260, spacing: 245, risePerStep: 22 });
