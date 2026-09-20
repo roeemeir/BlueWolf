@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Download, FileChartColumn, ShieldCheck, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
@@ -34,6 +34,12 @@ function inputTimeToIso(value: string, name: string) {
   return date.toISOString();
 }
 
+function localDateTimeInput(atMs: number): string {
+  const date = new Date(atMs);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function downloadPdf(bytes: Uint8Array, generatedAt: string) {
   const body = new Uint8Array(bytes.byteLength); body.set(bytes);
   const blob = new Blob([body.buffer], { type: "application/pdf" });
@@ -45,9 +51,28 @@ function downloadPdf(bytes: Uint8Array, generatedAt: string) {
 export function InvestigationReportPanel({ server }: { server: string }) {
   const { state } = useWorkspace();
   const [from, setFrom] = useState(""); const [to, setTo] = useState(""); const [report, setReport] = useState<ReportState>({ kind: "idle" });
+  const [rangeReady, setRangeReady] = useState(false);
   const edits = state.investigationEdits as Record<string, InvestigationEdit>;
 
+  // Initialize on the client to avoid server/client clock hydration mismatch.
+  // This only changes the selected range; it never truncates the stored archive.
+  useEffect(() => {
+    const now = Date.now();
+    setFrom(localDateTimeInput(now - 24 * 60 * 60 * 1000));
+    setTo(localDateTimeInput(now));
+    setRangeReady(true);
+  }, []);
+
+  const selectFullArchive = () => { setFrom(""); setTo(""); setReport({ kind: "idle" }); };
+  const selectLastDay = () => {
+    const now = Date.now();
+    setFrom(localDateTimeInput(now - 24 * 60 * 60 * 1000));
+    setTo(localDateTimeInput(now));
+    setReport({ kind: "idle" });
+  };
+
   const generate = async () => {
+    if (!rangeReady) return;
     if ((from && !to) || (!from && to)) { toast.error("כדי להפיק דוח לטווח יש להזין גם התחלה וגם סוף"); return; }
     let fromIso: string | undefined; let toIso: string | undefined;
     try { fromIso = inputTimeToIso(from, "זמן התחלה"); toIso = inputTimeToIso(to, "זמן סוף"); if (fromIso && toIso && fromIso > toIso) throw new Error("זמן ההתחלה חייב להיות מוקדם מזמן הסיום"); }
@@ -89,15 +114,19 @@ export function InvestigationReportPanel({ server }: { server: string }) {
     <InvestigationRetroactivePanel server={server} />
     <section className="glass-panel" dir="rtl" data-requirements="REP-01 REP-03 REP-04 OP-04 BW-REP-008 BW-REP-009 BW-REP-011 BW-OFF-010" style={{ padding: 16, marginBottom: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", gap: 16, flexWrap: "wrap" }}><div><p className="eyebrow">Engineering PDF</p><h3>דוח תחקור לטווח</h3><p className="card-hint">הדוח נטען מארכיון ה-Core ומבצע recomputation אמיתי. override רטרואקטיבי כולל code/config/template provenance מחייב; mismatch עוצר את הדוח ולא מערבב גרסאות.</p></div><FileChartColumn /></div>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(190px,1fr) minmax(190px,1fr) auto", gap: 10, alignItems: "end", marginTop: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 10, alignItems: "end", marginTop: 12 }}>
         <label style={{ display: "grid", gap: 5 }}><span>מתאריך ושעה</span><input type="datetime-local" value={from} onChange={(event) => { setFrom(event.target.value); setReport({ kind: "idle" }); }} /></label>
         <label style={{ display: "grid", gap: 5 }}><span>עד תאריך ושעה</span><input type="datetime-local" value={to} onChange={(event) => { setTo(event.target.value); setReport({ kind: "idle" }); }} /></label>
-        <Button onClick={generate} disabled={report.kind === "running"}><Download />{report.kind === "running" ? "מפיק PDF…" : "הפק PDF לטווח"}</Button>
+        <Button onClick={generate} disabled={!rangeReady || report.kind === "running"}><Download />{report.kind === "running" ? "מפיק PDF…" : "הפק PDF לטווח"}</Button>
       </div>
-      <p className="card-hint">טווח ריק = כל האירועים השמורים. שכבות WMTS ברירת־המחדל נטענות רק דרך ה־proxy/cache המקומי; ללא רקע זמין הדוח משתמש ב־engineering grid. אין `window.print()`, CDN או fallback ל-demo.</p>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+        <Button type="button" variant="outline" onClick={selectLastDay} disabled={!rangeReady || report.kind === "running"}>24 השעות האחרונות</Button>
+        <Button type="button" variant="outline" onClick={selectFullArchive} disabled={!rangeReady || report.kind === "running"}>כל הארכיון (עד 7 ימים)</Button>
+      </div>
+      <p className="card-hint">ברירת המחדל היא 24 השעות האחרונות. אפשר לבחור טווח אחר עד שבעה ימים אחורה או לבחור בכל הארכיון. בחירת הטווח משפיעה על הדוח בלבד ואינה מוחקת נתוני סימולציה. טווח ריק = כל האירועים השמורים. שכבות WMTS ברירת־המחדל נטענות רק דרך ה־proxy/cache המקומי; ללא רקע זמין הדוח משתמש ב־engineering grid.</p>
       {report.kind === "running" && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}><ShieldCheck /><span>מבצע recomputation ומרנדר PDF מקומי. אין אחוז התקדמות ללא telemetry אמיתי.</span></div>}
       {report.kind === "error" && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}><TriangleAlert /><span>{report.detail}</span></div>}
-      {report.kind === "complete" && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}><ShieldCheck /><span>PDF RTL + lifecycle + WMTS defaults אומת · code {report.codeVersion.slice(0, 12)} · config {report.configVersion.slice(0, 12)}</span></div>}
+      {report.kind === "complete" && <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}><ShieldCheck /><span>PDF RTL + lifecycle + WMTS defaults הופק · code {report.codeVersion.slice(0, 12)} · config {report.configVersion.slice(0, 12)}</span></div>}
     </section>
   </>;
 }
