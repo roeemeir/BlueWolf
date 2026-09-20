@@ -141,10 +141,12 @@ test('REP-01/02 renderer remains the base of lifecycle and release PDF with loca
   assert.match(release, /buildInvestigationPdfWithLifecycle/);
   assert.match(release, /buildInvestigationWmtsMapPages/);
   assert.match(release, /buildInvestigationBrandedCover/);
-  assert.match(release, /\.\.\.engineeringPages\.slice\(0, 1\),\s*\.\.\.overviewMap,\s*\.\.\.engineeringPages\.slice\(1\)/);
-  assert.match(release, /\.\.\.eventMaps/);
+  assert.match(release, /const pages = \[brandCover, \.\.\.engineeringPages\.slice\(0, overviewCount\), mapPages\[0\]\]/);
+  assert.match(release, /pages\.push\(\s*\.\.\.engineeringPages\.slice\(cursor, cursor \+ eventPageCount\),\s*\.\.\.buildInvestigationEventSynopsisPages\(event, index, report\.events\.length\),\s*mapPages\[index \+ 1\],\s*\)/);
+  assert.match(release, /pages\.push\(\.\.\.engineeringPages\.slice\(cursor\)\)/);
   assert.match(panel, /format: "data"/);
   assert.match(panel, /normalizeInvestigationReportData/);
   assert.match(panel, /buildInvestigationReleasePdf/);
-  assert.match(panel, /אין `window\.print\(\)`, CDN או fallback ל-demo/);
+  assert.doesNotMatch(panel, /window\.print\(/);
+  assert.doesNotMatch(panel, /fallback ל-demo/);
 });
