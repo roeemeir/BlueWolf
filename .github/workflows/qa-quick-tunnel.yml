@@ -106,16 +106,46 @@ jobs:
             cat /tmp/cloudflared.log
             exit 1
           fi
-          echo "$url" > /tmp/bluewolf-qa-url.txt
           echo "url=$url" >> "$GITHUB_OUTPUT"
-          echo "## Blue Wolf QA Preview" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- URL: $url" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Storage: local SQLite only" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Python Core QA: http://127.0.0.1:8090 (provenance + QA endpoints)" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Runtime secrets: none" >> "$GITHUB_STEP_SUMMARY"
-          echo "BLUEWOLF_QA_URL=$url"
+      - name: Verify public HTTPS app response
+        env:
+          QA_URL: ${{ steps.tunnel.outputs.url }}
+        run: |
+          # A tunnel hostname alone is not proof that the public route works.
+          # Publish only after a real external HTTPS request returns app HTML.
+          verified=0
+          for attempt in $(seq 1 20); do
+            http_code=$(curl --location --silent --show-error \
+              --connect-timeout 5 --max-time 12 \
+              --output /tmp/bluewolf-public-home.html \
+              --write-out '%{http_code}' "$QA_URL/" || true)
+            if [ "$http_code" = "200" ] && \
+              [ -s /tmp/bluewolf-public-home.html ] && \
+              grep -Eiq '<(!doctype html|html[[:space:]>])' /tmp/bluewolf-public-home.html; then
+              verified=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$verified" != "1" ]; then
+            echo "Public HTTPS verification failed; QA URL will not be published."
+            echo "Last response: ${http_code:-none}"
+            tail -n 30 /tmp/cloudflared.log || true
+            exit 1
+          fi
+          printf '%s\n' "$QA_URL" > /tmp/bluewolf-qa-url.txt
+          {
+            echo '## Blue Wolf QA Preview'
+            echo ''
+            echo "- URL: $QA_URL"
+            echo "- Commit: $GITHUB_SHA"
+            echo '- Public HTTPS GET /: HTTP 200, nonempty app HTML verified'
+            echo '- Storage: local SQLite only'
+            echo '- Python Core QA: http://127.0.0.1:8090 (provenance + QA endpoints)'
+            echo '- Runtime secrets: none'
+            echo '- This is temporary QA, not a production release or product acceptance'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "BLUEWOLF_QA_URL=$QA_URL"
       - name: Publish QA URL artifact
         uses: actions/upload-artifact@v4
         with:
