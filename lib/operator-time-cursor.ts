@@ -65,15 +65,17 @@ export function resolveOperatorCursorFrame(
   for (const row of trace) {
     // A selected history frame must never acquire navigation measured AFTER its
     // source timestamp, even if that fix is closer than the last known fix.
-    // The map's drawn trace is already clipped at target, so accepting future
-    // vehicle markers here would contradict the same-time evidence contract.
     if (!Number.isFinite(row.timeMs) || row.timeMs > target || target - row.timeMs > toleranceMs
       || !Number.isInteger(row.vehicleId)
       || !Number.isFinite(row.latitude) || row.latitude < -90 || row.latitude > 90
       || !Number.isFinite(row.longitude) || row.longitude < -180 || row.longitude > 180) continue;
     const group = groupById.get(row.groupId);
     if (!group) continue;
-    if (group.event?.id && group.event.id !== row.eventId) continue;
+    // Eventless Core snapshots have an explicit group-id fallback in the trace
+    // contract. Never accept an arbitrary previous event merely because its
+    // group ID matches an eventless history frame.
+    const expectedEventId = group.event?.id ?? group.id;
+    if (row.eventId !== expectedEventId) continue;
     const current = bestByVehicle.get(row.vehicleId);
     if (!current || row.timeMs > current.timeMs) bestByVehicle.set(row.vehicleId, row);
   }
@@ -96,7 +98,6 @@ export function resolveOperatorCursorFrame(
 
 export function traceUpToCursor<T extends ScoreTracePoint>(trace: readonly T[], cursorTimeMs: number | null): T[] {
   if (cursorTimeMs === null) return trace.map((row) => ({ ...row }));
-  // Invalid historical time is unknown evidence, not a request for a live trace.
   if (!Number.isFinite(cursorTimeMs)) return [];
   return trace.filter((row) => Number.isFinite(row.timeMs) && row.timeMs <= cursorTimeMs).map((row) => ({ ...row }));
 }
