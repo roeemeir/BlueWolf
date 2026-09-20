@@ -54,11 +54,19 @@ export function filterTraceWindow<T extends ScoreTracePoint>(points: readonly T[
 }
 
 export function traceSegments<T extends ScoreTracePoint>(points: T[], maxGapMs = 10_000): [T, T][] {
-  // Each event/group is an independent line, even if the same vehicle has a
-  // boundary observation for both events at precisely the same source time.
+  // Keep separate event/group lines only across consecutive observed times for
+  // that vehicle. If a vehicle changes group and later returns within 10 s, an
+  // old line must NOT be revived across the intervening group membership.
   const latest = new Map<string, T>();
+  const currentTimeByVehicle = new Map<number, number>();
+  const priorTimeByVehicle = new Map<number, number>();
   const segments: [T, T][] = [];
   for (const point of [...points].sort((a, b) => a.timeMs - b.timeMs || a.vehicleId - b.vehicleId)) {
+    const lastTime = currentTimeByVehicle.get(point.vehicleId);
+    if (lastTime !== point.timeMs) {
+      priorTimeByVehicle.set(point.vehicleId, lastTime ?? Number.NaN);
+      currentTimeByVehicle.set(point.vehicleId, point.timeMs);
+    }
     if (!validTraceFix(point)) {
       if (Number.isInteger(point.vehicleId)) {
         for (const [key, prior] of latest) if (prior.vehicleId === point.vehicleId) latest.delete(key);
@@ -67,7 +75,8 @@ export function traceSegments<T extends ScoreTracePoint>(points: T[], maxGapMs =
     }
     const key = JSON.stringify([point.vehicleId, point.groupId, point.eventId]);
     const prior = latest.get(key);
-    if (prior && point.timeMs > prior.timeMs && point.timeMs - prior.timeMs <= maxGapMs) segments.push([prior, point]);
+    if (prior && prior.timeMs === priorTimeByVehicle.get(point.vehicleId)
+      && point.timeMs > prior.timeMs && point.timeMs - prior.timeMs <= maxGapMs) segments.push([prior, point]);
     latest.set(key, point);
   }
   return segments;
