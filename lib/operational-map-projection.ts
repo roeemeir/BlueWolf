@@ -10,6 +10,13 @@ export type GeoBounds = { minLatitude: number; minLongitude: number; maxLatitude
 const MAX_MERCATOR_LATITUDE = 85.05112878;
 const EPS = 1e-12;
 
+/** Only measured WGS84 fixes can influence the operational viewport. Invalid
+ * coordinates must not make one noisy vehicle blank the entire map. */
+export function validOperationalGeoPoint(point: GeoPoint): boolean {
+  return Number.isFinite(point.latitude) && point.latitude >= -90 && point.latitude <= 90
+    && Number.isFinite(point.longitude) && point.longitude >= -180 && point.longitude <= 180;
+}
+
 function clampLatitude(latitude: number) {
   return Math.max(-MAX_MERCATOR_LATITUDE, Math.min(MAX_MERCATOR_LATITUDE, latitude));
 }
@@ -45,7 +52,8 @@ export function createOperationalProjection(
   marginY: number,
   mode: OperationalProjectionMode,
 ): OperationalProjection {
-  if (!rows.length) {
+  const observedRows = rows.filter(validOperationalGeoPoint);
+  if (!observedRows.length) {
     const bounds = telAvivDemoBounds();
     const fallbackRows = [
       { latitude: bounds.minLatitude, longitude: bounds.minLongitude },
@@ -57,7 +65,7 @@ export function createOperationalProjection(
     // only the basemap viewport gets a deterministic Tel Aviv QA frame.
     return createOperationalProjection(fallbackRows, width, height, marginX, marginY, mode);
   }
-  const midLatitude = rows.reduce((sum, row) => sum + row.latitude, 0) / rows.length;
+  const midLatitude = observedRows.reduce((sum, row) => sum + row.latitude, 0) / observedRows.length;
   const longitudeScale = Math.max(0.15, Math.cos(midLatitude * Math.PI / 180));
   const toWorld = mode === "webmercator"
     ? (row: GeoPoint) => geoToWebMercatorWorld(row.latitude, row.longitude)
@@ -65,7 +73,7 @@ export function createOperationalProjection(
   const fromWorld = mode === "webmercator"
     ? webMercatorWorldToGeo
     : (point: WorldPoint): GeoPoint => ({ latitude: -point.y, longitude: point.x / longitudeScale });
-  const world = rows.map(toWorld);
+  const world = observedRows.map(toWorld);
   const minX = Math.min(...world.map((row) => row.x)); const maxX = Math.max(...world.map((row) => row.x));
   const minY = Math.min(...world.map((row) => row.y)); const maxY = Math.max(...world.map((row) => row.y));
   const centerX = (minX + maxX) / 2; const centerY = (minY + maxY) / 2;
@@ -74,7 +82,11 @@ export function createOperationalProjection(
   const spanY = Math.max(rawSpanY * 1.24, rawSpanX * 0.35, 1e-8);
   const scale = Math.min((width - 2 * marginX) / spanX, (height - 2 * marginY) / spanY);
   const worldToScreen = (point: WorldPoint): ScreenPoint => ({ x: width / 2 + (point.x - centerX) * scale, y: height / 2 + (point.y - centerY) * scale });
-  const project = (latitude: number, longitude: number) => worldToScreen(toWorld({ latitude, longitude }));
+  // A malformed live position stays unavailable rather than acquiring a
+  // plausible on-screen location or contaminating the fit for valid vehicles.
+  const project = (latitude: number, longitude: number) => validOperationalGeoPoint({ latitude, longitude })
+    ? worldToScreen(toWorld({ latitude, longitude }))
+    : { x: Number.NaN, y: Number.NaN };
   const viewWorldBounds = {
     minX: centerX - width / (2 * scale),
     maxX: centerX + width / (2 * scale),
