@@ -7,9 +7,11 @@ after(async () => { await vite.close(); });
 const { DOUBLE_HIPPODROME_BREAK_DEG, buildSoSmileGeometry, localHippodromePoints, minimumRouteGap, pointAtSoPhase, soSmilePoses, soSmileChainPoses } = await vite.ssrLoadModule('/lib/so-geometry.ts');
 
 function doublePhysicalAxes(points) {
+  // Both straight edges now meet at the exact inner miter. The former four-point
+  // outline contained a self-crossing corner; points[3] is now on the end cap.
   return [
     Math.atan2(points[1].y - points[0].y, points[1].x - points[0].x) * 180 / Math.PI,
-    Math.atan2(points[3].y - points[2].y, points[3].x - points[2].x) * 180 / Math.PI,
+    Math.atan2(points[2].y - points[1].y, points[2].x - points[1].x) * 180 / Math.PI,
   ];
 }
 
@@ -45,7 +47,7 @@ test('SO mixed smile counts a Double as two consecutive physical 30-degree units
 test('SO Double bends with the global concave smile, not into a local V', () => {
   const local = localHippodromePoints('double', { radius: 22, doubleHalfLeg: 104 });
   assert.ok(local[0].y - local[1].y > 0, 'left Double endpoint below its central joint');
-  assert.ok(local[3].y - local[2].y > 0, 'right Double endpoint below its central joint');
+  assert.ok(local[2].y - local[1].y > 0, 'right Double endpoint below its central joint');
   const routes = buildSoSmileGeometry(['single', 'double', 'single'], { centerX: 500, centerY: 180, spacing: 170, risePerStep: 22, radius: 22, singleHalfLeg: 54, doubleHalfLeg: 104 });
   assert.equal(routes.length, 3);
   assert.ok(routes[0].center.y > routes[1].center.y);
