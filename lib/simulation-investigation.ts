@@ -15,8 +15,8 @@ import type { InvestigationPdfEvent, InvestigationPdfReport } from "./investigat
 /** Deliberately synthetic QA evidence. Never present this archive as observed Core telemetry. */
 export const SIMULATION_ARCHIVE_DAYS = 7;
 export const SIMULATION_ARCHIVE_SOURCE = "simulator-archive" as const;
-export const SIMULATION_CODE_VERSION = "bluewolf-simulator-7d-v3";
-export const SIMULATION_CONFIG_VERSION = "three-server-wind-entry-period-v3";
+export const SIMULATION_CODE_VERSION = "bluewolf-simulator-7d-v4";
+export const SIMULATION_CONFIG_VERSION = "three-server-utc-stable-archive-v4";
 
 const DAY_MS = 86_400_000;
 const FRAME_COUNT = 48;
@@ -64,6 +64,8 @@ export function simulationActiveEventId(serverId: string | number, family: Famil
   return `sim-s${serverNumber(serverId)}-${family.toLowerCase()}-active`;
 }
 
+/** A historical event's identity, family and seed depend on its absolute UTC
+ * calendar date, never its shifting offset inside the seven-day window. */
 export function simulationEvents(serverIdValue: string | number, now = new Date()): SimulationEvent[] {
   const serverId = serverNumber(serverIdValue);
   const scenario = getServerScenario(String(serverId));
@@ -71,12 +73,14 @@ export function simulationEvents(serverIdValue: string | number, now = new Date(
   const today = startOfUtcDay(now);
   for (let dayOffset = SIMULATION_ARCHIVE_DAYS - 1; dayOffset >= 0; dayOffset -= 1) {
     const dayStart = today - dayOffset * DAY_MS;
+    const utcDate = new Date(dayStart).toISOString().slice(0, 10);
+    const utcDayOrdinal = Math.floor(dayStart / DAY_MS);
     SCHEDULE.forEach((slot, slotIndex) => {
-      const family: Family = (dayOffset + slotIndex + serverId) % 2 === 0 ? "SI" : "SO";
+      const family: Family = (utcDayOrdinal + slotIndex + serverId) % 2 === 0 ? "SI" : "SO";
       const group = family === "SI" ? scenario.groups.si : scenario.groups.so;
       const startMs = dayStart + (slot.hour * 60 + slot.minute) * 60_000;
       const endMs = startMs + slot.durationMinutes * 60_000;
-      const eventId = `sim-s${serverId}-d${dayOffset}-e${slotIndex}-${family.toLowerCase()}`;
+      const eventId = `sim-s${serverId}-utc${utcDate}-e${slotIndex}-${family.toLowerCase()}`;
       const seed = hash(`${eventId}:${dayStart}`);
       events.push({
         eventId, serverId, groupId: group.id, family,
@@ -218,16 +222,18 @@ export function recomputeSimulationEvent(input: {
   const serverId = serverNumber(input.serverId);
   const now = input.now ?? new Date();
   const event = simulationEvents(serverId, now).find((candidate) => candidate.eventId === input.eventId);
-  const family = event?.family ?? input.family;
-  if (!family) throw new Error("simulation event family is required");
+  if (!event) throw new Error("simulation eventId is not present in the requested server archive");
+  if (input.family && input.family !== event.family) throw new Error("simulation event family does not match archive");
+  if (input.groupId && input.groupId !== event.groupId) throw new Error("simulation event group does not match archive");
+  const family = event.family;
   const scenario = getServerScenario(String(serverId));
   const group = family === "SI" ? scenario.groups.si : scenario.groups.so;
-  const groupId = event?.groupId ?? input.groupId ?? group.id;
-  const startAt = event?.startAt ?? new Date(now.getTime() - 30 * 60_000).toISOString();
-  const endAt = event?.endAt ?? now.toISOString();
-  const lifecycle = event?.lifecycle ?? eventLifecycle(startAt, endAt, groupId, serverId, true);
-  const seed = event?.seed ?? hash(input.eventId);
-  const scenarioKind = event?.scenarioKind ?? SCENARIOS[seed % SCENARIOS.length];
+  const groupId = event.groupId;
+  const startAt = event.startAt;
+  const endAt = event.endAt;
+  const lifecycle = event.lifecycle;
+  const seed = event.seed;
+  const scenarioKind = event.scenarioKind;
   const template = chosenTemplate(input.templateId, family, input.template);
   const templateSignature = JSON.stringify([template.id, template.values ?? [], template.soSpec?.chain ?? [], template.siPositions ?? []]);
   const templatePenalty = hash(templateSignature) % 15;
