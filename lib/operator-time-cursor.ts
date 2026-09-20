@@ -63,20 +63,19 @@ export function resolveOperatorCursorFrame(
   const bestByVehicle = new Map<number, ScoreTracePoint>();
 
   for (const row of trace) {
-    if (!Number.isFinite(row.timeMs) || Math.abs(row.timeMs - target) > toleranceMs) continue;
+    // A selected history frame must never acquire navigation measured AFTER its
+    // source timestamp, even if that fix is closer than the last known fix.
+    // The map's drawn trace is already clipped at target, so accepting future
+    // vehicle markers here would contradict the same-time evidence contract.
+    if (!Number.isFinite(row.timeMs) || row.timeMs > target || target - row.timeMs > toleranceMs
+      || !Number.isInteger(row.vehicleId)
+      || !Number.isFinite(row.latitude) || row.latitude < -90 || row.latitude > 90
+      || !Number.isFinite(row.longitude) || row.longitude < -180 || row.longitude > 180) continue;
     const group = groupById.get(row.groupId);
     if (!group) continue;
     if (group.event?.id && group.event.id !== row.eventId) continue;
     const current = bestByVehicle.get(row.vehicleId);
-    if (!current) {
-      bestByVehicle.set(row.vehicleId, row);
-      continue;
-    }
-    const currentDistance = Math.abs(current.timeMs - target);
-    const nextDistance = Math.abs(row.timeMs - target);
-    const preferNext = nextDistance < currentDistance
-      || (nextDistance === currentDistance && row.timeMs <= target && current.timeMs > target);
-    if (preferNext) bestByVehicle.set(row.vehicleId, row);
+    if (!current || row.timeMs > current.timeMs) bestByVehicle.set(row.vehicleId, row);
   }
 
   return {
@@ -96,8 +95,10 @@ export function resolveOperatorCursorFrame(
 }
 
 export function traceUpToCursor<T extends ScoreTracePoint>(trace: readonly T[], cursorTimeMs: number | null): T[] {
-  if (cursorTimeMs === null || !Number.isFinite(cursorTimeMs)) return trace.map((row) => ({ ...row }));
-  return trace.filter((row) => row.timeMs <= cursorTimeMs).map((row) => ({ ...row }));
+  if (cursorTimeMs === null) return trace.map((row) => ({ ...row }));
+  // Invalid historical time is unknown evidence, not a request for a live trace.
+  if (!Number.isFinite(cursorTimeMs)) return [];
+  return trace.filter((row) => Number.isFinite(row.timeMs) && row.timeMs <= cursorTimeMs).map((row) => ({ ...row }));
 }
 
 /** Client-only ephemeral bus. It deliberately does not persist a cursor across restart/session. */
