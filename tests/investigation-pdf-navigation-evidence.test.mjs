@@ -58,6 +58,26 @@ test('sparse archive splits unrecorded navigation gaps even without a missing-da
   assert.equal(member.last.observedAt, frame(26, []).observedAt);
 });
 
+test('PDF evidence refuses to splice two vehicle identifiers under one memberId, even across GPS gaps', () => {
+  const event = { result: { startAt, endAt, points: [
+    frame(2, [nav('a', 31.1, 34.1, 17)]),
+    frame(12, [nav('a', null, null, 17)]),
+    frame(26, [nav('a', 31.4, 34.4, 42)]),
+  ] } };
+  assert.throws(() => investigationEventNavigationEvidence(event, -Infinity, Infinity), /changed vehicleIdentifier/);
+});
+
+test('PDF evidence refuses duplicate member identities within a frame and invalid vehicle numbers', () => {
+  const duplicate = { result: { startAt, endAt, points: [
+    frame(2, [nav('a', 31.1, 34.1, 17), nav('a', 31.2, 34.2, 42)]),
+  ] } };
+  assert.throws(() => investigationEventNavigationEvidence(duplicate, -Infinity, Infinity), /duplicate memberId/);
+  for (const vehicleIdentifier of [Number.NaN, 3.14, -1]) {
+    const invalid = { result: { startAt, endAt, points: [frame(2, [nav('a', 31.1, 34.1, vehicleIdentifier)])] } };
+    assert.throws(() => investigationEventNavigationEvidence(invalid, -Infinity, Infinity), /invalid PDF navigation vehicleIdentifier/);
+  }
+});
+
 test('overview and per-event PDF maps can share a stable event color beyond seven events', () => {
   const colors = Array.from({ length: 12 }, (_, index) => investigationEventColor(index));
   assert.equal(new Set(colors).size, colors.length);
