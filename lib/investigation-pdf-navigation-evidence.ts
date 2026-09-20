@@ -18,6 +18,11 @@ export type MemberNavigationEvidence = {
  * be joined by a visually invented straight track. Match the map trace's
  * conservative 10-second continuity guard, without synthesizing a position. */
 export const PDF_NAVIGATION_MAX_GAP_MS = 10_000;
+/** Presentation-only anti-teleport guard. This deliberately generous 1 km/s
+ * bound rejects gross coordinate glitches, not a Core speed or score rule.
+ * Keep both raw fixes as isolated observed points rather than silently hiding
+ * evidence or drawing a false straight segment between them. */
+export const PDF_NAVIGATION_MAX_DISPLAY_SPEED_MPS = 1_000;
 
 function validPosition(latitude: number | null, longitude: number | null): boolean {
   return latitude !== null && longitude !== null
@@ -25,11 +30,20 @@ function validPosition(latitude: number | null, longitude: number | null): boole
     && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180;
 }
 
+function greatCircleDistanceM(first: ObservedPosition, second: ObservedPosition): number {
+  const radians = Math.PI / 180;
+  const dLatitude = (second.latitude - first.latitude) * radians;
+  const dLongitude = (second.longitude - first.longitude) * radians;
+  const a = Math.sin(dLatitude / 2) ** 2
+    + Math.cos(first.latitude * radians) * Math.cos(second.latitude * radians) * Math.sin(dLongitude / 2) ** 2;
+  return 2 * 6_371_008.8 * Math.asin(Math.min(1, Math.sqrt(Math.max(0, a))));
+}
+
 /**
- * A missing frame, invalid WGS84 pair or excessive time gap terminates a
- * drawn segment. First/last refer to the first and last ACTUALLY OBSERVED
- * samples inside both event and report window, not an inferred boundary
- * position. No navigation evidence means no PDF position marker.
+ * A missing frame, invalid WGS84 pair, excessive time gap or impossible
+ * displacement terminates a drawn segment. First/last refer to the first and
+ * last ACTUALLY OBSERVED samples inside both event and report window, not an
+ * inferred boundary position. No navigation evidence means no PDF marker.
  * A memberId must represent exactly one vehicleIdentifier in this event:
  * silently changing its identity would mix two vehicles into one PDF track.
  */
@@ -63,9 +77,17 @@ export function investigationEventNavigationEvidence(
       if (vehicleIdentifier !== null && vehicleIdentifier !== row.vehicleIdentifier) {
         throw new Error(`ambiguous PDF navigation: memberId ${memberId} changed vehicleIdentifier within one event`);
       }
-      if (lastObservedMs !== null && (at - lastObservedMs > PDF_NAVIGATION_MAX_GAP_MS || at <= lastObservedMs)) breakSegment();
+      const observed: ObservedPosition = { observedAt: frame.observedAt, latitude: row.latitude as number, longitude: row.longitude as number };
+      if (lastObservedMs !== null) {
+        const elapsedMs = at - lastObservedMs;
+        const prior = current.at(-1);
+        if (elapsedMs > PDF_NAVIGATION_MAX_GAP_MS || elapsedMs <= 0
+          || (prior && greatCircleDistanceM(prior, observed) > PDF_NAVIGATION_MAX_DISPLAY_SPEED_MPS * elapsedMs / 1_000)) {
+          breakSegment();
+        }
+      }
       vehicleIdentifier = row.vehicleIdentifier;
-      current.push({ observedAt: frame.observedAt, latitude: row.latitude as number, longitude: row.longitude as number });
+      current.push(observed);
       lastObservedMs = at;
     }
     breakSegment();
