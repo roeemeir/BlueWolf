@@ -1,29 +1,12 @@
 import { recomputeSimulationEvent } from "@/lib/simulation-investigation";
-import { normalizeEventRecompute, type EventRecomputeResult } from "@/lib/investigation-contract";
+import { normalizeEventRecompute } from "@/lib/investigation-contract";
+import { verifyRecomputeResponseIdentity } from "@/lib/investigation-recompute-identity";
 import type { SyncTemplate } from "@/lib/bluewolf";
 
 function runtimeConfig() {
   const baseUrl = process.env.BLUEWOLF_CORE_API_URL?.trim().replace(/\/$/, "");
   const token = process.env.BLUEWOLF_CORE_API_TOKEN?.trim();
   return { baseUrl, token };
-}
-
-/** A successful upstream HTTP response is not evidence that it recomputed the
- * requested event. Do not display or persist another server/event/template as
- * the selected investigation result. Older clients can omit serverId; whenever
- * it is supplied it must agree with the Core-owned source result. */
-export function verifyRecomputeResponseIdentity(request: Record<string, unknown>, result: EventRecomputeResult): string | null {
-  if (typeof request.eventId !== "string" || !request.eventId.trim()) return "recomputation request is missing eventId";
-  if (typeof request.templateId !== "string" || !request.templateId.trim()) return "recomputation request is missing templateId";
-  if (result.eventId !== request.eventId) return "Python Core recomputation eventId does not match request";
-  if (result.templateId !== request.templateId) return "Python Core recomputation templateId does not match request";
-  if (request.serverId !== undefined && request.serverId !== null) {
-    const serverId = typeof request.serverId === "string" || typeof request.serverId === "number" ? Number(request.serverId) : Number.NaN;
-    if (!Number.isInteger(serverId) || serverId !== result.serverId) return "Python Core recomputation serverId does not match request";
-  }
-  if (typeof request.groupId === "string" && request.groupId && result.groupId !== request.groupId) return "Python Core recomputation groupId does not match request";
-  if ((request.family === "SI" || request.family === "SO") && result.family !== request.family) return "Python Core recomputation family does not match request";
-  return null;
 }
 
 export async function POST(request: Request) {
