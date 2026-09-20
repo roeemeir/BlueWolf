@@ -30,6 +30,8 @@ function validPosition(latitude: number | null, longitude: number | null): boole
  * drawn segment. First/last refer to the first and last ACTUALLY OBSERVED
  * samples inside both event and report window, not an inferred boundary
  * position. No navigation evidence means no PDF position marker.
+ * A memberId must represent exactly one vehicleIdentifier in this event:
+ * silently changing its identity would mix two vehicles into one PDF track.
  */
 export function investigationEventNavigationEvidence(
   event: InvestigationPdfEvent,
@@ -51,8 +53,16 @@ export function investigationEventNavigationEvidence(
     for (const frame of orderedFrames) {
       const at = Date.parse(frame.observedAt);
       if (!Number.isFinite(at) || at < start || at > end) { breakSegment(); continue; }
-      const row = frame.navigation.find((item) => item.memberId === memberId);
+      const rows = frame.navigation.filter((item) => item.memberId === memberId);
+      if (rows.length > 1) throw new Error(`ambiguous PDF navigation: duplicate memberId ${memberId} in one frame`);
+      const row = rows[0];
       if (!row || !validPosition(row.latitude, row.longitude)) { breakSegment(); continue; }
+      if (!Number.isSafeInteger(row.vehicleIdentifier) || row.vehicleIdentifier < 0) {
+        throw new Error(`invalid PDF navigation vehicleIdentifier for memberId ${memberId}`);
+      }
+      if (vehicleIdentifier !== null && vehicleIdentifier !== row.vehicleIdentifier) {
+        throw new Error(`ambiguous PDF navigation: memberId ${memberId} changed vehicleIdentifier within one event`);
+      }
       if (lastObservedMs !== null && (at - lastObservedMs > PDF_NAVIGATION_MAX_GAP_MS || at <= lastObservedMs)) breakSegment();
       vehicleIdentifier = row.vehicleIdentifier;
       current.push({ observedAt: frame.observedAt, latitude: row.latitude as number, longitude: row.longitude as number });
