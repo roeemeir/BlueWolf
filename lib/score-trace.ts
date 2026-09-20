@@ -19,15 +19,22 @@ function validTraceFix(point: ScoreTracePoint): boolean {
     && Number.isFinite(point.longitude) && point.longitude >= -180 && point.longitude <= 180;
 }
 
-/** Source-time deduplication; no line may bridge missing navigation or an event boundary. */
+/** A vehicle can have adjacent event/group evidence at the same source time.
+ * Deduplicating by vehicle+time alone silently loses one event during replay. */
+function traceIdentity(point: ScoreTracePoint): string {
+  return JSON.stringify([point.vehicleId, point.timeMs, point.groupId, point.eventId]);
+}
+
+/** Source-time deduplication preserves event/group provenance and never joins
+ * distinct event identities. Invalid WGS84 fixes are not projected. */
 export function mergeScoreTrace(previous: ScoreTracePoint[], incoming: ScoreTracePoint[], horizonMs = TRACE_RETENTION_MINUTES * 60_000): ScoreTracePoint[] {
   const rows = new Map<string, ScoreTracePoint>();
   for (const point of previous) {
-    if (validTraceFix(point)) rows.set(`${point.vehicleId}:${point.timeMs}`, point);
+    if (validTraceFix(point)) rows.set(traceIdentity(point), point);
   }
   for (const point of incoming) {
     if (!validTraceFix(point)) continue;
-    rows.set(`${point.vehicleId}:${point.timeMs}`, point);
+    rows.set(traceIdentity(point), point);
   }
   const ordered = [...rows.values()].sort((a, b) => a.timeMs - b.timeMs || a.vehicleId - b.vehicleId);
   const end = ordered.at(-1)?.timeMs ?? 0;
@@ -39,8 +46,7 @@ export function filterTraceWindow<T extends ScoreTracePoint>(points: readonly T[
   const finite = points.filter(validTraceFix);
   if (!finite.length) return [];
   // Callers normally pass a sorted merge, but a raw Core replay can arrive out
-  // of order. Always anchor the window to the newest source timestamp, never
-  // to the last array element (which might be an older late-arriving sample).
+  // of order. Anchor the window to the newest source timestamp.
   const end = finite.reduce((latest, point) => Math.max(latest, point.timeMs), Number.NEGATIVE_INFINITY);
   const threshold = end - minutes * 60_000;
   return finite.filter((point) => point.timeMs >= threshold && point.timeMs <= end)
@@ -48,16 +54,21 @@ export function filterTraceWindow<T extends ScoreTracePoint>(points: readonly T[
 }
 
 export function traceSegments<T extends ScoreTracePoint>(points: T[], maxGapMs = 10_000): [T, T][] {
-  const latest = new Map<number, T>();
+  // Each event/group is an independent line, even if the same vehicle has a
+  // boundary observation for both events at precisely the same source time.
+  const latest = new Map<string, T>();
   const segments: [T, T][] = [];
   for (const point of [...points].sort((a, b) => a.timeMs - b.timeMs || a.vehicleId - b.vehicleId)) {
     if (!validTraceFix(point)) {
-      if (Number.isInteger(point.vehicleId)) latest.delete(point.vehicleId);
+      if (Number.isInteger(point.vehicleId)) {
+        for (const [key, prior] of latest) if (prior.vehicleId === point.vehicleId) latest.delete(key);
+      }
       continue;
     }
-    const prior = latest.get(point.vehicleId);
-    if (prior && point.timeMs > prior.timeMs && point.timeMs - prior.timeMs <= maxGapMs && point.groupId === prior.groupId && point.eventId === prior.eventId) segments.push([prior, point]);
-    latest.set(point.vehicleId, point);
+    const key = JSON.stringify([point.vehicleId, point.groupId, point.eventId]);
+    const prior = latest.get(key);
+    if (prior && point.timeMs > prior.timeMs && point.timeMs - prior.timeMs <= maxGapMs) segments.push([prior, point]);
+    latest.set(key, point);
   }
   return segments;
 }
