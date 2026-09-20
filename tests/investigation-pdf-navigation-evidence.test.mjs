@@ -5,7 +5,7 @@ import { createServer } from 'vite';
 const root = process.cwd();
 const vite = await createServer({ appType: 'custom', configFile: false, root, resolve: { alias: { '@': root } }, server: { middlewareMode: true } });
 after(async () => { await vite.close(); });
-const { investigationEventNavigationEvidence } = await vite.ssrLoadModule('/lib/investigation-pdf-navigation-evidence.ts');
+const { investigationEventNavigationEvidence, PDF_NAVIGATION_MAX_GAP_MS } = await vite.ssrLoadModule('/lib/investigation-pdf-navigation-evidence.ts');
 const { investigationEventColor } = await vite.ssrLoadModule('/lib/investigation-pdf-browser.ts');
 const startAt = '2026-09-19T12:00:00.000Z';
 const endAt = '2026-09-19T12:01:00.000Z';
@@ -42,6 +42,20 @@ test('clipping and absent evidence never extrapolate from a planned route or a n
   assert.equal(members[0].last.observedAt, frame(20, []).observedAt);
   assert.deepEqual(investigationEventNavigationEvidence({ result: { ...sample.result, points: [], routes: [{ centerline: [{ latitude: 31, longitude: 34 }] }] } }, -Infinity, Infinity), []);
   assert.deepEqual(investigationEventNavigationEvidence(sample, Date.parse(endAt) + 1, Infinity), []);
+});
+
+test('sparse archive splits unrecorded navigation gaps even without a missing-data frame', () => {
+  assert.equal(PDF_NAVIGATION_MAX_GAP_MS, 10_000);
+  const event = { result: { startAt, endAt, points: [
+    frame(2, [nav('a', 31.1, 34.1)]),
+    frame(12, [nav('a', 31.2, 34.2)]),
+    frame(24, [nav('a', 31.3, 34.3)]),
+    frame(26, [nav('a', 31.4, 34.4)]),
+  ] } };
+  const [member] = investigationEventNavigationEvidence(event, -Infinity, Infinity);
+  assert.deepEqual(member.segments.map((segment) => segment.length), [2, 2]);
+  assert.equal(member.first.observedAt, frame(2, []).observedAt);
+  assert.equal(member.last.observedAt, frame(26, []).observedAt);
 });
 
 test('overview and per-event PDF maps can share a stable event color beyond seven events', () => {
