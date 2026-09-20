@@ -1,4 +1,5 @@
 import type { SoRouteKind } from "@/lib/bluewolf";
+import { closedOutlineClearance } from "./so-route-clearance";
 
 /** GEO-01/GEO-02: identical physical geometry for the SO generator, preview and live simulation. */
 export type SoPoint = { x: number; y: number };
@@ -246,11 +247,7 @@ export function soPhasesForRoute(kind: SoRouteKind) {
   return SO_DIRECT_PHASES[kind];
 }
 
-/** Closest sampled points on two physical outlines (positive when they do not touch). */
+/** Continuous outline clearance: zero for crossing, touching or containment. */
 export function minimumRouteGap(first: SoRouteGeometry, second: SoRouteGeometry) {
-  let minimum = Number.POSITIVE_INFINITY;
-  for (const left of first.points) {
-    for (const right of second.points) minimum = Math.min(minimum, distance(left, right));
-  }
-  return minimum;
+  return closedOutlineClearance(first.points, second.points);
 }
