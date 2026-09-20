@@ -39,15 +39,29 @@ function pointSegmentSquared(p: OutlinePoint, a: OutlinePoint, b: OutlinePoint) 
   return (p.x - a.x - t * dx) ** 2 + (p.y - a.y - t * dy) ** 2;
 }
 
-/** A triangle count alone does not make a valid closed route: reject collinear
- * or fully repeated samples before interpreting a positive separation as safe. */
-function hasClosedArea(outline: readonly OutlinePoint[]): boolean {
+/** Positive signed area is not enough: a self-crossing outline can have a
+ * nonzero shoelace area and must not be accepted as a physical closed route. */
+function hasSimpleClosedArea(outline: readonly OutlinePoint[]): boolean {
   const origin = outline[0];
   let twiceArea = 0;
   for (let index = 1; index < outline.length - 1; index += 1) {
     twiceArea += cross(origin, outline[index], outline[index + 1]);
   }
-  return Number.isFinite(twiceArea) && Math.abs(twiceArea) > EPSILON;
+  if (!Number.isFinite(twiceArea) || Math.abs(twiceArea) <= EPSILON) return false;
+
+  for (let i = 0; i < outline.length; i += 1) {
+    const a = outline[i];
+    const b = outline[(i + 1) % outline.length];
+    if (pointSegmentSquared(a, b, b) <= EPSILON * EPSILON) return false;
+    for (let j = i + 1; j < outline.length; j += 1) {
+      // Adjacent edges intentionally share their common vertex.
+      if (j === i + 1 || (i === 0 && j === outline.length - 1)) continue;
+      const c = outline[j];
+      const d = outline[(j + 1) % outline.length];
+      if (intersects(a, b, c, d)) return false;
+    }
+  }
+  return true;
 }
 
 /** Returns true for strict containment; boundaries were checked beforehand. */
@@ -67,7 +81,7 @@ function inside(p: OutlinePoint, outline: readonly OutlinePoint[]) {
 export function closedOutlineClearance(first: readonly OutlinePoint[], second: readonly OutlinePoint[]): number {
   if (first.length < 3 || second.length < 3) return 0;
   if (![...first, ...second].every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))) return 0;
-  if (!hasClosedArea(first) || !hasClosedArea(second)) return 0;
+  if (!hasSimpleClosedArea(first) || !hasSimpleClosedArea(second)) return 0;
   let minimumSquared = Number.POSITIVE_INFINITY;
   for (let i = 0; i < first.length; i += 1) {
     const a = first[i];
