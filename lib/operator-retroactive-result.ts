@@ -68,7 +68,11 @@ export function historyWithEventRecompute(
 }
 
 export function traceWithEventRecompute(previous: ScoreTracePoint[], result: EventRecomputeResult): ScoreTracePoint[] {
-  const kept = previous.filter((point) => point.eventId !== result.eventId);
+  // An event ID is not a license to delete another group's observations.
+  // The recomputation replaces only its exact group/event identity; a separate
+  // group may legitimately retain same-named event evidence in a multi-group
+  // or cross-source report snapshot.
+  const kept = previous.filter((point) => !(point.groupId === result.groupId && point.eventId === result.eventId));
   const recomputed = result.points.flatMap((point) => {
     const memberById = new Map(point.members.map((member) => [member.memberId, member]));
     return point.navigation.flatMap((nav) => {
