@@ -72,3 +72,28 @@ test('Core recompute rejects an unbound or malformed request identity instead of
     assert.ok(result, 'missing identity must be an explicit provenance error');
   }
 });
+
+test('SIM recompute selects an existing current server event and carries explicit synthetic provenance', async () => {
+  const response = await POST(request({ ...requestBody, source: 'simulation' }));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('x-bluewolf-investigation'), 'simulator-archive');
+  const result = await response.json();
+  assert.equal(result.eventId, requestBody.eventId);
+  assert.equal(result.serverId, requestBody.serverId);
+  assert.equal(result.groupId, requestBody.groupId);
+  assert.equal(result.family, requestBody.family);
+});
+
+test('SIM recompute refuses fabricated, cross-server, cross-group or wrong-family events', async () => {
+  for (const [label, change] of [
+    ['unknown event', { eventId: 'sim-s1-si-not-an-archived-event' }],
+    ['cross-server event', { serverId: 2 }],
+    ['wrong group', { groupId: 'not-this-group' }],
+    ['wrong family', { family: 'SO' }],
+  ]) {
+    const response = await POST(request({ ...requestBody, ...change, source: 'simulation' }));
+    assert.equal(response.status, 422, label);
+    assert.equal(response.headers.get('x-bluewolf-investigation'), null);
+    assert.ok((await response.json()).error, `${label}: a provenance error is required`);
+  }
+});
