@@ -6,7 +6,8 @@ const root = process.cwd();
 process.env.BLUEWOLF_CORE_API_URL = 'http://core.test';
 const vite = await createServer({ appType: 'custom', configFile: false, root, resolve: { alias: { '@': root } }, server: { middlewareMode: true } });
 after(async () => { await vite.close(); });
-const { POST, verifyRecomputeResponseIdentity } = await vite.ssrLoadModule('/app/api/investigation/recompute/route.ts');
+const { POST } = await vite.ssrLoadModule('/app/api/investigation/recompute/route.ts');
+const { verifyRecomputeResponseIdentity } = await vite.ssrLoadModule('/lib/investigation-recompute-identity.ts');
 const { recomputeSimulationEvent } = await vite.ssrLoadModule('/lib/simulation-investigation.ts');
 const source = recomputeSimulationEvent({
   serverId: 1, eventId: 'sim-s1-si-active', templateId: 'tpl-si-h',
