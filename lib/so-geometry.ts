@@ -99,6 +99,11 @@ function singleHippodromePoints(radius: number, halfLeg: number, samples: number
  * left endpoint BELOW the center, right endpoint BELOW the center. The physical
  * axes read left-to-right as -15° then +15°, matching the neighboring Singles
  * in the global concave smile. The previous +15°/-15° ordering drew a local V.
+ *
+ * The upper, inside edge must meet at the intersection of its two offset
+ * straight lines. Connecting the two separate offset vertices directly makes
+ * a bow-tie/self-crossing outline and invalidates all clearance measurements.
+ * For a symmetric 30° break the exact miter is (0, r / cos(15°)).
  */
 function bentDoubleHippodromePoints(radius: number, segmentLength: number, samples: number): SoPoint[] {
   const halfBreak = DOUBLE_HIPPODROME_BREAK_DEG / 2 * Math.PI / 180;
@@ -113,10 +118,10 @@ function bentDoubleHippodromePoints(radius: number, segmentLength: number, sampl
     x: point.x + normal.x * amount, y: point.y + normal.y * amount,
   });
 
+  const innerMiter = { x: joint.x, y: joint.y + radius / Math.cos(halfBreak) };
   const points: SoPoint[] = [
     offset(leftEnd, normalLeft, radius),
-    offset(joint, normalLeft, radius),
-    offset(joint, normalRight, radius),
+    innerMiter,
     offset(rightEnd, normalRight, radius),
   ];
 
