@@ -29,7 +29,11 @@ test('BW-OFF-010 investigation PDF uses configured WMTS defaults only through lo
   assert.match(release, /pages\.push\(\.\.\.engineeringPages\.slice\(cursor\)\)/);
   assert.doesNotMatch(release, /\.\.\.engineeringPages\.slice\(1\),\s*\.\.\.eventMaps/);
   assert.match(logo, /src="\/favicon\.svg"/);
-  assert.match(brand, /image\.src = "\/favicon\.svg"/);
+  assert.match(brand, /loadImageSource\("\/favicon\.svg",/);
+  assert.match(brand, /OFFLINE_FAVICON_SVG/);
+  assert.match(renderer, /drawPositionMarker/);
+  assert.match(renderer, /investigationEventNavigationEvidence/);
+  assert.match(renderer, /investigationEventColor/);
   assert.match(brand, /report\.events/);
   assert.match(brand, /scoredFrameCount/);
   assert.match(brand, /missingFrameCount/);
