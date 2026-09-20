@@ -11,8 +11,15 @@ const core = read("components/bluewolf/operational-live-map.tsx");
 
 for (const [name, source] of [["SIM", simulation], ["Core", core]]) {
   test(`${name} renders five independent layer filter controls and actual SVG visibility gates`, () => {
-    for (const label of ["עקבה נצפית", "עקבה לפי ציון", "נתיב מזוהה", "קבוצות", "תבנית"]) {
+    const routeLabel = name === "SIM" ? "נתיב מזוהה (SIM: תרחיש, לא Core)" : "נתיב מזוהה";
+    for (const label of ["עקבה נצפית", "עקבה לפי ציון", routeLabel, "קבוצות", "תבנית"]) {
       assert.ok(source.includes(`>${label}</button>`), `${name}: missing ${label}`);
+    }
+    if (name === "SIM") {
+      assert.match(source, /data-sim-navigation-source="synthetic-sim-navigation"/);
+      assert.match(source, /SIM · GPS סינתטי עם רעש, רוח וחורי מדידה; לא תצפיות Core/);
+    } else {
+      assert.doesNotMatch(source, /data-sim-navigation-source/);
     }
     for (const layer of ["observed-trace", "score-trace"]) assert.ok(source.includes(`className="${layer}"`), `${name}: missing ${layer} SVG layer`);
     assert.match(source, /onClick=\{\(\) => set(?:ShowObservedTrace|ObservedLayer)/);
