@@ -23,8 +23,11 @@ test('BW-OFF-010 investigation PDF uses configured WMTS defaults only through lo
 
   assert.match(release, /buildInvestigationWmtsMapPages/);
   assert.match(release, /buildInvestigationBrandedCover/);
-  assert.match(release, /\.\.\.engineeringPages\.slice\(0, 1\),\s*\.\.\.overviewMap,\s*\.\.\.engineeringPages\.slice\(1\)/);
-  assert.match(release, /\.\.\.eventMaps/);
+  assert.match(release, /mapPages\.length !== report\.events\.length \+ 1/);
+  assert.match(release, /buildInvestigationPdfBrowser\(\{ \.\.\.report, events: \[event\] \}\)/);
+  assert.match(release, /pages\.push\(\.\.\.engineeringPages\.slice\(cursor, cursor \+ eventPageCount\), mapPages\[index \+ 1\]\)/);
+  assert.match(release, /pages\.push\(\.\.\.engineeringPages\.slice\(cursor\)\)/);
+  assert.doesNotMatch(release, /\.\.\.engineeringPages\.slice\(1\),\s*\.\.\.eventMaps/);
   assert.match(logo, /src="\/favicon\.svg"/);
   assert.match(brand, /image\.src = "\/favicon\.svg"/);
   assert.match(brand, /report\.events/);
