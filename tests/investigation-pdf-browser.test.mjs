@@ -140,7 +140,9 @@ test('REP-01/02 renderer remains the base of lifecycle and release PDF with loca
   assert.match(lifecycle, /jpegPagesToPdf\(\[\.\.\.basePages, \.\.\.lifecycle\]\)/);
   assert.match(release, /buildInvestigationPdfWithLifecycle/);
   assert.match(release, /buildInvestigationWmtsMapPages/);
-  assert.match(release, /jpegPagesToPdf\(\[\.\.\.engineeringPages, \.\.\.mapPages\]\)/);
+  assert.match(release, /buildInvestigationBrandedCover/);
+  assert.match(release, /\.\.\.engineeringPages\.slice\(0, 1\),\s*\.\.\.overviewMap,\s*\.\.\.engineeringPages\.slice\(1\)/);
+  assert.match(release, /\.\.\.eventMaps/);
   assert.match(panel, /format: "data"/);
   assert.match(panel, /normalizeInvestigationReportData/);
   assert.match(panel, /buildInvestigationReleasePdf/);
