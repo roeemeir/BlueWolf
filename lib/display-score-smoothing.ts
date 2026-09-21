@@ -7,10 +7,18 @@ function eventIdentity(group: LiveRuntimeHistoryGroup) {
   return group.event?.id ?? null;
 }
 
+function hasFiniteScores(group: LiveRuntimeHistoryGroup) {
+  return Number.isFinite(group.total)
+    && Number.isFinite(group.sync)
+    && Number.isFinite(group.route);
+}
+
 function sameDisplaySegment(current: LiveRuntimeHistoryGroup, candidate: LiveRuntimeHistoryGroup) {
   return current.id === candidate.id
     && current.scoreValid
     && candidate.scoreValid
+    && hasFiniteScores(current)
+    && hasFiniteScores(candidate)
     && eventIdentity(current) === eventIdentity(candidate);
 }
 
@@ -41,7 +49,7 @@ export function smoothRuntimeHistoryForDisplay(
   output.forEach((point, pointIndex) => {
     const now = Date.parse(point.observedAt);
     point.groups = point.groups.map((group) => {
-      if (!group.scoreValid || !Number.isFinite(now)) return group;
+      if (!group.scoreValid || !hasFiniteScores(group) || !Number.isFinite(now)) return group;
       const totals: number[] = [];
       const syncs: number[] = [];
       const routes: number[] = [];
