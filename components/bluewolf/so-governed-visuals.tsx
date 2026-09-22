@@ -175,7 +175,7 @@ export function GovernedTemplatePreview({ family, values, siPositions, compact =
 
   const relations = values.map(relationFromCode);
   const selectedTemplate = state.templates.find((template) => template.family === "SO" && template.values === values && template.soSpec?.chain === soKinds);
-  const storedPlacements = (selectedTemplate?.soSpec as (typeof selectedTemplate.soSpec & { directPlacements?: SoDirectPlacement[] }) | undefined)?.directPlacements;
+  const storedPlacements = (selectedTemplate?.soSpec as (import("@/lib/bluewolf").SoTemplateSpec & { directPlacements?: SoDirectPlacement[] }) | undefined)?.directPlacements;
   const placements = Array.isArray(storedPlacements) ? storedPlacements.filter((placement) => Number.isInteger(placement.routeIndex) && Number.isFinite(placement.phase) && (placement.direction === "forward" || placement.direction === "reverse")) : [];
   const typeColors = vehicleTypes.length ? vehicleTypes.map((item) => item.color) : ["#ff9f43", "#34b7eb", "#9068ff", "#d16ff2", "#4fbf79"];
   const width = Math.max(400, 110 * soKinds.length + 70);
