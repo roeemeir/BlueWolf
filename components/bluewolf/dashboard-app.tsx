@@ -15,6 +15,7 @@ import type { DataMode } from "@/lib/bluewolf";
 import { currentRuntimeNotifications } from "@/lib/live-notifications";
 import { applyLiveRuntimeSnapshot, fetchLiveRuntimeSnapshot, restoreSimulationScenario, simulationRuntimeSnapshot, unavailableRuntimeSnapshot, type LiveRuntimeSnapshot, type RuntimeHealth } from "@/lib/live-runtime";
 import { applyLiveRuntimeHistory, appendLiveRuntimeHistory, fetchLiveRuntimeHistory } from "@/lib/live-runtime-history";
+import { newerRuntimeSnapshotTime } from "@/lib/runtime-snapshot-order";
 import { DeveloperGovernanceWorkbench } from "./developer-governance-workbench";
 import { InvestigationWorkspace } from "./investigation-workspace";
 import { OperatorView } from "./operator-view";
@@ -96,6 +97,10 @@ function AppInner() {
   useEffect(() => {
     if (dataMode === "simulation") return;
     let cancelled = false;
+    // This cursor belongs to one server/mode poll subscription. A slower HTTP
+    // response must not rewind live cards/alerts or turn an older positionless
+    // frame into a new trace gap. Reset it only when this subscription ends.
+    let latestAcceptedSourceMs = Number.NEGATIVE_INFINITY;
     const bootstrapHistory = async () => {
       try {
         const history = await fetchLiveRuntimeHistory(serverValue);
@@ -110,6 +115,9 @@ function AppInner() {
       try {
         const snapshot = await fetchLiveRuntimeSnapshot(serverValue);
         if (cancelled) return;
+        const sourceTimeMs = newerRuntimeSnapshotTime(latestAcceptedSourceMs, snapshot.observedAt);
+        if (sourceTimeMs === null) return; // Drop the whole stale/repeated/invalid frame before ANY live mutation.
+        latestAcceptedSourceMs = sourceTimeMs;
         applyLiveRuntimeSnapshot(snapshot);
         appendLiveRuntimeHistory(snapshot);
         setRuntimeState(snapshot.source.health);
