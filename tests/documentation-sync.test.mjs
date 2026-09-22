@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  ACTIVE_CORE_RESEARCH,
+  ARCHIVED_CORE_RESEARCH,
   DOCUMENTATION_SYNC_SCHEMA_VERSION,
   IMPLEMENTATION_TRACKED_PATHS,
   validateDocumentationSync,
@@ -24,6 +26,14 @@ test('BW-GOV-010 manifest binds the governed Master and research documents to th
   assert.equal(manifest.masterDocument.version, '2.8');
   assert.equal(manifest.masterDocument.verifiedImplementationBaseline, '8e859273560d61af09095352579f37a94c4d45b1');
   assert.equal(manifest.masterDocument.verifiedCiRun, 2203);
+  assert.deepEqual(
+    { version: manifest.coreResearchDocument.version, title: manifest.coreResearchDocument.title, driveFileId: manifest.coreResearchDocument.driveFileId },
+    ACTIVE_CORE_RESEARCH,
+  );
+  assert.equal(manifest.archivedCoreResearchDocument.version, ARCHIVED_CORE_RESEARCH.version);
+  assert.equal(manifest.archivedCoreResearchDocument.driveFileId, ARCHIVED_CORE_RESEARCH.driveFileId);
+  assert.equal(manifest.archivedCoreResearchDocument.archiveFolderId, ARCHIVED_CORE_RESEARCH.archiveFolderId);
+  assert.equal(manifest.archivedCoreResearchDocument.status, 'archived');
   assert.ok(manifest.researchDocuments.includes('core/docs/ALGORITHMIC_CORE_RESEARCH_LOG_HE.md'));
   assert.ok(manifest.researchDocuments.includes('core/docs/IMPLEMENTATION_STATUS_HE.md'));
 });
@@ -34,4 +44,23 @@ test('BW-GOV-010 drift is fail-closed', async () => {
   drifted.implementationFingerprint.digest = '0000000000000000';
   const result = await validateDocumentationSync(drifted);
   assert.ok(result.errors.some((error) => error.includes('documentation drift')));
+});
+
+test('BW-GOV-010 cannot silently restore archived v2.1 as the active Core report', async () => {
+  const manifest = JSON.parse(await readFile('docs/documentation-sync.json', 'utf8'));
+  const wrong = structuredClone(manifest);
+  wrong.coreResearchDocument.version = '2.1';
+  wrong.coreResearchDocument.title = 'Blue_Wolf_Core_Research_Report_HE_v2_1.docx';
+  wrong.coreResearchDocument.driveFileId = ARCHIVED_CORE_RESEARCH.driveFileId;
+  const result = await validateDocumentationSync(wrong);
+  assert.ok(result.errors.some((error) => error.includes('canonical Drive report v1.2')));
+  assert.ok(result.errors.some((error) => error.includes('cannot be the archived report')));
+});
+
+test('BW-GOV-010 missing archive metadata cannot masquerade as a synchronized report', async () => {
+  const manifest = JSON.parse(await readFile('docs/documentation-sync.json', 'utf8'));
+  const wrong = structuredClone(manifest);
+  delete wrong.archivedCoreResearchDocument;
+  const result = await validateDocumentationSync(wrong);
+  assert.ok(result.errors.some((error) => error.includes('must remain explicitly archived')));
 });
