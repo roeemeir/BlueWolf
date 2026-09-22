@@ -115,14 +115,25 @@ function AppInner() {
       try {
         const snapshot = await fetchLiveRuntimeSnapshot(serverValue);
         if (cancelled) return;
-        // Do not mutate traces/history/cards/alerts for a late, repeated or
-        // superseded poll. The persisted gate also survives cadence changes.
-        if (!pollOrder.current.acceptSnapshot(serverValue, requestId, snapshot.observedAt)) return;
-        applyLiveRuntimeSnapshot(snapshot);
-        appendLiveRuntimeHistory(snapshot);
+        const healthyCoreFrame = snapshot.source.kind === "python-core" && snapshot.source.health === "healthy";
+        // Fresh navigation requires STRICTLY newer source time. A current
+        // stale/unavailable response may repeat that time; it updates health
+        // by request order WITHOUT adding navigation or operational history.
+        const accepted = healthyCoreFrame
+          ? pollOrder.current.acceptSnapshot(serverValue, requestId, snapshot.observedAt)
+          : pollOrder.current.acceptHealthSnapshot(serverValue, requestId, snapshot.observedAt);
+        if (!accepted) return;
+        if (healthyCoreFrame) {
+          applyLiveRuntimeSnapshot(snapshot);
+          appendLiveRuntimeHistory(snapshot);
+        } else {
+          // Do not leave a stale Core payload's old positive scores or active
+          // alerts in runtime group cards. The fallback contains NO GPS evidence.
+          applyLiveRuntimeSnapshot(unavailableRuntimeSnapshot(serverValue, snapshot.source.detail ?? "Python Core runtime אינו זמין.", snapshot.observedAt));
+        }
         setRuntimeState(snapshot.source.health);
         setRuntimeDetail(snapshot.source.detail ?? `snapshot ${snapshot.observedAt}`);
-        setCoreSnapshot(snapshot.source.kind === "python-core" && snapshot.source.health === "healthy" ? snapshot : null);
+        setCoreSnapshot(healthyCoreFrame ? snapshot : null);
       } catch (error) {
         if (cancelled || !pollOrder.current.acceptFailure(serverValue, requestId)) return;
         const detail = error instanceof Error ? error.message : "Python Core runtime is unavailable";
