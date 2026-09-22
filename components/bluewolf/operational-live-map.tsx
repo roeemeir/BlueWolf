@@ -2,22 +2,18 @@
 
 import { useEffect, useState } from "react";
 
+import { SO_RELATION_LABELS, relationFromCode, type VehicleType } from "@/lib/bluewolf";
 import { normalizeEventRecompute, type EventRecomputeResult } from "@/lib/investigation-contract";
 import { extractLiveMapEventEvidence, type LiveMapEventEvidence } from "@/lib/live-map-evidence";
 import { getRuntimeGroups, getRuntimeTrace, type LiveRuntimeVehicle } from "@/lib/live-runtime";
 import { getLiveRuntimeHistory } from "@/lib/live-runtime-history";
 import { normalizeMapSources, type OperationalMapSource } from "@/lib/map-source-config";
 import { createOperationalProjection, type GeoPoint } from "@/lib/operational-map-projection";
-import {
-  currentOperatorCursor,
-  resolveOperatorCursorFrame,
-  subscribeOperatorCursor,
-  traceUpToCursor,
-} from "@/lib/operator-time-cursor";
+import { operatorWindowForServer, OPERATOR_SHARED_WINDOWS, setOperatorWindowForServer, subscribeOperatorWindow } from "@/lib/operator-shared-window";
+import { currentOperatorCursor, resolveOperatorCursorFrame, subscribeOperatorCursor, traceUpToCursor } from "@/lib/operator-time-cursor";
 import { traceWithEventRecompute } from "@/lib/operator-retroactive-result";
-import { DEFAULT_TRACE_WINDOW_MINUTES, filterTraceWindow, traceScoreColor, traceSegments } from "@/lib/score-trace";
+import { filterTraceWindow, traceScoreColor, traceSegments } from "@/lib/score-trace";
 import { defaultWmtsLayerSelections, wmtsProjectionKind } from "@/lib/wmts-capabilities";
-import type { VehicleType } from "@/lib/bluewolf";
 import { vehicleTypeMatchesId } from "@/lib/vehicle-id-ranges";
 import { useWorkspace } from "./app-context";
 import { OperationalBasemap } from "./operational-basemap";
@@ -30,7 +26,6 @@ const VIEW_WIDTH = 1000;
 const VIEW_HEIGHT = 570;
 const MARGIN_X = 70;
 const MARGIN_Y = 65;
-const TRACE_WINDOWS = [30, 60, 90] as const;
 
 function livePositions(serverId: string): RawPosition[] {
   return getRuntimeGroups(serverId).flatMap((group) => group.members.flatMap((vehicle) => {
@@ -100,7 +95,11 @@ export function OperationalLiveMap({
   const [showContext, setShowContext] = useState(showGrid);
   useEffect(() => setShowScoreTrace(showTrace), [showTrace]);
   useEffect(() => setShowContext(showGrid), [showGrid]);
-  const [traceWindowMinutes, setTraceWindowMinutes] = useState<number>(DEFAULT_TRACE_WINDOW_MINUTES);
+  const [traceWindowMinutes, setTraceWindowMinutes] = useState(() => operatorWindowForServer(serverId));
+  useEffect(() => {
+    setTraceWindowMinutes(operatorWindowForServer(serverId));
+    return subscribeOperatorWindow(serverId, setTraceWindowMinutes);
+  }, [serverId]);
   const [wmtsVisibility, setWmtsVisibility] = useState<Record<string, string[]>>({});
   const [cursorObservedAt, setCursorObservedAt] = useState<string | null>(() => currentOperatorCursor(serverId));
 
@@ -131,8 +130,8 @@ export function OperationalLiveMap({
     && eventEvidence.serverId === Number(serverId) && eventEvidence.groupId === selectedGroupId
     && eventEvidence.eventId === activeEventId && eventEvidence.templateId === activeTemplateId ? eventEvidence : null);
   const fullTrace = matchingOverride && !cursorObservedAt
-    ? traceWithEventRecompute(getRuntimeTrace(serverId, TRACE_WINDOWS.at(-1) ?? 90), matchingOverride)
-    : getRuntimeTrace(serverId, TRACE_WINDOWS.at(-1) ?? 90);
+    ? traceWithEventRecompute(getRuntimeTrace(serverId, 90), matchingOverride)
+    : getRuntimeTrace(serverId, 90);
   const cursorFrame = cursorObservedAt ? resolveOperatorCursorFrame(getLiveRuntimeHistory(serverId), fullTrace, cursorObservedAt) : null;
   const cursorTimeMs = cursorFrame?.timeMs ?? null;
   const clippedTrace = cursorObservedAt && !cursorFrame ? [] : traceUpToCursor(fullTrace, cursorTimeMs);
@@ -167,8 +166,7 @@ export function OperationalLiveMap({
   const projectionMode = mapSource?.kind === "xyz"
     || (mapSource?.kind === "wmts" && !mapSource.wmtsCatalog)
     || visibleMatrixSets.some((matrixSet) => wmtsProjectionKind(matrixSet.supportedCrs) === "webmercator")
-    ? "webmercator"
-    : "local-wgs84";
+    ? "webmercator" : "local-wgs84";
   const projection = createOperationalProjection(geoRows, VIEW_WIDTH, VIEW_HEIGHT, MARGIN_X, MARGIN_Y, projectionMode);
   const project = projection.project;
   const projectedHistory = history.map((point) => ({ ...point, ...project(point.latitude, point.longitude) }));
@@ -187,18 +185,45 @@ export function OperationalLiveMap({
   };
   const historical = cursorObservedAt !== null;
   const historicalLabel = cursorFrame ? new Date(cursorFrame.timeMs).toLocaleTimeString("he-IL") : null;
+  const effectiveTemplateId = matchingOverride?.templateId ?? state.activeTemplateOverrides[`${serverId}:${selectedGroupId}`] ?? activeTemplateId;
+  const soTemplate = selectedRuntimeGroup?.family === "SO" ? state.templates.find((item) => item.id === effectiveTemplateId && item.family === "SO") : undefined;
+  // These are labels BETWEEN observed adjacent route instances, not lines or a
+  // convex hull between arbitrary SO vehicles. Missing geometry/relation means
+  // no guessed relation on a map that may be used as operational evidence.
+  const soRelationLabels = soTemplate && routeEvidence.length > 1
+    ? routeEvidence.slice(0, -1).flatMap((route, index) => {
+        const next = routeEvidence[index + 1];
+        const code = soTemplate.values[index];
+        if (!route.centerline.length || !next.centerline.length || code === undefined) return [];
+        const center = (rows: typeof route.centerline) => ({
+          latitude: rows.reduce((sum, row) => sum + row.latitude, 0) / rows.length,
+          longitude: rows.reduce((sum, row) => sum + row.longitude, 0) / rows.length,
+        });
+        const first = center(route.centerline);
+        const second = center(next.centerline);
+        const a = project(first.latitude, first.longitude);
+        const b = project(second.latitude, second.longitude);
+        return [{ key: `${route.routeInstanceId}:${next.routeInstanceId}`, x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, label: SO_RELATION_LABELS[relationFromCode(code)] }];
+      }) : [];
 
   return <div className="operational-map-layer-shell" dir="rtl" data-requirements="OP-02 OP-04 BW-OFF-010 BW-UI-005 BW-UI-014 UI-01">
+    <style>{".operator-workspace .v04-map-toolbar{display:none}"}</style>
+    <div className="v04-map-time-controls" data-testid="operator-shared-time-window" style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, padding: "9px 12px", marginBottom: 5 }}>
+      <strong>חלון זמן משותף · מפה וגרף</strong>
+      <div className="segmented-control" aria-label="חלון זמן משותף למפה ולגרף">
+        {OPERATOR_SHARED_WINDOWS.map((minutes) => <button type="button" key={minutes} className={traceWindowMinutes === minutes ? "active" : ""} onClick={() => setOperatorWindowForServer(serverId, minutes)}>{minutes} דק׳</button>)}
+      </div>
+      <span className="card-hint">מוצגות דגימות שנצפו בלבד; חלון גדול אינו משלים היסטוריה חסרה.</span>
+    </div>
     <div className="v04-map-layer-controls" style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "6px 8px" }}>
+      <strong>שכבות</strong>
       <button type="button" className={showBase ? "active" : ""} onClick={() => setShowBase((value) => !value)}>בסיס</button>
       <button type="button" className={showObservedTrace ? "active" : ""} onClick={() => setShowObservedTrace((value) => !value)}>עקבה נצפית</button>
       <button type="button" className={showScoreTrace ? "active" : ""} onClick={() => setShowScoreTrace((value) => !value)}>עקבה לפי ציון</button>
       <button type="button" disabled={historical} className={showDetectedRoute && !historical ? "active" : ""} onClick={() => setShowDetectedRoute((value) => !value)}>נתיב מזוהה</button>
       <button type="button" className={showGroups ? "active" : ""} onClick={() => setShowGroups((value) => !value)}>קבוצות</button>
       <button type="button" disabled={historical} className={showTemplate && !historical ? "active" : ""} onClick={() => setShowTemplate((value) => !value)}>תבנית</button>
-      <button type="button" className={showContext ? "active" : ""} onClick={() => setShowContext((value) => !value)}>יחסים / רשת</button>
-      <span aria-label="חלון עקבה">חלון:</span>
-      {TRACE_WINDOWS.map((minutes) => <button type="button" key={minutes} className={traceWindowMinutes === minutes ? "active" : ""} onClick={() => setTraceWindowMinutes(minutes)}>{minutes} דק׳</button>)}
+      <button type="button" className={showContext ? "active" : ""} onClick={() => setShowContext((value) => !value)}>רשת</button>
       {wmtsSelections.length > 0 && <><span aria-label="שכבות WMTS">WMTS:</span>{wmtsSelections.map((selection) => {
         const layer = mapSource?.wmtsCatalog?.layers.find((item) => item.identifier === selection.layer);
         const visible = visibleWmtsLayers?.includes(selection.layer) ?? false;
@@ -224,12 +249,13 @@ export function OperationalLiveMap({
       })}</g>}
       {showObservedTrace && <g className="observed-trace">{segments.map(([a, b]) => <line key={`observed:${b.vehicleId}:${b.timeMs}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#7b8790" strokeWidth="2" opacity=".58"><title>עקבה נצפית · רכב {b.vehicleId} · {new Date(b.timeMs).toLocaleTimeString("he-IL")}</title></line>)}</g>}
       {showScoreTrace && <g className="score-trace">{segments.map(([a, b]) => <line key={`score:${b.vehicleId}:${b.timeMs}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} style={{ stroke: traceScoreColor(b.sync) }}><title>רכב {b.vehicleId} · סנכרון {b.sync === null ? "אין מידע" : Math.round(b.sync)} · {new Date(b.timeMs).toLocaleTimeString("he-IL")}</title></line>)}</g>}
-      {showGroups && <g className="v04-group-shapes">{runtimeGroups.map((group) => {
+      {showGroups && <g className="v04-group-shapes">{runtimeGroups.filter((group) => group.family === "SI").map((group) => {
         const groupPoints = points.filter((point) => point.groupId === group.id);
         if (groupPoints.length < 2) return null;
         const hull = convexHull(groupPoints);
         return <polygon key={`shape:${group.id}`} points={hull.map((point) => `${point.x},${point.y}`).join(" ")} fill={group.color} fillOpacity=".09" stroke={group.color} strokeOpacity=".72" strokeWidth="2"><title>{group.name}</title></polygon>;
       })}</g>}
+      {showGroups && !historical && showTemplate && soRelationLabels.length > 0 && <g className="v04-so-relation-labels" data-testid="so-adjacent-relations">{soRelationLabels.map((item) => <g key={item.key} transform={`translate(${item.x} ${item.y})`}><rect x="-42" y="-14" width="84" height="28" rx="12" fill="var(--map-card)" stroke={selectedRuntimeGroup?.color ?? "#4378e8"} strokeWidth="1.5" /><text x="0" y="5" textAnchor="middle" stroke="none" fill="var(--text)">{item.label}</text></g>)}</g>}
       {showGroups && <g className="v04-vehicles">{points.map((point) => {
         const selected = !historical && point.groupId === selectedGroupId && point.vehicle.id === selectedVehicle; const heading = point.vehicle.headingDeg ?? 0;
         const activate = () => { if (historical) return; onSelectGroup(point.groupId); onSelectVehicle(point.vehicle.id, point.groupId); };
@@ -240,7 +266,7 @@ export function OperationalLiveMap({
       {showTemplate && !historical && <g className="v04-template-assignment-layer">{points.map((point) => {
         const assignment = assignmentByVehicle.get(point.vehicle.id); if (!assignment) return null;
         return <g key={`template:${point.vehicle.id}`} transform={`translate(${point.x + 18} ${point.y - 22})`}><rect x="0" y="-18" width="116" height="24" rx="10" fill="var(--map-card)" opacity=".9" /><text x="8" y="0" textAnchor="start" stroke="none">{assignment.slotId} · φ {Math.round(assignment.expectedPhase * 100)}%</text></g>;
-      })}{(matchingOverride?.templateId ?? activeTemplateId) && <text x={VIEW_WIDTH - 42} y="45" textAnchor="end" stroke="none">Template: {matchingOverride?.templateId ?? activeTemplateId}</text>}</g>}
+      })}{effectiveTemplateId && <text x={VIEW_WIDTH - 42} y="45" textAnchor="end" stroke="none">Template: {effectiveTemplateId}</text>}</g>}
       <g className="v04-map-scale"><text x="42" y="535">{mapSource ? `${mapSource.kind.toUpperCase()} · ` : ""}WGS84 · תצוגה יחסית auto-fit</text><text x="955" y="535" textAnchor="end">{historical ? "HISTORICAL EVIDENCE" : "LIVE CORE"}</text></g>
     </svg>
   </div>;
