@@ -49,7 +49,6 @@ test('OP-02 map template assignment is joined through Core navigation vehicle id
 test('OP-02 Core map exposes independent truth layers and uses Core evidence, never demo route synthesis', async () => {
   const source = await readFile('components/bluewolf/operational-live-map.tsx', 'utf8');
   const timeline = await readFile('components/bluewolf/operational-timeline.tsx', 'utf8');
-  const operator = await readFile('components/bluewolf/operator-view.tsx', 'utf8');
   assert.match(source, /עקבה נצפית/);
   assert.match(source, /נתיב מזוהה/);
   assert.match(source, /קבוצות/);
@@ -72,12 +71,16 @@ test('OP-02 Core map exposes independent truth layers and uses Core evidence, ne
   assert.match(source, /runtimeGroups\.filter\(\(group\) => group\.family === "SI"\)/);
   assert.match(source, /data-testid="so-adjacent-relations"/);
   assert.match(source, /soTemplate\.values\[index\]/);
-  assert.doesNotMatch(operator, /className="v04-map-toolbar"/);
+  // Legacy buttons remain in the operator component until its full rewrite,
+  // but are hidden in BOTH active renderers (Core and SIM); the new controls
+  // are the only visible time/layer selectors. This is explicitly not a claim
+  // that the old DOM has been removed.
+  assert.match(source, /operator-workspace \.v04-map-toolbar\{display:none\}/);
 });
 
 test('OP-02 SIM exposes observed trace, score trace, route, group and template layers with one shared 30/60/90 control', async () => {
   const map = await readFile('components/bluewolf/so-governed-visuals.tsx', 'utf8');
-  const operator = await readFile('components/bluewolf/operator-view.tsx', 'utf8');
+  const chart = await readFile('components/bluewolf/simulation-timeline.tsx', 'utf8');
   assert.match(map, /SIM_TRACE_RETENTION_MINUTES = 90/);
   assert.match(map, /observedLayer/);
   assert.match(map, /routeLayer/);
@@ -86,7 +89,10 @@ test('OP-02 SIM exposes observed trace, score trace, route, group and template l
   assert.match(map, /relationLayer && selectedGroup === "so"/);
   assert.match(map, /relationLayer && selectedGroup === "si"/);
   assert.match(map, /operatorWindowForServer\(serverId\)/);
+  assert.match(map, /setOperatorWindowForServer\(serverId, minutes\)/);
+  assert.match(chart, /subscribeOperatorWindow\(serverId, setWindowMinutes\)/);
+  assert.match(map, /operator-workspace \.v04-map-toolbar\{display:none\}/);
   assert.doesNotMatch(map, /SIM_TRACE_WINDOWS\.map/);
-  assert.match(operator, /showRelations=\{showRelations\}/);
-  assert.match(operator, /showTrace=\{showTrace\}/);
+  assert.doesNotMatch(map, /convexHull\(soPoints\)/);
+  assert.doesNotMatch(chart, /aria-label="חלון זמן של סימולציה"/);
 });
