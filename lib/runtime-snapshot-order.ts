@@ -66,6 +66,19 @@ export function createRuntimePollOrder() {
       state.acceptedTimeMs = acceptedTimeMs;
       return true;
     },
+    /**
+     * A current transport/health response can repeat the last observed source
+     * timestamp indefinitely while the Core is stale or offline. Accept its
+     * CURRENT health state by HTTP request order, but never advance navigation
+     * source time and never treat it as new position/score evidence.
+     */
+    acceptHealthSnapshot(serverId: string, requestId: number, observedAt: string): boolean {
+      const state = stateFor(serverId);
+      if (requestId < state.lastSettledRequestId) return false;
+      parseCoreSourceTime(observedAt);
+      state.lastSettledRequestId = requestId;
+      return true;
+    },
     acceptFailure(serverId: string, requestId: number): boolean {
       const state = stateFor(serverId);
       if (requestId < state.lastSettledRequestId) return false;
