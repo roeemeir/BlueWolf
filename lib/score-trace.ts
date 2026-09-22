@@ -3,6 +3,8 @@ import { continuousObservedNavigationSegment, validObservedWgs84 } from "./obser
 export type ScoreTracePoint = {
   timeMs: number; groupId: string; eventId: string; vehicleId: number;
   latitude: number; longitude: number; sync: number | null;
+  /** Display-only boundary on the LAST observed fix before a known missing sample. */
+  breakAfter?: boolean;
 };
 
 export const DEFAULT_TRACE_WINDOW_MINUTES = 30;
@@ -26,16 +28,60 @@ function traceIdentity(point: ScoreTracePoint): string {
   return JSON.stringify([point.vehicleId, point.timeMs, point.groupId, point.eventId]);
 }
 
-/** Source-time deduplication preserves event/group provenance and never joins
- * distinct event identities. Invalid WGS84 fixes are not projected. */
+/**
+ * An operational snapshot can omit a vehicle's fix altogether: the upstream
+ * normalizer deliberately represents unavailable WGS84 with absent coordinates,
+ * and the runtime collector forwards only valid positions to this merge. The
+ * absence is still evidence of a gap. Mark the last observed fix, not an
+ * invented position, so the next valid fix cannot be joined across the hole.
+ *
+ * The caller passes one server's trace and one snapshot at a time. Do not use a
+ * global vehicle cache: identically numbered vehicles on independent servers
+ * must never affect each other's continuity. A later/duplicate observation
+ * cannot erase an already established breakAfter boundary.
+ */
 export function mergeScoreTrace(previous: ScoreTracePoint[], incoming: ScoreTracePoint[], horizonMs = TRACE_RETENTION_MINUTES * 60_000): ScoreTracePoint[] {
   const rows = new Map<string, ScoreTracePoint>();
   for (const point of previous) {
-    if (validTraceFix(point)) rows.set(traceIdentity(point), point);
+    if (validTraceFix(point)) rows.set(traceIdentity(point), { ...point });
   }
-  for (const point of incoming) {
-    if (!validTraceFix(point)) continue;
-    rows.set(traceIdentity(point), point);
+  const latestPreviousByVehicle = new Map<number, ScoreTracePoint>();
+  for (const point of rows.values()) {
+    const latest = latestPreviousByVehicle.get(point.vehicleId);
+    if (!latest || latest.timeMs < point.timeMs) latestPreviousByVehicle.set(point.vehicleId, point);
+  }
+  const validIncoming = incoming.filter(validTraceFix);
+  const latestIncomingTime = validIncoming.reduce((last, point) => Math.max(last, point.timeMs), Number.NEGATIVE_INFINITY);
+  const observedVehicles = new Set(validIncoming.map((point) => point.vehicleId));
+  for (const [vehicleId, prior] of latestPreviousByVehicle) {
+    if (!observedVehicles.has(vehicleId) && (incoming.length === 0 || latestIncomingTime > prior.timeMs)) {
+      prior.breakAfter = true;
+    }
+  }
+  // Invalid fixes that DO reach the collector must also sever the previous
+  // observed segment; the bad coordinates themselves are never retained or
+  // projected. A missing fix omitted upstream is covered by the absent-id case.
+  for (const invalid of incoming) {
+    if (validTraceFix(invalid) || !Number.isInteger(invalid.vehicleId) || !Number.isFinite(invalid.timeMs)) continue;
+    let latestBefore: ScoreTracePoint | undefined;
+    for (const point of rows.values()) {
+      if (point.vehicleId === invalid.vehicleId && point.timeMs < invalid.timeMs
+        && (!latestBefore || point.timeMs > latestBefore.timeMs)) latestBefore = point;
+    }
+    for (const point of validIncoming) {
+      if (point.vehicleId === invalid.vehicleId && point.timeMs < invalid.timeMs
+        && (!latestBefore || point.timeMs > latestBefore.timeMs)) latestBefore = point;
+    }
+    if (latestBefore) {
+      const identity = traceIdentity(latestBefore);
+      const existing = rows.get(identity);
+      if (existing) existing.breakAfter = true;
+      else rows.set(identity, { ...latestBefore, breakAfter: true });
+    }
+  }
+  for (const point of validIncoming) {
+    const identity = traceIdentity(point);
+    rows.set(identity, { ...point, breakAfter: point.breakAfter === true || rows.get(identity)?.breakAfter === true });
   }
   const ordered = [...rows.values()].sort((a, b) => a.timeMs - b.timeMs || a.vehicleId - b.vehicleId);
   const end = ordered.at(-1)?.timeMs ?? 0;
@@ -76,7 +122,7 @@ export function traceSegments<T extends ScoreTracePoint>(points: T[], maxGapMs =
     }
     const key = JSON.stringify([point.vehicleId, point.groupId, point.eventId]);
     const prior = latest.get(key);
-    if (prior && prior.timeMs === priorTimeByVehicle.get(point.vehicleId)
+    if (prior && !prior.breakAfter && prior.timeMs === priorTimeByVehicle.get(point.vehicleId)
       && continuousObservedNavigationSegment(prior, point, point.timeMs - prior.timeMs, maxGapMs)) {
       segments.push([prior, point]);
     }
