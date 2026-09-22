@@ -15,6 +15,19 @@ export const IMPLEMENTATION_TRACKED_PATHS = [
   'next.config.ts',
 ];
 
+// The user's active Core-only engineering report is v1.2. The v2.1 report
+// is archived and must never silently regain authority through a manifest edit.
+export const ACTIVE_CORE_RESEARCH = {
+  version: '1.2',
+  title: 'Blue_Wolf_Core_Research_Report_HE_v1_2.docx',
+  driveFileId: '1dc6M_--RWDiCmenvItJLmrOxhjMl0bal',
+};
+export const ARCHIVED_CORE_RESEARCH = {
+  version: '2.1',
+  driveFileId: '1OGjS5_xTQN_CGgv-laXOnFOay9J19BbS',
+  archiveFolderId: '1ldLLCETpeK2Heg6FDtSZkqGTekKbsW33',
+};
+
 function implementationRows() {
   const output = execFileSync(
     'git',
@@ -78,6 +91,23 @@ export async function validateDocumentationSync(manifest) {
   if (master.version !== '2.8') errors.push('master specification version must be 2.8');
   if (!/^[0-9a-f]{40}$/.test(master.verifiedImplementationBaseline ?? '')) errors.push('verified implementation baseline missing');
   if (!Number.isInteger(master.verifiedCiRun) || master.verifiedCiRun <= 0) errors.push('verified CI run missing');
+
+  const activeResearch = manifest?.coreResearchDocument ?? {};
+  if (activeResearch.version !== ACTIVE_CORE_RESEARCH.version
+    || activeResearch.title !== ACTIVE_CORE_RESEARCH.title
+    || activeResearch.driveFileId !== ACTIVE_CORE_RESEARCH.driveFileId) {
+    errors.push('active Core research must be the canonical Drive report v1.2');
+  }
+  const archivedResearch = manifest?.archivedCoreResearchDocument ?? {};
+  if (archivedResearch.version !== ARCHIVED_CORE_RESEARCH.version
+    || archivedResearch.driveFileId !== ARCHIVED_CORE_RESEARCH.driveFileId
+    || archivedResearch.archiveFolderId !== ARCHIVED_CORE_RESEARCH.archiveFolderId
+    || archivedResearch.status !== 'archived') {
+    errors.push('superseded Core research v2.1 must remain explicitly archived');
+  }
+  if (activeResearch.driveFileId && activeResearch.driveFileId === archivedResearch.driveFileId) {
+    errors.push('active Core research cannot be the archived report');
+  }
 
   const research = manifest?.researchDocuments;
   if (!Array.isArray(research) || research.length < 2) errors.push('research document list missing');
