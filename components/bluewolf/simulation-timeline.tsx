@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 
 import { scoreSeriesForServer } from "@/lib/bluewolf";
 import { operatorWindowForServer, subscribeOperatorWindow } from "@/lib/operator-shared-window";
@@ -28,12 +28,9 @@ export function SimulationTimeline({
   onCursor: (value: number) => void;
   selectedVehicle?: number | null;
 }) {
-  const [windowMinutes, setWindowMinutes] = useState(() => operatorWindowForServer(serverId));
+  const subscribeWindow = useCallback((notify: () => void) => subscribeOperatorWindow(serverId, notify), [serverId]);
+  const windowMinutes = useSyncExternalStore(subscribeWindow, () => operatorWindowForServer(serverId), () => 30);
   const [explicitGroups, setExplicitGroups] = useState<GroupKey[]>([]);
-  useEffect(() => {
-    setWindowMinutes(operatorWindowForServer(serverId));
-    return subscribeOperatorWindow(serverId, setWindowMinutes);
-  }, [serverId]);
   // Simulation score samples are one data-minute apart by contract. The slice is
   // therefore anchored to the newest simulation sample, never to wall-clock time.
   const fullSeries = scoreSeriesForServer(serverId, 90);
