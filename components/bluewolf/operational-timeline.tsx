@@ -15,11 +15,13 @@ import {
   resolveOperatorCursorFrame,
 } from "@/lib/operator-time-cursor";
 import {
+  operatorWindowForServer,
+  subscribeOperatorWindow,
+} from "@/lib/operator-shared-window";
+import {
   filterByDataWindow,
   groupVisible,
-  OPERATOR_TIMELINE_WINDOWS,
   scoreLayerDasharray,
-  type OperatorTimelineWindowMinutes,
 } from "@/lib/operator-timeline";
 import { historyWithEventRecompute } from "@/lib/operator-retroactive-result";
 import {
@@ -90,10 +92,16 @@ export function OperationalTimeline({
   selectedVehicle?: number | null;
   recomputeOverride?: EventRecomputeResult | null;
 }) {
-  const [windowMinutes, setWindowMinutes] = useState<OperatorTimelineWindowMinutes>(30);
+  const [windowMinutes, setWindowMinutes] = useState(() => operatorWindowForServer(serverId));
   const [explicitGroupIds, setExplicitGroupIds] = useState<string[]>([]);
   const [cursorObservedAt, setCursorObservedAt] = useState<string | null>(() => currentOperatorCursor(serverId));
 
+  useEffect(() => {
+    // One source of truth for both map and chart; the chart has no second
+    // independent 30/60/90 selector that can drift from the map.
+    setWindowMinutes(operatorWindowForServer(serverId));
+    return subscribeOperatorWindow(serverId, setWindowMinutes);
+  }, [serverId]);
   useEffect(() => {
     setCursorObservedAt(null);
     publishOperatorCursor(serverId, null);
@@ -144,9 +152,7 @@ export function OperationalTimeline({
 
   return <div className="operational-timeline-shell" dir="rtl" data-requirements="OP-04 OP-05 BW-SYNC-013 BW-UI-005 BW-UI-013">
     <div className="v04-timeline-controls" style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-      <div className="segmented-control" aria-label="חלון זמן לפי נתוני Core">
-        {OPERATOR_TIMELINE_WINDOWS.map((minutes) => <button type="button" key={minutes} className={windowMinutes === minutes ? "active" : ""} onClick={() => setWindowMinutes(minutes)}>{minutes} דק׳</button>)}
-      </div>
+      <span className="card-hint" data-operator-shared-window-label>חלון משותף למפה ולגרף: {windowMinutes} דקות</span>
       <div className="segmented-control" aria-label="מצב סמן זמן">
         <button type="button" className={cursorObservedAt === null ? "active" : ""} onClick={returnLive}>LIVE</button>
         {cursorObservedAt && <button type="button" className="active" aria-label="זמן היסטורי נבחר">{timeLabel(cursorObservedAt)}</button>}
