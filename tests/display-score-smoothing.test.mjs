@@ -59,6 +59,20 @@ test('BW-SYNC-013 non-finite score cannot contaminate another frame even when ma
   assert.ok(Number.isNaN(result[1].groups[0].sync));
 });
 
+test('BW-SYNC-013 server switch cannot blend identically named group/event scores', () => {
+  const raw = [point(0, 100), point(5, 20), point(10, 40), point(15, 80)];
+  raw[1].serverId = '8';
+  raw[2].serverId = '8';
+  raw[3].serverId = '9';
+  const before = structuredClone(raw);
+  const result = smoothing.smoothRuntimeHistoryForDisplay(raw, 30);
+  assert.deepEqual(raw, before, 'source server provenance must not be mutated');
+  assert.equal(result[1].groups[0].total, 20, 'first frame on server 8 must not include server 7');
+  assert.equal(result[2].groups[0].total, 30, 'consecutive frames on server 8 can smooth together');
+  assert.equal(result[2].groups[0].sync, 30);
+  assert.equal(result[3].groups[0].total, 80, 'server 9 must not include server 8');
+});
+
 test('BW-SYNC-013 rejects unreasonable display windows rather than altering scoring semantics', () => {
   assert.throws(() => smoothing.smoothRuntimeHistoryForDisplay([], -1), /window/);
   assert.throws(() => smoothing.smoothRuntimeHistoryForDisplay([], 301), /window/);
