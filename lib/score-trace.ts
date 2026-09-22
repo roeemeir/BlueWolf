@@ -81,7 +81,11 @@ export function mergeScoreTrace(previous: ScoreTracePoint[], incoming: ScoreTrac
   }
   for (const point of validIncoming) {
     const identity = traceIdentity(point);
-    rows.set(identity, { ...point, breakAfter: point.breakAfter === true || rows.get(identity)?.breakAfter === true });
+    const preserveBreak = point.breakAfter === true || rows.get(identity)?.breakAfter === true;
+    const next = { ...point };
+    if (preserveBreak) next.breakAfter = true;
+    else delete next.breakAfter;
+    rows.set(identity, next);
   }
   const ordered = [...rows.values()].sort((a, b) => a.timeMs - b.timeMs || a.vehicleId - b.vehicleId);
   const end = ordered.at(-1)?.timeMs ?? 0;
