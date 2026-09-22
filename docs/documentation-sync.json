@@ -2,7 +2,7 @@
   "schemaVersion": "bluewolf.documentation-sync.v1",
   "iterationId": "requirements-governance-2026-09-18",
   "implementationFingerprint": {
-    "algorithm": "fnv1a64(path\0gitBlobSha\n)",
+    "algorithm": "fnv1a64(path\\0gitBlobSha\\n)",
     "digest": "2a1cf45a2e94af2e",
     "fileCount": 240,
     "trackedPaths": [
