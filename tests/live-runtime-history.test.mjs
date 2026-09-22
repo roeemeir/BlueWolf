@@ -10,6 +10,7 @@ after(async () => { await vite.close(); });
 
 const runtime = await vite.ssrLoadModule("/lib/live-runtime.ts");
 const history = await vite.ssrLoadModule("/lib/live-runtime-history.ts");
+const timeline = await vite.ssrLoadModule("/lib/operator-timeline.ts");
 
 function snapshot(observedAt, total = 80, health = "healthy") {
   const group = {
@@ -95,19 +96,27 @@ test("late history bootstrap cannot overwrite a newer live snapshot", () => {
   assert.equal(rows.at(-1).groups[0].total, 90);
 });
 
-test("Web history retention is based on 30 minutes rather than point count", () => {
+test("Web history retains 90 minutes of actual samples, rejecting older points", () => {
+  assert.equal(history.LIVE_RUNTIME_HISTORY_WINDOW_MS, 90 * 60_000);
   history.applyLiveRuntimeHistory("1", [
-    point("2026-09-09T11:59:59.000Z", 60),
-    point("2026-09-09T12:00:00.000Z", 70),
-    point("2026-09-09T12:15:00.000Z", 80),
+    point("2026-09-09T10:59:59.000Z", 60),
+    point("2026-09-09T11:00:00.000Z", 70),
+    point("2026-09-09T11:15:00.000Z", 75),
+    point("2026-09-09T11:30:00.000Z", 80),
+    point("2026-09-09T12:00:00.000Z", 85),
     point("2026-09-09T12:30:00.000Z", 90),
   ]);
   const rows = history.getLiveRuntimeHistory("1");
   assert.deepEqual(rows.map((item) => item.observedAt), [
+    "2026-09-09T11:00:00.000Z",
+    "2026-09-09T11:15:00.000Z",
+    "2026-09-09T11:30:00.000Z",
     "2026-09-09T12:00:00.000Z",
-    "2026-09-09T12:15:00.000Z",
     "2026-09-09T12:30:00.000Z",
   ]);
+  assert.deepEqual(timeline.filterByDataWindow(rows, 30).map((item) => item.observedAt), ["2026-09-09T12:00:00.000Z", "2026-09-09T12:30:00.000Z"]);
+  assert.deepEqual(timeline.filterByDataWindow(rows, 60).map((item) => item.observedAt), ["2026-09-09T11:30:00.000Z", "2026-09-09T12:00:00.000Z", "2026-09-09T12:30:00.000Z"]);
+  assert.equal(timeline.filterByDataWindow(rows, 90).length, 5);
 });
 
 test("unavailable fallback snapshots are not appended to operational history", () => {
