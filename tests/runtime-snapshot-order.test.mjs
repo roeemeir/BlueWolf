@@ -74,18 +74,22 @@ test('OP-02 malformed source timestamp causes a contract failure and cannot adva
   assert.equal(order.acceptSnapshot('1', order.begin('1'), iso(1)), true);
 });
 
-test('OP-02 dashboard gates traces, cards, history and errors before any mutation', () => {
+test('OP-02 dashboard gates navigation, health, cards and HTTP errors before mutation', () => {
   const dashboard = readFileSync(new URL('../components/bluewolf/dashboard-app.tsx', import.meta.url), 'utf8');
   const block = dashboard.slice(dashboard.indexOf('const poll = async () => {'), dashboard.indexOf('void bootstrapHistory();'));
   const begin = block.indexOf('const requestId = pollOrder.current.begin(serverValue);');
-  const gate = block.indexOf('if (!pollOrder.current.acceptSnapshot(serverValue, requestId, snapshot.observedAt)) return;');
+  const evidenceGate = block.indexOf('pollOrder.current.acceptSnapshot(serverValue, requestId, snapshot.observedAt)');
+  const healthGate = block.indexOf('pollOrder.current.acceptHealthSnapshot(serverValue, requestId, snapshot.observedAt)');
+  const gate = block.indexOf('if (!accepted) return;');
   const trace = block.indexOf('applyLiveRuntimeSnapshot(snapshot);');
   const history = block.indexOf('appendLiveRuntimeHistory(snapshot);');
-  const cards = block.indexOf('setCoreSnapshot(snapshot.source.kind');
+  const healthFallback = block.indexOf('applyLiveRuntimeSnapshot(unavailableRuntimeSnapshot(serverValue, snapshot.source.detail');
+  const cards = block.indexOf('setCoreSnapshot(healthyCoreFrame ? snapshot : null);');
   const failed = block.indexOf('if (cancelled || !pollOrder.current.acceptFailure(serverValue, requestId)) return;');
   const unavailable = block.indexOf('applyLiveRuntimeSnapshot(unavailableRuntimeSnapshot(serverValue, detail));');
-  assert.ok(begin !== -1 && begin < gate && gate < trace && trace < history && history < cards);
+  assert.ok(begin !== -1 && begin < evidenceGate && evidenceGate < healthGate && healthGate < gate && gate < trace && trace < history && history < healthFallback && healthFallback < cards);
   assert.ok(failed !== -1 && failed < unavailable);
+  assert.match(dashboard, /if \(healthyCoreFrame\) \{\s*applyLiveRuntimeSnapshot\(snapshot\);\s*appendLiveRuntimeHistory\(snapshot\);/);
   assert.match(dashboard, /const pollOrder = useRef\(createRuntimePollOrder\(\)\);/);
   assert.match(dashboard, /return \(\) => \{ cancelled = true; window\.clearInterval\(timer\); \};/);
 });
