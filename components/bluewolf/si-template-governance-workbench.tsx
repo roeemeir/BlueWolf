@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { canonicalTemplateKey, createId, type RingRole, type SiPosition, type SyncTemplate, type VehicleType } from "@/lib/bluewolf";
+import { siAdjacentAngles } from "@/lib/si-adjacent-angles";
 import { deriveSiPairRules, describeSiMix, placeSiVehicle, removeSiVehicle, validateSiPositions } from "@/lib/si-direct-placement";
 import { useWorkspace } from "./app-context";
 
@@ -61,7 +62,10 @@ export function SiTemplateGovernanceWorkbench() {
 
   const selectedType = state.vehicleTypes.find((type) => type.id === selectedTypeId) ?? null;
   const typeById = useMemo(() => new Map(state.vehicleTypes.map((type) => [type.id, type])), [state.vehicleTypes]);
+  // The Core still needs every physical pair. Only the operator-facing display
+  // is the shorter, radius-independent consecutive-angle chain.
   const pairRules = deriveSiPairRules(positions);
+  const adjacentGaps = siAdjacentAngles(positions);
 
   const targetFromPointer = (clientX: number, clientY: number): HoverTarget => {
     const svg = boardRef.current;
@@ -105,8 +109,10 @@ export function SiTemplateGovernanceWorkbench() {
     const template: SyncTemplate = {
       id: createId("tpl-si-direct"),
       family: "SI",
-      name: name.trim() || `SI · ${positions.length} רכבים`,
+      name: name.trim() || `SI · ${positions.length} רכבים · ${adjacentGaps.map((gap) => `${gap.angle}°`).join(", ")}`,
       mix: describeSiMix(positions, state.vehicleTypes),
+      // Absolute bearings are storage-only placement evidence, never the UI's
+      // relative-angle label. They are necessary to preserve ring and Core law.
       constellation: positions.map((position) => `${typeById.get(position.typeId)?.name ?? position.typeId}@${ringLabel(position.ring)}:${position.angleDeg}°`).join(" — "),
       law: "SI coordinate placement snapped to legal 30° positions; siPositions is the source of truth",
       values: pairRules.map((rule) => rule.angle),
@@ -130,22 +136,23 @@ export function SiTemplateGovernanceWorkbench() {
       .si-coordinate-board{display:block;width:100%;max-width:620px;aspect-ratio:1;border:1px solid var(--line);border-radius:18px;background:radial-gradient(circle at center,color-mix(in srgb,var(--brand) 7%,transparent),transparent 68%),var(--map-bg);touch-action:none;cursor:crosshair}.si-editor-side{display:grid;align-content:start;gap:12px}.si-editor-side label{display:grid;gap:5px}.si-editor-side input{height:38px;border:1px solid var(--input);border-radius:10px;background:var(--surface-soft);color:inherit;padding:0 10px}.si-position-list{display:grid;gap:6px}.si-position-list button{display:grid;grid-template-columns:1fr auto;gap:8px;text-align:right;padding:9px 10px;border:1px solid var(--line);border-radius:10px;background:var(--surface-soft);color:inherit}.si-pair-list{display:flex;gap:6px;flex-wrap:wrap}.si-pair-list span{padding:5px 7px;border-radius:999px;background:var(--surface-soft);font-size:11px}.si-ghost-help{display:flex;align-items:center;gap:7px;color:var(--text-soft);font-size:11px}
       @media(max-width:760px){.si-coordinate-editor{padding:13px}.si-editor-head{display:grid}.si-editor-grid{grid-template-columns:1fr}.si-coordinate-board{max-width:none}.si-editor-side{order:-1}.si-palette{overflow-x:auto;flex-wrap:nowrap}.si-palette button{min-width:max-content}}
     `}</style>
-    <header className="si-editor-head"><div><p className="eyebrow">SI coordinate editor</p><h2>הצבה ישירה לפי מיקום העכבר</h2><p>בעכבר מתקבל ghost לפני ההצבה; בטלפון נוגעים ישירות בנקודה. בשני המצבים המיקום ננעל לטבעת חוקית ולזווית 30° הקרובה.</p></div><Badge variant="outline">{positions.length}/5 רכבים</Badge></header>
+    <header className="si-editor-head"><div><p className="eyebrow">עורך תבניות SI</p><h2>הצבה ישירה לפי מיקום העכבר</h2><p>בעכבר מוצג סימון מקדים לפני ההצבה; בטלפון נוגעים ישירות בנקודה. בשני המצבים המיקום ננעל לטבעת חוקית ולרזולוציה של 30°.</p></div><Badge variant="outline">{positions.length}/5 רכבים</Badge></header>
     <div className="si-editor-grid">
       <div>
         <div className="si-palette" data-testid="si-coordinate-palette">{state.vehicleTypes.map((type) => <button type="button" key={type.id} aria-pressed={selectedTypeId === type.id} onClick={() => { setSelectedTypeId(type.id); setHoverTarget(null); }}><strong>{type.name}</strong><small style={{ display: "block" }}>{type.siRoles.map(ringLabel).join(" / ") || "ללא טבעת"}</small></button>)}</div>
-        <svg ref={boardRef} data-testid="si-coordinate-board" className="si-coordinate-board" viewBox="0 0 500 500" aria-label="SI coordinate based direct placement board" onPointerMove={(event) => { if (event.pointerType !== "touch") updateHover(event.clientX, event.clientY); }} onPointerLeave={() => setHoverTarget(null)} onPointerDown={(event) => { const target = targetFromPointer(event.clientX, event.clientY); if (!target) return; event.preventDefault(); placeTarget(target); }}>
+        <svg ref={boardRef} data-testid="si-coordinate-board" className="si-coordinate-board" viewBox="0 0 500 500" aria-label="עורך הצבה ישירה לטבעות SI" onPointerMove={(event) => { if (event.pointerType !== "touch") updateHover(event.clientX, event.clientY); }} onPointerLeave={() => setHoverTarget(null)} onPointerDown={(event) => { const target = targetFromPointer(event.clientX, event.clientY); if (!target) return; event.preventDefault(); placeTarget(target); }}>
           <circle cx={CENTER} cy={CENTER} r="5" fill="currentColor" opacity=".5" />
           {RINGS.map((ring) => <g key={ring.id}><circle cx={CENTER} cy={CENTER} r={ring.radius} fill="none" stroke="currentColor" strokeWidth="2" opacity=".24" /><text x={CENTER} y={CENTER - ring.radius + 14} textAnchor="middle" fill="currentColor" opacity=".55" fontSize="11">{ring.label}</text>{ANGLES.map((angle) => { const p = polar(angle, ring.radius); return <circle key={`${ring.id}-${angle}`} cx={p.x} cy={p.y} r="3.4" fill="currentColor" opacity=".2" />; })}</g>)}
+          {adjacentGaps.map((gap) => { const start = polar(gap.startDeg, 214); const end = polar(gap.endDeg, 214); const label = polar(gap.startDeg + gap.angle / 2, 228); return <g key={`gap:${gap.first}:${gap.second}`} data-testid="si-adjacent-gap" aria-label={`הפרש זוויתי בין רכבים סמוכים: ${gap.angle} מעלות`} pointerEvents="none"><path d={gap.angle ? `M${start.x},${start.y} A214,214 0 ${gap.angle > 180 ? 1 : 0} 1 ${end.x},${end.y}` : ""} stroke="var(--brand)" strokeWidth="2" fill="none" /><text x={label.x} y={label.y + 4} textAnchor="middle" stroke="var(--map-bg)" strokeWidth="3" paintOrder="stroke" fill="currentColor" fontSize="12" fontWeight="800">{gap.angle}°</text></g>; })}
           {positions.map((position, index) => { const ring = RINGS.find((item) => item.id === position.ring)!; const p = polar(position.angleDeg, ring.radius); const type = typeById.get(position.typeId); return <g key={`${position.typeId}-${position.ring}-${position.angleDeg}`} data-testid={`si-position-${index}`} onClick={(event) => { event.stopPropagation(); removePosition(index); }} style={{ cursor: "pointer" }}><circle cx={p.x} cy={p.y} r="14" fill={type?.color ?? "currentColor"} stroke="currentColor" strokeWidth="2.5" /><text x={p.x} y={p.y + 3} textAnchor="middle" fill="currentColor" fontSize="8" fontWeight="800">{type?.name.slice(0, 2) ?? "V"}</text></g>; })}
-          {hoverTarget && selectedType && <g data-testid="si-coordinate-ghost" pointerEvents="none"><circle cx={hoverTarget.x} cy={hoverTarget.y} r="15" fill={selectedType.color} opacity=".24" stroke={selectedType.color} strokeWidth="2.5" strokeDasharray="4 3" /><circle cx={hoverTarget.x} cy={hoverTarget.y} r="3" fill={selectedType.color} opacity=".7" /><text x={hoverTarget.x} y={hoverTarget.y - 20} textAnchor="middle" fill="currentColor" fontSize="10">{hoverTarget.angleDeg}° · {ringLabel(hoverTarget.ring)}</text></g>}
+          {hoverTarget && selectedType && <g data-testid="si-coordinate-ghost" pointerEvents="none"><circle cx={hoverTarget.x} cy={hoverTarget.y} r="15" fill={selectedType.color} opacity=".24" stroke={selectedType.color} strokeWidth="2.5" strokeDasharray="4 3" /><circle cx={hoverTarget.x} cy={hoverTarget.y} r="3" fill={selectedType.color} opacity=".7" /><text x={hoverTarget.x} y={hoverTarget.y - 20} textAnchor="middle" fill="currentColor" fontSize="10">{ringLabel(hoverTarget.ring)}</text></g>}
         </svg>
-        <p className="si-ghost-help"><Crosshair />בעכבר ה־ghost הוא preview בלבד והלחיצה שומרת. במגע נגיעה ישירה שומרת; לחיצה על רכב קיים מסירה אותו.</p>
+        <p className="si-ghost-help"><Crosshair />בעכבר הסימון המקדים הוא לתצוגה בלבד והלחיצה שומרת. במגע נגיעה ישירה שומרת; לחיצה על רכב קיים מסירה אותו.</p>
       </div>
       <aside className="si-editor-side">
         <label><span>שם התבנית</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="SI · שם אופציונלי" /></label>
-        <div><strong>מיקומים</strong><div className="si-position-list">{positions.length ? positions.map((position, index) => <button type="button" key={`${position.typeId}-${position.ring}-${position.angleDeg}`} onClick={() => removePosition(index)}><span>{typeById.get(position.typeId)?.name ?? position.typeId}</span><span>{ringLabel(position.ring)} · {position.angleDeg}° · הסר</span></button>) : <span className="card-hint">טרם הוצבו רכבים.</span>}</div></div>
-        <div><strong>יחסים נגזרים</strong><div className="si-pair-list">{pairRules.length ? pairRules.map((rule) => <span key={`${rule.first}-${rule.second}`}>{rule.first + 1}↔{rule.second + 1}: {rule.angle}°</span>) : <span className="card-hint">היחסים ייגזרו אוטומטית מהמיקומים.</span>}</div></div>
+        <div><strong>רכבים וטבעות</strong><div className="si-position-list">{positions.length ? positions.map((position, index) => <button type="button" key={`${position.typeId}-${position.ring}-${position.angleDeg}`} onClick={() => removePosition(index)}><span>{typeById.get(position.typeId)?.name ?? position.typeId}</span><span>{ringLabel(position.ring)} · הסר</span></button>) : <span className="card-hint">טרם הוצבו רכבים.</span>}</div></div>
+        <div><strong>הפרשים בין רכבים סמוכים</strong><div className="si-pair-list" data-testid="si-adjacent-summary">{adjacentGaps.length ? adjacentGaps.map((gap) => <span key={`${gap.first}-${gap.second}`}>{gap.angle}°</span>) : <span className="card-hint">ההפרשים יוצגו לפי הצבת הרכבים, ללא זוויות מוחלטות.</span>}</div></div>
         <Button onClick={saveTemplate}><Save />שמור תבנית SI</Button>
         <Button variant="outline" disabled={!positions.length} onClick={() => { setPositions([]); setHoverTarget(null); }}><Trash2 />נקה מיקומים</Button>
       </aside>
