@@ -1,14 +1,26 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import test from 'node:test';
+import test, { after } from 'node:test';
+import { createServer } from 'vite';
 
-test('OP-02 SIM exposes observed trace, route and group toggles with 30/60/90 windows', async () => {
+const root = process.cwd();
+const vite = await createServer({ appType: 'custom', configFile: false, root, resolve: { alias: { '@': root } }, server: { middlewareMode: true } });
+after(async () => { await vite.close(); });
+const windows = await vite.ssrLoadModule('/lib/operator-shared-window.ts');
+
+test('OP-02 SIM exposes independent layers and a single map/chart shared per-server window', async () => {
   const source = await readFile('components/bluewolf/so-governed-visuals.tsx', 'utf8');
+  const chart = await readFile('components/bluewolf/simulation-timeline.tsx', 'utf8');
   assert.match(source, /data-requirements="OP-02"/);
   assert.match(source, /עקבה נצפית/);
   assert.match(source, /נתיב מזוהה/);
   assert.match(source, /קבוצות/);
-  assert.match(source, /SIM_TRACE_WINDOWS = \[30, 60, 90\]/);
+  assert.deepEqual([...windows.OPERATOR_SHARED_WINDOWS], [30, 60, 90]);
+  assert.match(source, /setOperatorWindowForServer\(serverId, minutes\)/);
+  assert.match(source, /subscribeOperatorWindow\(serverId, setTraceWindow\)/);
+  assert.match(chart, /useSyncExternalStore\(subscribeWindow/);
+  assert.doesNotMatch(source, /SIM_TRACE_WINDOWS\.map/);
+  assert.doesNotMatch(chart, /aria-label="חלון זמן של סימולציה"/);
   assert.match(source, /SIM_TRACE_RETENTION_MINUTES = 90/);
   assert.match(source, /observedLayer &&/);
   assert.match(source, /scoreTraceLayer &&/);
