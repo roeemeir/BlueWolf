@@ -71,10 +71,7 @@ test('OP-02 Core map exposes independent truth layers and uses Core evidence, ne
   assert.match(source, /runtimeGroups\.filter\(\(group\) => group\.family === "SI"\)/);
   assert.match(source, /data-testid="so-adjacent-relations"/);
   assert.match(source, /soTemplate\.values\[index\]/);
-  // Legacy buttons remain in the operator component until its full rewrite,
-  // but are hidden in BOTH active renderers (Core and SIM); the new controls
-  // are the only visible time/layer selectors. This is explicitly not a claim
-  // that the old DOM has been removed.
+  // Legacy operator buttons remain in the DOM but are hidden in Core and SIM.
   assert.match(source, /operator-workspace \.v04-map-toolbar\{display:none\}/);
 });
 
@@ -90,7 +87,8 @@ test('OP-02 SIM exposes observed trace, score trace, route, group and template l
   assert.match(map, /relationLayer && selectedGroup === "si"/);
   assert.match(map, /operatorWindowForServer\(serverId\)/);
   assert.match(map, /setOperatorWindowForServer\(serverId, minutes\)/);
-  assert.match(chart, /subscribeOperatorWindow\(serverId, setWindowMinutes\)/);
+  assert.match(chart, /subscribeOperatorWindow\(serverId, notify\)/);
+  assert.match(chart, /useSyncExternalStore\(subscribeWindow/);
   assert.match(map, /operator-workspace \.v04-map-toolbar\{display:none\}/);
   assert.doesNotMatch(map, /SIM_TRACE_WINDOWS\.map/);
   assert.doesNotMatch(map, /convexHull\(soPoints\)/);
