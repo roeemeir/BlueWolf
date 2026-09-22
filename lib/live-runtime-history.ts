@@ -2,8 +2,12 @@ import type { LiveRuntimeSnapshot } from "./live-runtime";
 
 export const LIVE_RUNTIME_HISTORY_SCHEMA_VERSION = "bluewolf.live-runtime-history.v1" as const;
 
-const DEFAULT_HISTORY_WINDOW_MS = 30 * 60 * 1000;
-const DEFAULT_HISTORY_LIMIT = 2000;
+// OP-02: the operator offers 30/60/90 minutes. Keeping only 30 minutes at
+// ingestion permanently loses samples before the operator can select 60/90.
+// These bounds retain up to 90 minutes at the normal 1-2 second cadence;
+// neither the selected view window nor a UI refresh may invent older samples.
+const DEFAULT_HISTORY_WINDOW_MS = 90 * 60 * 1000;
+const DEFAULT_HISTORY_LIMIT = 5000;
 const MAX_HISTORY_LIMIT = 5000;
 
 export type LiveRuntimeHistoryEvent = {
@@ -73,7 +77,7 @@ function normalizeGroup(value: unknown): LiveRuntimeHistoryGroup {
 }
 
 function normalizePoint(value: unknown, requestedServerId: string): LiveRuntimeHistoryPoint {
-  if (!value || typeof value !== "object") throw new Error("history point must be an object");
+  if (!value || typeof value !== "object") throw new Error("runtime history point must be an object");
   const row = value as Record<string, unknown>;
   if (row.schemaVersion !== LIVE_RUNTIME_HISTORY_SCHEMA_VERSION) throw new Error("unsupported live runtime history schema");
   if (row.serverId !== requestedServerId) throw new Error("runtime history serverId does not match request");
