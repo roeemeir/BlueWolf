@@ -51,7 +51,6 @@ test('OP-02 Core map exposes independent truth layers and uses Core evidence, ne
   const timeline = await readFile('components/bluewolf/operational-timeline.tsx', 'utf8');
   assert.match(source, /עקבה נצפית/);
   assert.match(source, /נתיב מזוהה/);
-  assert.match(source, /קבוצות/);
   assert.match(source, /תבנית/);
   assert.deepEqual([...shared.OPERATOR_SHARED_WINDOWS], [30, 60, 90]);
   assert.match(source, /data-testid="operator-shared-time-window"/);
@@ -75,16 +74,22 @@ test('OP-02 Core map exposes independent truth layers and uses Core evidence, ne
   assert.match(source, /operator-workspace \.v04-map-toolbar\{display:none\}/);
 });
 
-test('OP-02 SIM exposes observed trace, score trace, route, group and template layers with one shared 30/60/90 control', async () => {
+test('OP-02 SIM keeps vehicles visible independently of layers; labels only observed neighboring SI angles', async () => {
   const map = await readFile('components/bluewolf/so-governed-visuals.tsx', 'utf8');
   const chart = await readFile('components/bluewolf/simulation-timeline.tsx', 'utf8');
   assert.match(map, /SIM_TRACE_RETENTION_MINUTES = 90/);
   assert.match(map, /observedLayer/);
   assert.match(map, /routeLayer/);
-  assert.match(map, /groupLayer/);
+  assert.doesNotMatch(map, /groupLayer/);
+  assert.doesNotMatch(map, /baseLayer/);
+  assert.match(map, /data-testid="operator-always-visible-vehicles"/);
+  assert.match(map, /siAdjacentAngles\(siPoints\.map/);
+  assert.match(map, /data-testid="si-map-adjacent-angle"/);
+  assert.doesNotMatch(map, /siPoints\.slice\(index \+ 1\)/);
   assert.match(map, /scoreTraceLayer && <g className="score-trace"/);
   assert.match(map, /relationLayer && selectedGroup === "so"/);
   assert.match(map, /relationLayer && selectedGroup === "si"/);
+  assert.match(map, /נתיב התרחיש \(סימולציה\)/);
   assert.match(map, /operatorWindowForServer\(serverId\)/);
   assert.match(map, /setOperatorWindowForServer\(serverId, minutes\)/);
   assert.match(chart, /subscribeOperatorWindow\(serverId, notify\)/);
