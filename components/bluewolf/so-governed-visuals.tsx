@@ -13,6 +13,8 @@ import {
   type VehicleType,
 } from "@/lib/bluewolf";
 import { buildSoSmileGeometry, pointAtSoPhase, soPhasesForRoute, type SoPoint } from "@/lib/so-geometry";
+import type { SoDirectPlacement } from "@/lib/so-direct-placement";
+import { useWorkspace } from "./app-context";
 import {
   TemplatePreview as LegacyTemplatePreview,
   VehicleIconGlyph,
@@ -161,20 +163,43 @@ export function GovernedLiveMap({ serverId, tick, selectedGroup, selectedVehicle
   </div>;
 }
 
+/** A SO selection preview must render the SAVED anonymous slots/directions, not
+ * one fabricated forward-moving vehicle per route. The operator passes the
+ * selected template's value/chain arrays through unchanged; match their
+ * identities within the current workspace, including when two templates have
+ * identical relation codes but different direct placements. */
 export function GovernedTemplatePreview({ family, values, siPositions, compact = false, title, vehicleTypes = [], soKinds = ["single", "double", "single"] }: { family: Family | GroupKey; values: number[]; siPositions?: import("@/lib/bluewolf").SiPosition[]; compact?: boolean; title?: string; vehicleTypes?: VehicleType[]; soKinds?: SoRouteKind[] }) {
+  const { state } = useWorkspace();
   const normalized = family.toUpperCase() as Family;
   if (normalized === "SI") return <LegacyTemplatePreview family={family} values={values} siPositions={siPositions} compact={compact} title={title} vehicleTypes={vehicleTypes} soKinds={soKinds} />;
 
   const relations = values.map(relationFromCode);
+  const selectedTemplate = state.templates.find((template) => template.family === "SO" && template.values === values && template.soSpec?.chain === soKinds);
+  const storedPlacements = (selectedTemplate?.soSpec as (typeof selectedTemplate.soSpec & { directPlacements?: SoDirectPlacement[] }) | undefined)?.directPlacements;
+  const placements = Array.isArray(storedPlacements) ? storedPlacements.filter((placement) => Number.isInteger(placement.routeIndex) && Number.isFinite(placement.phase) && (placement.direction === "forward" || placement.direction === "reverse")) : [];
   const typeColors = vehicleTypes.length ? vehicleTypes.map((item) => item.color) : ["#ff9f43", "#34b7eb", "#9068ff", "#d16ff2", "#4fbf79"];
-  const routes = buildSoSmileGeometry(soKinds, { centerX: 200, centerY: 92, spacing: 105, risePerStep: 12, radius: 15, singleHalfLeg: 34, doubleHalfLeg: 58, samplesPerTurn: 12 });
-  return <svg className={`template-preview-svg v04-template-preview ${compact ? "compact" : ""}`} viewBox="0 0 400 230" role="img" aria-label={title ?? "תצוגת תבנית SO"} data-requirements="GEO-01 GEO-02">
-    <rect width="400" height="230" rx="20" />
+  const width = Math.max(400, 110 * soKinds.length + 70);
+  const routes = buildSoSmileGeometry(soKinds, { centerX: width / 2, centerY: 92, spacing: 105, risePerStep: 12, radius: 15, singleHalfLeg: 34, doubleHalfLeg: 58, samplesPerTurn: 12 });
+  return <svg className={`template-preview-svg v04-template-preview ${compact ? "compact" : ""}`} viewBox={`0 0 ${width} 230`} role="img" aria-label={title ?? "תצוגת תבנית SO וכיוון התקדמות הרכבים"} data-requirements="GEO-01 GEO-02 SO-02" data-testid="so-template-direction-preview">
+    <rect width={width} height="230" rx="20" />
     <g className="v04-preview-so">
       {routes.map((route) => <path key={route.routeIndex} d={route.path} className={route.kind === "double" ? "double" : undefined} />)}
       {routes.slice(0, -1).map((route, index) => { const next = routes[index + 1]; const middle = lerp(route.center, next.center, .5); const relation = relations[index] ?? "mixed"; return <g className="v04-preview-relation" key={route.routeIndex}><rect x={middle.x - 48} y={middle.y - 48} width="96" height="25" rx="12" /><text x={middle.x} y={middle.y - 31} textAnchor="middle" stroke="none">{SO_RELATION_LABELS[relation]} · 30°</text></g>; })}
-      {routes.map((route, index) => { const phase = soPhasesForRoute(route.kind)[0]; const point = pointAtSoPhase(route.points, phase); return <circle key={`vehicle-${route.routeIndex}`} cx={point.x} cy={point.y} r="7" fill={typeColors[index % typeColors.length]} />; })}
-      <text x="200" y="215" textAnchor="middle" stroke="none">{soKinds.map((kind) => kind === "double" ? "כפול" : "יחיד").join(" — ")}</text>
+      {placements.map((placement, index) => {
+        const route = routes[placement.routeIndex];
+        if (!route || !soPhasesForRoute(route.kind).includes(placement.phase)) return null;
+        const point = pointAtSoPhase(route.points, placement.phase, placement.direction === "reverse");
+        const color = typeColors[index % typeColors.length];
+        return <g key={`${placement.routeIndex}:${placement.phase}`} data-testid={`so-preview-direction-${placement.routeIndex}-${placement.phase}`} data-direction={placement.direction} aria-label={`מיקום ${index + 1}, ${placement.direction === "reverse" ? "כיוון הפוך" : "כיוון קדימה"}`}>
+          <g transform={`translate(${point.x} ${point.y}) rotate(${point.heading})`}>
+            <circle r="8" style={{ fill: color, stroke: "var(--map-card)", strokeWidth: 1.8 }} />
+            <path d="M0 -23 L-6 -11 L6 -11 Z" style={{ fill: color, stroke: "var(--map-card)", strokeWidth: 1.5 }} />
+            <path d="M0 -9 V-16" style={{ fill: "none", stroke: color, strokeWidth: 2.5 }} />
+          </g>
+          <text x={point.x} y={point.y + 25} textAnchor="middle" stroke="none" style={{ fill: "var(--text)", fontWeight: 700, fontSize: 11 }}>{index + 1}</text>
+        </g>;
+      })}
+      <text x={width / 2} y="215" textAnchor="middle" stroke="none">{placements.length ? "▲ חץ = כיוון התקדמות · מספר = מיקום בתבנית" : "בתבנית זו לא נשמר כיוון התקדמות פרטני"}</text>
     </g>
   </svg>;
 }
