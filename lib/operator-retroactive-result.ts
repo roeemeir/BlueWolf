@@ -1,6 +1,7 @@
 import type { DemoGroup } from "./bluewolf";
 import type { EventRecomputeResult } from "./investigation-contract";
 import type { LiveRuntimeHistoryPoint } from "./live-runtime-history";
+import { validObservedWgs84 } from "./observed-navigation-continuity";
 import type { ScoreTracePoint } from "./score-trace";
 
 function latestScoredPoint(result: EventRecomputeResult) {
@@ -68,26 +69,41 @@ export function historyWithEventRecompute(
 }
 
 export function traceWithEventRecompute(previous: ScoreTracePoint[], result: EventRecomputeResult): ScoreTracePoint[] {
-  // An event ID is not a license to delete another group's observations.
-  // The recomputation replaces only its exact group/event identity; a separate
-  // group may legitimately retain same-named event evidence in a multi-group
-  // or cross-source report snapshot.
+  // Replace only the exact group/event; another group may have the same event ID.
   const kept = previous.filter((point) => !(point.groupId === result.groupId && point.eventId === result.eventId));
-  const recomputed = result.points.flatMap((point) => {
+  const recomputed: ScoreTracePoint[] = [];
+  const lastObservedByVehicle = new Map<number, ScoreTracePoint>();
+  // The archive may arrive in reverse order. Continuity is defined only by
+  // observed source time, not by transport/array order or the render clock.
+  for (const point of [...result.points].sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt))) {
+    const timeMs = Date.parse(point.observedAt);
     const memberById = new Map(point.members.map((member) => [member.memberId, member]));
-    return point.navigation.flatMap((nav) => {
-      if (nav.latitude === null || nav.longitude === null) return [];
-      return [{
-        timeMs: Date.parse(point.observedAt),
+    const positioned = new Set<number>();
+    for (const nav of point.navigation) {
+      const prior = lastObservedByVehicle.get(nav.vehicleIdentifier);
+      if (nav.latitude === null || nav.longitude === null || !validObservedWgs84({ latitude: nav.latitude, longitude: nav.longitude })) {
+        if (prior && prior.timeMs < timeMs) prior.breakAfter = true;
+        continue;
+      }
+      positioned.add(nav.vehicleIdentifier);
+      const observed: ScoreTracePoint = {
+        timeMs,
         groupId: result.groupId,
         eventId: result.eventId,
         vehicleId: nav.vehicleIdentifier,
         latitude: nav.latitude,
         longitude: nav.longitude,
         sync: memberById.get(nav.memberId)?.sync ?? null,
-      } satisfies ScoreTracePoint];
-    });
-  });
+      };
+      recomputed.push(observed);
+      lastObservedByVehicle.set(nav.vehicleIdentifier, observed);
+    }
+    // A vehicle omitted entirely from this archive frame is also a known
+    // missing fix. Keep its prior real point, but do not join it to a later one.
+    for (const [vehicleId, prior] of lastObservedByVehicle) {
+      if (!positioned.has(vehicleId) && prior.timeMs < timeMs) prior.breakAfter = true;
+    }
+  }
   return [...kept, ...recomputed].sort((a, b) => a.timeMs - b.timeMs || a.vehicleId - b.vehicleId);
 }
 
