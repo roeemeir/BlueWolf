@@ -1,14 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { scoreSeriesForServer } from "@/lib/bluewolf";
-import {
-  groupVisible,
-  OPERATOR_TIMELINE_WINDOWS,
-  scoreLayerDasharray,
-  type OperatorTimelineWindowMinutes,
-} from "@/lib/operator-timeline";
+import { operatorWindowForServer, subscribeOperatorWindow } from "@/lib/operator-shared-window";
+import { groupVisible, scoreLayerDasharray } from "@/lib/operator-timeline";
 import { ScoreLegend } from "./score-legend";
 import { groupLineColor, type GroupKey, type ScoreLayer } from "./visuals";
 
@@ -32,8 +28,12 @@ export function SimulationTimeline({
   onCursor: (value: number) => void;
   selectedVehicle?: number | null;
 }) {
-  const [windowMinutes, setWindowMinutes] = useState<OperatorTimelineWindowMinutes>(30);
+  const [windowMinutes, setWindowMinutes] = useState(() => operatorWindowForServer(serverId));
   const [explicitGroups, setExplicitGroups] = useState<GroupKey[]>([]);
+  useEffect(() => {
+    setWindowMinutes(operatorWindowForServer(serverId));
+    return subscribeOperatorWindow(serverId, setWindowMinutes);
+  }, [serverId]);
   // Simulation score samples are one data-minute apart by contract. The slice is
   // therefore anchored to the newest simulation sample, never to wall-clock time.
   const fullSeries = scoreSeriesForServer(serverId, 90);
@@ -56,9 +56,7 @@ export function SimulationTimeline({
 
   return <div className="simulation-timeline-shell" dir="rtl" data-requirements="OP-05 BW-UI-013">
     <div className="v04-timeline-controls" style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
-      <div className="segmented-control" aria-label="חלון זמן של סימולציה">
-        {OPERATOR_TIMELINE_WINDOWS.map((minutes) => <button type="button" key={minutes} className={windowMinutes === minutes ? "active" : ""} onClick={() => setWindowMinutes(minutes)}>{minutes} דק׳</button>)}
-      </div>
+      <span className="card-hint" data-sim-shared-window>חלון משותף למפה ולגרף: {windowMinutes} דקות</span>
       <div className="segmented-control" aria-label="סינון קבוצות סימולציה">
         <button type="button" className={explicitGroups.length === 0 ? "active" : ""} onClick={() => setExplicitGroups([])}>כל הקבוצות</button>
         {GROUPS.map((group) => <button type="button" key={group.id} className={explicitGroups.includes(group.id) ? "active" : ""} onClick={() => toggleGroup(group.id)} style={{ borderColor: groupLineColor[group.id] }}>{group.name}</button>)}
