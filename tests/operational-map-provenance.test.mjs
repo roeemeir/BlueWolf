@@ -33,7 +33,9 @@ const vite = await createServer({
       .replace('import { useEffect, useState } from "react";', 'const { useEffect, useState } = globalThis.__bluewolfMapTest;')
       .replace(/import \{ getRuntimeGroups, getRuntimeTrace, type LiveRuntimeVehicle \} from "@\/lib\/live-runtime";/, 'const getRuntimeGroups = () => globalThis.__bluewolfMapTest.groups; const getRuntimeTrace = () => globalThis.__bluewolfMapTest.trace;')
       .replace('import { getLiveRuntimeHistory } from "@/lib/live-runtime-history";', 'const getLiveRuntimeHistory = () => globalThis.__bluewolfMapTest.history;')
-      .replace('import { useWorkspace } from "./app-context";', 'const useWorkspace = () => ({ state: { mapServers: [], settings: {} } });');
+      // The actual WorkspaceState always carries template fields. Leaving them
+      // out of the fixture started throwing before provenance assertions ran.
+      .replace('import { useWorkspace } from "./app-context";', 'const useWorkspace = () => ({ state: { mapServers: [], settings: {}, activeTemplateOverrides: {}, templates: [] } });');
   } }],
 });
 const { OperationalLiveMap } = await vite.ssrLoadModule('/components/bluewolf/operational-live-map.tsx');
