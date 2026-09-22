@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, Bell, CheckCircle2, Clock3, Database, FileChartColumn, HardDrive, Info, Moon, Radio, Settings2, Sun, TriangleAlert, Wifi } from "lucide-react";
 import { useTheme } from "next-themes";
 import { toast } from "sonner";
@@ -15,7 +15,7 @@ import type { DataMode } from "@/lib/bluewolf";
 import { currentRuntimeNotifications } from "@/lib/live-notifications";
 import { applyLiveRuntimeSnapshot, fetchLiveRuntimeSnapshot, restoreSimulationScenario, simulationRuntimeSnapshot, unavailableRuntimeSnapshot, type LiveRuntimeSnapshot, type RuntimeHealth } from "@/lib/live-runtime";
 import { applyLiveRuntimeHistory, appendLiveRuntimeHistory, fetchLiveRuntimeHistory } from "@/lib/live-runtime-history";
-import { newerRuntimeSnapshotTime } from "@/lib/runtime-snapshot-order";
+import { createRuntimePollOrder } from "@/lib/runtime-snapshot-order";
 import { DeveloperGovernanceWorkbench } from "./developer-governance-workbench";
 import { InvestigationWorkspace } from "./investigation-workspace";
 import { OperatorView } from "./operator-view";
@@ -49,6 +49,9 @@ function AppInner() {
   const [coreSnapshot, setCoreSnapshot] = useState<LiveRuntimeSnapshot | null>(null);
   const [readAlertKeys, setReadAlertKeys] = useState<string[]>([]);
   const [, setRuntimeRevision] = useState(0);
+  // Keep per-server source timestamps and HTTP completion order across effect
+  // restarts. In particular, changing uiRefreshSeconds must not reset history.
+  const pollOrder = useRef(createRuntimePollOrder());
 
   const serverValue = state.servers.some((item) => item.id === server && item.enabled) ? server : (state.servers.find((item) => item.enabled)?.id ?? "1");
   const activeServer = useMemo(() => state.servers.find((item) => item.id === serverValue)?.name ?? `שרת ${serverValue}`, [serverValue, state.servers]);
@@ -97,10 +100,6 @@ function AppInner() {
   useEffect(() => {
     if (dataMode === "simulation") return;
     let cancelled = false;
-    // This cursor belongs to one server/mode poll subscription. A slower HTTP
-    // response must not rewind live cards/alerts or turn an older positionless
-    // frame into a new trace gap. Reset it only when this subscription ends.
-    let latestAcceptedSourceMs = Number.NEGATIVE_INFINITY;
     const bootstrapHistory = async () => {
       try {
         const history = await fetchLiveRuntimeHistory(serverValue);
@@ -112,19 +111,20 @@ function AppInner() {
       }
     };
     const poll = async () => {
+      const requestId = pollOrder.current.begin(serverValue);
       try {
         const snapshot = await fetchLiveRuntimeSnapshot(serverValue);
         if (cancelled) return;
-        const sourceTimeMs = newerRuntimeSnapshotTime(latestAcceptedSourceMs, snapshot.observedAt);
-        if (sourceTimeMs === null) return; // Drop the whole stale/repeated/invalid frame before ANY live mutation.
-        latestAcceptedSourceMs = sourceTimeMs;
+        // Do not mutate traces/history/cards/alerts for a late, repeated or
+        // superseded poll. The persisted gate also survives cadence changes.
+        if (!pollOrder.current.acceptSnapshot(serverValue, requestId, snapshot.observedAt)) return;
         applyLiveRuntimeSnapshot(snapshot);
         appendLiveRuntimeHistory(snapshot);
         setRuntimeState(snapshot.source.health);
         setRuntimeDetail(snapshot.source.detail ?? `snapshot ${snapshot.observedAt}`);
         setCoreSnapshot(snapshot.source.kind === "python-core" && snapshot.source.health === "healthy" ? snapshot : null);
       } catch (error) {
-        if (cancelled) return;
+        if (cancelled || !pollOrder.current.acceptFailure(serverValue, requestId)) return;
         const detail = error instanceof Error ? error.message : "Python Core runtime is unavailable";
         applyLiveRuntimeSnapshot(unavailableRuntimeSnapshot(serverValue, detail));
         setCoreSnapshot(null);
@@ -147,7 +147,7 @@ function AppInner() {
       <button type="button" className="brand" onClick={() => setTab("operator")}><div className="brand-mark"><WolfLogo /></div><div><h1>זאב כחול</h1><p>ניטור סנכרון רכבים</p></div></button>
       <Dialog>
         <DialogTrigger asChild><button type="button" className={`live-state source-${dataMode}`}><span className="live-dot" /><div><strong>{dataMode === "simulation" ? "SIM · סימולציה" : `חי · ${runtimeLabel}`}</strong><small>{runtimeDetail}</small></div></button></DialogTrigger>
-        <DialogContent className="glass-dialog source-dialog" dir="rtl"><DialogHeader><DialogTitle>מקור הנתונים</DialogTitle><DialogDescription>בחירת מקור אינה משנה שרת או זירה. במצב Influx הציונים מוצגים רק כאשר Python Core מחזיר snapshot תקף.</DialogDescription></DialogHeader><div className="source-choice-grid"><button type="button" className={dataMode === "simulation" ? "active" : ""} onClick={() => changeDataMode("simulation")}><Radio /><strong>סימולציה</strong><span>תרחיש דטרמיניסטי</span></button><button type="button" className={dataMode === "influx" ? "active" : ""} onClick={() => changeDataMode("influx")}><Database /><strong>InfluxDB 2 + Python Core</strong><span>{dataMode === "influx" ? runtimeLabel : "runtime מבצעי"}</span></button></div><div className="system-dialog-grid"><span><HardDrive />אחסון<b>{storageMode === "cloud" ? "מרכזי" : "מקומי"}</b></span><span><CheckCircle2 />קונפיגורציה<b>גרסה {revision || 1}</b></span><span><Clock3 />טיק<b>{state.settings.uiRefreshSeconds} שניות</b></span></div></DialogContent>
+        <DialogContent className="glass-dialog source-dialog" dir="rtl"><DialogHeader><DialogTitle>מקור הנתונים</DialogTitle><DialogDescription>בחירת מקור אינה משנה שרת או זירה. במצב Influx הציונים מוצגים רק כאשר Python Core מחזיר snapshot תקף.</DialogDescription></DialogHeader><div className="source-choice-grid"><button type="button" className={dataMode === "simulation" ? "active" : ""} onClick={() => changeDataMode("simulation")}><Radio /><strong>סימולציה</strong><span>תרחיש דטרמיניסטי</span></button><button type="button" className={dataMode === "influx" ? "active" : ""} onClick={() => changeDataMode("influx")}><Database /><strong>InfluxDB 2 + Python Core</strong><span>{dataMode === "influx" ? runtimeLabel : "runtime מבצעי"}</span></button></div><div className="system-dialog-grid"><span><HardDrive />אחסון<b>{storageMode === "cloud" ? "מרכזי" : "מקומי"</b></span><span><CheckCircle2 />קונפיגורציה<b>גרסה {revision || 1}</b></span><span><Clock3 />טיק<b>{state.settings.uiRefreshSeconds} שניות</b></span></div></DialogContent>
       </Dialog>
       <div className="top-actions">
         <label className="v04-server-control"><span>שרת</span><Select value={serverValue} onValueChange={changeServer}><SelectTrigger className="server-select"><Database /><SelectValue /></SelectTrigger><SelectContent>{state.servers.filter((item) => item.enabled).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></label>
@@ -160,7 +160,7 @@ function AppInner() {
             <div className="notification-list">
               {notifications.length === 0 && <div className="empty-state"><Info /><strong>{dataMode === "influx" && runtimeState !== "healthy" ? "אין נתוני התראות תקפים מה־Core" : "אין התראות פעילות"}</strong><span>{dataMode === "influx" && runtimeState !== "healthy" ? runtimeDetail : dataMode === "simulation" ? "לתרחיש הסימולציה הנוכחי אין התרעות פעילות." : "לא דווחו התראות פעילות ב־snapshot האחרון."}</span></div>}
               {notifications.map((item) => <button type="button" key={item.key} className={`notification-item ${readAlertKeys.includes(item.key) ? "read" : ""}`} onClick={() => setReadAlertKeys((current) => current.includes(item.key) ? current : [...current, item.key])}>
-                <span className={`notification-icon ${item.severity === "critical" ? "warning" : "info"}`}>{item.severity === "critical" ? <TriangleAlert /> : <Info />}</span>
+                <span className={`notification-icon ${item.severity === "critical" ? "warning" : "info"}>{item.severity === "critical" ? <TriangleAlert /> : <Info />}</span>
                 <div><strong>{item.sourceLabel} · {item.title}</strong><p>{item.detail}</p><small>שרת {item.serverId} · קבוצה {item.groupId} · {notificationTime(item.activeSince, state.settings.timezone)}</small></div>
               </button>)}
             </div>
