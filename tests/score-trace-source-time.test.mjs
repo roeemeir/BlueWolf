@@ -28,7 +28,12 @@ test('OP-02 rejects impossible or nonfinite WGS84 fixes before map projection an
     fix(3, { longitude: 180.01 }), fix(4, { longitude: -180.01 }),
     fix(5, { latitude: Number.NaN }), fix(6, { timeMs: Number.POSITIVE_INFINITY }),
   ];
-  assert.deepEqual(trace.mergeScoreTrace([impossible[0], valid], impossible.slice(1)), [valid]);
+  const raw = structuredClone(valid);
+  const retained = trace.mergeScoreTrace([impossible[0], valid], impossible.slice(1));
+  assert.deepEqual(valid, raw, 'invalid navigation cannot mutate the original valid fix');
+  assert.deepEqual(retained, [{ ...valid, breakAfter: true }],
+    'retain only the real fix; invalid later navigation must terminate its displayed line');
+  assert.deepEqual(trace.filterTraceWindow(retained, 30), retained);
   assert.deepEqual(trace.filterTraceWindow([impossible[0], valid, impossible[1]], 30), [valid]);
   assert.deepEqual(trace.traceSegments([valid, ...impossible]), []);
 });
