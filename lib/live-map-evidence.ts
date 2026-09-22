@@ -9,6 +9,8 @@ export type LiveMapTemplateAssignment = {
 };
 
 export type LiveMapEventEvidence = {
+  serverId: number;
+  groupId: string;
   eventId: string;
   templateId: string;
   routes: RecomputedRoute[];
@@ -29,6 +31,8 @@ export function extractLiveMapEventEvidence(result: EventRecomputeResult): LiveM
     }];
   }) : [];
   return {
+    serverId: result.serverId,
+    groupId: result.groupId,
     eventId: result.eventId,
     templateId: result.templateId,
     routes: result.routes,

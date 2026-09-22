@@ -131,7 +131,10 @@ test('report endpoint fails closed when an event has no original or explicit tem
 });
 
 
-test('simulation report data uses the explicit seven-day simulator archive without calling Python Core', async () => {
+test('simulation report data uses the explicit seven-day simulator archive without calling Python Core', async (t) => {
+  // The archive is relative to the server clock. Keep this fixture in its
+  // original seven-day window even when CI runs months or years later.
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-19T23:59:59.999Z') });
   let externalCalls = 0;
   globalThis.fetch = async () => { externalCalls += 1; throw new Error('simulation report must not call Python Core'); };
   const response = await route.POST(new Request('http://app.test/api/investigation/report', {
@@ -151,7 +154,28 @@ test('simulation report data uses the explicit seven-day simulator archive witho
   const body = await response.json();
   assert.equal(body.source, 'simulator-archive');
   assert.equal(body.report.serverId, 1);
-  assert.ok(body.report.events.length >= 20);
+  assert.equal(body.report.generatedAt, '2026-09-19T23:59:59.999Z');
+  assert.equal(body.report.events.length, 30, 'seven UTC days × four scheduled events plus two active events');
+  const historical = body.report.events.filter((event) => !event.result.eventId.endsWith('-active'));
+  assert.equal(new Set(historical.map((event) => event.result.startAt.slice(0, 10))).size, 7);
   assert.ok(body.report.events.some((event) => event.result.family === 'SI'));
   assert.ok(body.report.events.some((event) => event.result.family === 'SO'));
+});
+
+test('simulation report rejects a range that expires at UTC midnight without extending retention', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-19T23:59:59.999Z') });
+  let externalCalls = 0;
+  globalThis.fetch = async () => { externalCalls += 1; throw new Error('simulation must not call Core'); };
+  const request = () => new Request('http://app.test/api/investigation/report', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ serverId: 1, source: 'simulation', format: 'data', from: '2026-09-13T00:00:00Z', to: '2026-09-13T23:59:59.999Z' }),
+  });
+  const before = await route.POST(request());
+  assert.equal(before.status, 200);
+  assert.equal((await before.json()).report.events.length, 4);
+  t.mock.timers.setTime(new Date('2026-09-20T00:00:00.000Z').getTime());
+  const after = await route.POST(request());
+  assert.equal(after.status, 422);
+  assert.match((await after.json()).error, /no simulated events intersect/);
+  assert.equal(externalCalls, 0);
 });

@@ -10,15 +10,23 @@ const review = JSON.parse(await readFile('docs/development-iteration-review.json
 test('BW-GOV-007 current iteration review covers the whole registry and keeps manual-only backlog out of engineering selection', () => {
   assert.deepEqual(validateDevelopmentIterationReview(review, registry), []);
   assert.equal(review.requirementCount, registry.requirementCount);
-  assert.equal(review.selectedForWork.length, 0);
-  assert.deepEqual([...review.openRequirements].sort(), [...review.manualReverifyRequired].sort());
+  assert.ok(review.selectedForWork.every((id) => review.openRequirements.includes(id)));
+  assert.ok(review.selectedForWork.every((id) => !review.manualReverifyRequired.includes(id)));
 });
 
 test('BW-GOV-007 requires engineering selection when a non-manual open requirement remains', () => {
   const broken = structuredClone(review);
+  broken.selectedForWork = [];
   broken.manualReverifyRequired = broken.manualReverifyRequired.slice(1);
   const errors = validateDevelopmentIterationReview(broken, registry);
   assert.ok(errors.some((item) => item.includes('non-manual open requirements remain')));
+});
+
+test('BW-GOV-007 permits manual-only backlog without inventing engineering work', () => {
+  const manualOnly = structuredClone(review);
+  manualOnly.selectedForWork = [];
+  manualOnly.manualReverifyRequired = [...manualOnly.openRequirements];
+  assert.deepEqual(validateDevelopmentIterationReview(manualOnly, registry), []);
 });
 
 test('BW-GOV-007 prevents manual re-verification work from being selected as engineering work', () => {

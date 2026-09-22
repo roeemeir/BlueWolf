@@ -87,6 +87,9 @@ export function OperationalLiveMap({
   const selectedRuntimeGroup = runtimeGroups.find((group) => group.id === selectedGroupId);
   const activeEventId = selectedRuntimeGroup?.event?.id;
   const activeTemplateId = selectedRuntimeGroup?.templateId;
+  const matchingOverride = recomputeOverride?.serverId === Number(serverId)
+    && recomputeOverride.groupId === selectedGroupId
+    && recomputeOverride.eventId === activeEventId ? recomputeOverride : null;
   const [eventEvidence, setEventEvidence] = useState<LiveMapEventEvidence | null>(null);
   const [showBase, setShowBase] = useState(true);
   const [showObservedTrace, setShowObservedTrace] = useState(false);
@@ -107,29 +110,32 @@ export function OperationalLiveMap({
   }, [serverId]);
 
   useEffect(() => {
-    if (cursorObservedAt || recomputeOverride || !activeEventId || !activeTemplateId) return;
+    if (cursorObservedAt || matchingOverride || !activeEventId || !activeTemplateId) return;
     let cancelled = false;
     void fetch("/api/investigation/recompute", {
       method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, cache: "no-store",
-      body: JSON.stringify({ eventId: activeEventId, templateId: activeTemplateId, scenarioId: `operator-map:${activeEventId}:${activeTemplateId}` }),
+      body: JSON.stringify({ serverId: Number(serverId), eventId: activeEventId, templateId: activeTemplateId, scenarioId: `operator-map:${serverId}:${activeEventId}:${activeTemplateId}` }),
     }).then(async (response) => {
       const payload: unknown = await response.json();
       if (!response.ok) throw new Error(`map evidence recompute failed (${response.status})`);
       return normalizeEventRecompute(payload);
     }).then((result) => {
-      if (!cancelled && result.eventId === activeEventId && result.templateId === activeTemplateId) setEventEvidence(extractLiveMapEventEvidence(result));
+      if (!cancelled && result.serverId === Number(serverId) && result.groupId === selectedGroupId
+        && result.eventId === activeEventId && result.templateId === activeTemplateId) setEventEvidence(extractLiveMapEventEvidence(result));
     }).catch(() => undefined);
     return () => { cancelled = true; };
-  }, [activeEventId, activeTemplateId, recomputeOverride, cursorObservedAt]);
+  }, [serverId, selectedGroupId, activeEventId, activeTemplateId, matchingOverride, cursorObservedAt]);
 
-  const overrideEvidence = recomputeOverride ? extractLiveMapEventEvidence(recomputeOverride) : null;
-  const evidence = cursorObservedAt ? null : overrideEvidence ?? (eventEvidence && eventEvidence.eventId === activeEventId && eventEvidence.templateId === activeTemplateId ? eventEvidence : null);
-  const fullTrace = recomputeOverride && !cursorObservedAt
-    ? traceWithEventRecompute(getRuntimeTrace(serverId, TRACE_WINDOWS.at(-1) ?? 90), recomputeOverride)
+  const overrideEvidence = matchingOverride ? extractLiveMapEventEvidence(matchingOverride) : null;
+  const evidence = cursorObservedAt ? null : overrideEvidence ?? (eventEvidence
+    && eventEvidence.serverId === Number(serverId) && eventEvidence.groupId === selectedGroupId
+    && eventEvidence.eventId === activeEventId && eventEvidence.templateId === activeTemplateId ? eventEvidence : null);
+  const fullTrace = matchingOverride && !cursorObservedAt
+    ? traceWithEventRecompute(getRuntimeTrace(serverId, TRACE_WINDOWS.at(-1) ?? 90), matchingOverride)
     : getRuntimeTrace(serverId, TRACE_WINDOWS.at(-1) ?? 90);
   const cursorFrame = cursorObservedAt ? resolveOperatorCursorFrame(getLiveRuntimeHistory(serverId), fullTrace, cursorObservedAt) : null;
   const cursorTimeMs = cursorFrame?.timeMs ?? null;
-  const clippedTrace = traceUpToCursor(fullTrace, cursorTimeMs);
+  const clippedTrace = cursorObservedAt && !cursorFrame ? [] : traceUpToCursor(fullTrace, cursorTimeMs);
   const history = filterTraceWindow(clippedTrace, traceWindowMinutes);
   const current = cursorObservedAt
     ? (cursorFrame?.vehicles ?? []).map((row): RawPosition => {
@@ -201,7 +207,7 @@ export function OperationalLiveMap({
       {mapSource && <span className="card-hint" data-map-source-active>{mapSource.name} · {mapSource.kind.toUpperCase()} · proxy מקומי</span>}
       {historical && <span className="card-hint" data-operator-map-cursor>{cursorFrame ? `HISTORY · ${historicalLabel} · WGS84 evidence` : "HISTORY · אין WGS84 evidence תואם; לא מוצג live fallback"}</span>}
       {!historical && !evidence && activeEventId && <span className="card-hint">שיוכי template מפורטים טרם זמינים; נתיב חי מוצג רק אם הגיע ישירות מה־Core.</span>}
-      {!historical && recomputeOverride && <span className="card-hint" data-op04-version>run {recomputeOverride.runId.slice(0, 12)} · template {recomputeOverride.templateVersion.slice(0, 12)}</span>}
+      {!historical && matchingOverride && <span className="card-hint" data-op04-version>run {matchingOverride.runId.slice(0, 12)} · template {matchingOverride.templateVersion.slice(0, 12)}</span>}
     </div>
     <svg className="map-svg v04-live-map engineering" viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`} role="img" aria-label="מפת מיקומים מבצעית של רכבי Blue Wolf">
       <defs><pattern id={`operational-grid-${serverId}`} width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" className="v04-grid-line" /></pattern></defs>
@@ -234,7 +240,7 @@ export function OperationalLiveMap({
       {showTemplate && !historical && <g className="v04-template-assignment-layer">{points.map((point) => {
         const assignment = assignmentByVehicle.get(point.vehicle.id); if (!assignment) return null;
         return <g key={`template:${point.vehicle.id}`} transform={`translate(${point.x + 18} ${point.y - 22})`}><rect x="0" y="-18" width="116" height="24" rx="10" fill="var(--map-card)" opacity=".9" /><text x="8" y="0" textAnchor="start" stroke="none">{assignment.slotId} · φ {Math.round(assignment.expectedPhase * 100)}%</text></g>;
-      })}{(recomputeOverride?.templateId ?? activeTemplateId) && <text x={VIEW_WIDTH - 42} y="45" textAnchor="end" stroke="none">Template: {recomputeOverride?.templateId ?? activeTemplateId}</text>}</g>}
+      })}{(matchingOverride?.templateId ?? activeTemplateId) && <text x={VIEW_WIDTH - 42} y="45" textAnchor="end" stroke="none">Template: {matchingOverride?.templateId ?? activeTemplateId}</text>}</g>}
       <g className="v04-map-scale"><text x="42" y="535">{mapSource ? `${mapSource.kind.toUpperCase()} · ` : ""}WGS84 · תצוגה יחסית auto-fit</text><text x="955" y="535" textAnchor="end">{historical ? "HISTORICAL EVIDENCE" : "LIVE CORE"}</text></g>
     </svg>
   </div>;
