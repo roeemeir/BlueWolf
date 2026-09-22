@@ -11,19 +11,21 @@ const iso = (second) => new Date(Date.parse('2026-09-22T04:00:00.000Z') + second
 
 test('OP-02 whole Core snapshots advance only with strictly newer observed source time', () => {
   let latest = Number.NEGATIVE_INFINITY;
-  for (const second of [0, 4, 2, 4, 3, 6, 1, 6]) {
+  const arrivals = [0, 4, 2, 4, 3, 6, 1, 6];
+  const expected = [0, 4, 4, 4, 4, 6, 6, 6];
+  arrivals.forEach((second, index) => {
     const accepted = newerRuntimeSnapshotTime(latest, iso(second));
     if (accepted !== null) latest = accepted;
-    assert.equal(latest, Date.parse(iso(Math.max(0, ...[0, 4, 2, 4, 3, 6, 1, 6].slice(0, [0, 4, 2, 4, 3, 6, 1, 6].indexOf(second) + 1)))));
-  }
+    assert.equal(latest, Date.parse(iso(expected[index])));
+  });
 });
 
-test('OP-02 duplicate and malformed whole snapshots cannot be treated as new missing navigation', () => {
+test('OP-02 duplicate and malformed whole snapshots cannot be treated as fresh navigation', () => {
   const newest = Date.parse(iso(12));
   assert.equal(newerRuntimeSnapshotTime(newest, iso(12)), null);
   assert.equal(newerRuntimeSnapshotTime(newest, iso(2)), null);
-  assert.equal(newerRuntimeSnapshotTime(newest, 'not-a-time'), null);
-  assert.equal(newerRuntimeSnapshotTime(newest, ''), null);
+  assert.throws(() => newerRuntimeSnapshotTime(newest, 'not-a-time'), /invalid Core runtime snapshot observedAt/);
+  assert.throws(() => newerRuntimeSnapshotTime(newest, ''), /invalid Core runtime snapshot observedAt/);
   assert.equal(newerRuntimeSnapshotTime(newest, iso(14)), Date.parse(iso(14)));
 });
 
