@@ -17,7 +17,9 @@ test('GEO-01/GEO-02 active SO surfaces share one geometry source', async () => {
 
   assert.match(governed, /buildSoSmileGeometry/);
   assert.match(governed, /pointAtSoPhase/);
-  assert.match(governed, /data-requirements="GEO-01 GEO-02"/);
+  const preview = governed.slice(governed.indexOf('export function GovernedTemplatePreview('));
+  const previewRequirements = preview.match(/data-requirements="([^"]+)"/)?.[1]?.split(/\s+/) ?? [];
+  assert.ok(['GEO-01', 'GEO-02', 'SO-02'].every((requirement) => previewRequirements.includes(requirement)), 'SO template preview must retain both geometry markers and its new direct-placement marker');
   assert.doesNotMatch(governed, /SO_ANCHORS|capsulePoint|doublePoint/);
 
   assert.match(operator, /GovernedLiveMap/);
