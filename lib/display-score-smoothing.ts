@@ -32,8 +32,8 @@ function mean(values: number[]) {
  * The function never mutates the supplied Core history and never feeds a
  * smoothed value back into scoring, alerts, grouping or event lifecycle. A
  * window of zero is an explicit raw-display mode. Smoothing is segmented by
- * group/event and invalid score frames so a visual line cannot bleed across a
- * structural event boundary or unavailable score.
+ * server, group/event and invalid score frames so a visual line cannot bleed
+ * across a server switch, structural event boundary or unavailable score.
  */
 export function smoothRuntimeHistoryForDisplay(
   history: readonly LiveRuntimeHistoryPoint[],
@@ -55,6 +55,9 @@ export function smoothRuntimeHistoryForDisplay(
       const routes: number[] = [];
       for (let index = pointIndex; index >= 0; index -= 1) {
         const sourcePoint = history[index];
+        // Group and event identifiers are only meaningful within their source
+        // server. Never average an identically named group from another server.
+        if (sourcePoint.serverId !== point.serverId) break;
         const age = now - Date.parse(sourcePoint.observedAt);
         if (!Number.isFinite(age) || age < 0 || age > windowMs) break;
         const candidate = sourcePoint.groups.find((item) => item.id === group.id);
