@@ -4,18 +4,21 @@ import test from "node:test";
 
 const dashboard = await readFile("components/bluewolf/dashboard-app.tsx", "utf8");
 
-test("the operator bell is sourced only from the selected server and current runtime snapshot", () => {
+test("the operator bell is sourced only from the selected server and current healthy runtime snapshot", () => {
   assert.match(dashboard, /currentRuntimeNotifications\(notificationSnapshot\)/);
   assert.match(dashboard, /simulationRuntimeSnapshot\(serverValue\)/);
   assert.match(dashboard, /coreSnapshot\?\.serverId === serverValue/);
   assert.match(dashboard, /coreSnapshot\.source\.health === "healthy"/);
-  assert.match(dashboard, /setCoreSnapshot\(snapshot\.source\.kind === "python-core" && snapshot\.source\.health === "healthy" \? snapshot : null\)/);
+  assert.match(dashboard, /const healthyCoreFrame = snapshot\.source\.kind === "python-core" && snapshot\.source\.health === "healthy"/);
+  assert.match(dashboard, /setCoreSnapshot\(healthyCoreFrame \? snapshot : null\)/);
+  assert.match(dashboard, /: pollOrder\.current\.acceptHealthSnapshot\(serverValue, requestId, snapshot\.observedAt\)/);
 });
 
 test("a server or source change, disconnection or stale Core clears formerly live alerts", () => {
   assert.match(dashboard, /const changeDataMode = \(mode: DataMode\) => \{[^}]*setCoreSnapshot\(null\)/);
   assert.match(dashboard, /const changeServer = \(value: string\) => \{[^}]*setCoreSnapshot\(null\)/);
   assert.match(dashboard, /applyLiveRuntimeSnapshot\(unavailableRuntimeSnapshot\(serverValue, detail\)\);\s*setCoreSnapshot\(null\)/);
+  assert.match(dashboard, /applyLiveRuntimeSnapshot\(unavailableRuntimeSnapshot\(serverValue, snapshot\.source\.detail \?\?[^;]+\);\s*}\s*setRuntimeState\(snapshot\.source\.health\)/);
   assert.doesNotMatch(dashboard, /SO-02 · התראה חיה|לפני 4 דק׳/);
 });
 
