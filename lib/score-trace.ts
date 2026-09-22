@@ -38,45 +38,45 @@ function traceIdentity(point: ScoreTracePoint): string {
  * The caller passes one server's trace and one snapshot at a time. Do not use a
  * global vehicle cache: identically numbered vehicles on independent servers
  * must never affect each other's continuity. A later/duplicate observation
- * cannot erase an already established breakAfter boundary.
+ * cannot erase an already established breakAfter boundary. If simultaneous
+ * group/event records exist, a missing vehicle fix severs ALL latest records:
+ * no historical event may retain a fictitious route across the same GPS hole.
  */
 export function mergeScoreTrace(previous: ScoreTracePoint[], incoming: ScoreTracePoint[], horizonMs = TRACE_RETENTION_MINUTES * 60_000): ScoreTracePoint[] {
   const rows = new Map<string, ScoreTracePoint>();
   for (const point of previous) {
     if (validTraceFix(point)) rows.set(traceIdentity(point), { ...point });
   }
-  const latestPreviousByVehicle = new Map<number, ScoreTracePoint>();
+  const latestPreviousTimeByVehicle = new Map<number, number>();
   for (const point of rows.values()) {
-    const latest = latestPreviousByVehicle.get(point.vehicleId);
-    if (!latest || latest.timeMs < point.timeMs) latestPreviousByVehicle.set(point.vehicleId, point);
+    const latest = latestPreviousTimeByVehicle.get(point.vehicleId);
+    if (latest === undefined || latest < point.timeMs) latestPreviousTimeByVehicle.set(point.vehicleId, point.timeMs);
   }
   const validIncoming = incoming.filter(validTraceFix);
   const latestIncomingTime = validIncoming.reduce((last, point) => Math.max(last, point.timeMs), Number.NEGATIVE_INFINITY);
   const observedVehicles = new Set(validIncoming.map((point) => point.vehicleId));
-  for (const [vehicleId, prior] of latestPreviousByVehicle) {
-    if (!observedVehicles.has(vehicleId) && (incoming.length === 0 || latestIncomingTime > prior.timeMs)) {
+  for (const prior of rows.values()) {
+    if (!observedVehicles.has(prior.vehicleId)
+      && latestPreviousTimeByVehicle.get(prior.vehicleId) === prior.timeMs
+      && (incoming.length === 0 || latestIncomingTime > prior.timeMs)) {
       prior.breakAfter = true;
     }
   }
-  // Invalid fixes that DO reach the collector must also sever the previous
-  // observed segment; the bad coordinates themselves are never retained or
-  // projected. A missing fix omitted upstream is covered by the absent-id case.
+  // Invalid fixes that DO reach the collector must also sever every last
+  // simultaneous event/group record for that vehicle. The bad coordinates
+  // themselves are never retained or projected. An omitted upstream fix is
+  // handled by the absent-id case above.
   for (const invalid of incoming) {
     if (validTraceFix(invalid) || !Number.isInteger(invalid.vehicleId) || !Number.isFinite(invalid.timeMs)) continue;
-    let latestBefore: ScoreTracePoint | undefined;
-    for (const point of rows.values()) {
-      if (point.vehicleId === invalid.vehicleId && point.timeMs < invalid.timeMs
-        && (!latestBefore || point.timeMs > latestBefore.timeMs)) latestBefore = point;
-    }
-    for (const point of validIncoming) {
-      if (point.vehicleId === invalid.vehicleId && point.timeMs < invalid.timeMs
-        && (!latestBefore || point.timeMs > latestBefore.timeMs)) latestBefore = point;
-    }
-    if (latestBefore) {
-      const identity = traceIdentity(latestBefore);
+    const preceding = [...rows.values(), ...validIncoming].filter((point) => point.vehicleId === invalid.vehicleId && point.timeMs < invalid.timeMs);
+    if (preceding.length === 0) continue;
+    const latestBeforeTime = preceding.reduce((latest, point) => Math.max(latest, point.timeMs), Number.NEGATIVE_INFINITY);
+    for (const point of preceding) {
+      if (point.timeMs !== latestBeforeTime) continue;
+      const identity = traceIdentity(point);
       const existing = rows.get(identity);
       if (existing) existing.breakAfter = true;
-      else rows.set(identity, { ...latestBefore, breakAfter: true });
+      else rows.set(identity, { ...point, breakAfter: true });
     }
   }
   for (const point of validIncoming) {
