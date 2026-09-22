@@ -404,8 +404,14 @@ export function scenarioFromRuntimeSnapshot(snapshot: LiveRuntimeSnapshot): Serv
 }
 
 export function applyLiveRuntimeSnapshot(snapshot: LiveRuntimeSnapshot) {
-  const incoming = (snapshot.groupList ?? Object.values(snapshot.groups).filter((g): g is LiveRuntimeGroup => Boolean(g))).flatMap(group => group.members.flatMap(vehicle => vehicle.latitude === undefined || vehicle.longitude === undefined ? [] : [{ timeMs: Date.parse(group.observedAt), groupId: group.id, eventId: group.event?.id ?? group.id, vehicleId: vehicle.id, latitude: vehicle.latitude, longitude: vehicle.longitude, sync: vehicle.scoreValid ? vehicle.sync : null }]));
-  RUNTIME_TRACES[snapshot.serverId] = mergeScoreTrace(RUNTIME_TRACES[snapshot.serverId] ?? [], incoming, 2 * 60 * 60_000);
+  // A transport/health failure contains NO observed navigation frame. Do not
+  // pass an artificial, positionless fallback into mergeScoreTrace: doing so
+  // would mark the last genuine fix as a source-observed GPS outage. A healthy
+  // Core snapshot with missing coordinates still takes the normal gap path.
+  if (snapshot.source.health === "healthy") {
+    const incoming = (snapshot.groupList ?? Object.values(snapshot.groups).filter((g): g is LiveRuntimeGroup => Boolean(g))).flatMap(group => group.members.flatMap(vehicle => vehicle.latitude === undefined || vehicle.longitude === undefined ? [] : [{ timeMs: Date.parse(group.observedAt), groupId: group.id, eventId: group.event?.id ?? group.id, vehicleId: vehicle.id, latitude: vehicle.latitude, longitude: vehicle.longitude, sync: vehicle.scoreValid ? vehicle.sync : null }]));
+    RUNTIME_TRACES[snapshot.serverId] = mergeScoreTrace(RUNTIME_TRACES[snapshot.serverId] ?? [], incoming, 2 * 60 * 60_000);
+  }
 
   SERVER_SCENARIOS[snapshot.serverId] = scenarioFromRuntimeSnapshot(snapshot);
   RUNTIME_GROUP_LISTS[snapshot.serverId] = structuredClone(
