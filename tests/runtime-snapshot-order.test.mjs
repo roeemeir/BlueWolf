@@ -6,7 +6,7 @@ import { createServer } from 'vite';
 const root = process.cwd();
 const vite = await createServer({ appType: 'custom', configFile: false, root, resolve: { alias: { '@': root } }, server: { middlewareMode: true } });
 after(async () => { await vite.close(); });
-const { newerRuntimeSnapshotTime } = await vite.ssrLoadModule('/lib/runtime-snapshot-order.ts');
+const { newerRuntimeSnapshotTime, createRuntimePollOrder } = await vite.ssrLoadModule('/lib/runtime-snapshot-order.ts');
 const iso = (second) => new Date(Date.parse('2026-09-22T04:00:00.000Z') + second * 1000).toISOString();
 
 test('OP-02 whole Core snapshots advance only with strictly newer observed source time', () => {
@@ -29,23 +29,63 @@ test('OP-02 duplicate and malformed whole snapshots cannot be treated as fresh n
   assert.equal(newerRuntimeSnapshotTime(newest, iso(14)), Date.parse(iso(14)));
 });
 
-test('OP-02 each server/mode poll subscription owns an independent cursor', () => {
-  const lastServer1 = Date.parse(iso(30));
-  const lastServer2 = Date.parse(iso(3));
-  assert.equal(newerRuntimeSnapshotTime(lastServer1, iso(4)), null);
-  assert.equal(newerRuntimeSnapshotTime(lastServer2, iso(4)), Date.parse(iso(4)));
-  assert.equal(newerRuntimeSnapshotTime(Number.NEGATIVE_INFINITY, iso(1)), Date.parse(iso(1)), 'a newly opened subscription may start at its own source time');
+test('OP-02 changing refresh cadence cannot reset an existing Core source-time watermark', () => {
+  const order = createRuntimePollOrder();
+  const beforeRefresh = order.begin('1');
+  assert.equal(order.acceptSnapshot('1', beforeRefresh, iso(30)), true);
+  // React effect is replaced, but the mounted app keeps this order instance.
+  assert.equal(order.acceptSnapshot('1', order.begin('1'), iso(20)), false);
+  assert.equal(order.acceptSnapshot('1', order.begin('1'), iso(30)), false);
+  assert.equal(order.acceptSnapshot('1', order.begin('1'), iso(31)), true);
 });
 
-test('OP-02 dashboard rejects a whole stale poll BEFORE traces, cards, history and alerts change', () => {
+test('OP-02 later completed success cannot be cleared by an earlier failed request', () => {
+  const order = createRuntimePollOrder();
+  const older = order.begin('1');
+  const newer = order.begin('1');
+  assert.equal(order.acceptSnapshot('1', newer, iso(6)), true);
+  assert.equal(order.acceptFailure('1', older), false);
+});
+
+test('OP-02 later completed network failure is not replaced by an earlier delayed success', () => {
+  const order = createRuntimePollOrder();
+  const older = order.begin('1');
+  const newer = order.begin('1');
+  assert.equal(order.acceptFailure('1', newer), true);
+  assert.equal(order.acceptSnapshot('1', older, iso(6)), false);
+  assert.equal(order.acceptSnapshot('1', order.begin('1'), iso(6)), true);
+});
+
+test('OP-02 server switches preserve separate watermarks and outstanding request order', () => {
+  const order = createRuntimePollOrder();
+  const first = order.begin('1');
+  const second = order.begin('2');
+  assert.equal(order.acceptSnapshot('1', first, iso(30)), true);
+  assert.equal(order.acceptSnapshot('2', second, iso(3)), true);
+  assert.equal(order.acceptSnapshot('1', order.begin('1'), iso(4)), false);
+  assert.equal(order.acceptSnapshot('2', order.begin('2'), iso(4)), true);
+});
+
+test('OP-02 malformed source timestamp causes a contract failure and cannot advance the watermark', () => {
+  const order = createRuntimePollOrder();
+  const malformed = order.begin('1');
+  assert.throws(() => order.acceptSnapshot('1', malformed, 'not-a-time'), /invalid Core runtime snapshot observedAt/);
+  assert.equal(order.acceptFailure('1', malformed), true);
+  assert.equal(order.acceptSnapshot('1', order.begin('1'), iso(1)), true);
+});
+
+test('OP-02 dashboard gates traces, cards, history and errors before any mutation', () => {
   const dashboard = readFileSync(new URL('../components/bluewolf/dashboard-app.tsx', import.meta.url), 'utf8');
   const block = dashboard.slice(dashboard.indexOf('const poll = async () => {'), dashboard.indexOf('void bootstrapHistory();'));
-  const gate = block.indexOf('const sourceTimeMs = newerRuntimeSnapshotTime(latestAcceptedSourceMs, snapshot.observedAt);');
-  const reject = block.indexOf('if (sourceTimeMs === null) return;');
+  const begin = block.indexOf('const requestId = pollOrder.current.begin(serverValue);');
+  const gate = block.indexOf('if (!pollOrder.current.acceptSnapshot(serverValue, requestId, snapshot.observedAt)) return;');
   const trace = block.indexOf('applyLiveRuntimeSnapshot(snapshot);');
   const history = block.indexOf('appendLiveRuntimeHistory(snapshot);');
   const cards = block.indexOf('setCoreSnapshot(snapshot.source.kind');
-  assert.ok(gate !== -1 && gate < reject && reject < trace && trace < history && history < cards);
-  assert.match(dashboard, /let latestAcceptedSourceMs = Number\.NEGATIVE_INFINITY/);
+  const failed = block.indexOf('if (cancelled || !pollOrder.current.acceptFailure(serverValue, requestId)) return;');
+  const unavailable = block.indexOf('applyLiveRuntimeSnapshot(unavailableRuntimeSnapshot(serverValue, detail));');
+  assert.ok(begin !== -1 && begin < gate && gate < trace && trace < history && history < cards);
+  assert.ok(failed !== -1 && failed < unavailable);
+  assert.match(dashboard, /const pollOrder = useRef\(createRuntimePollOrder\(\)\);/);
   assert.match(dashboard, /return \(\) => \{ cancelled = true; window\.clearInterval\(timer\); \};/);
 });
