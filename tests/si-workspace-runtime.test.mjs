@@ -45,7 +45,7 @@ test("BW-SYNC-012 legacy pair-only SI templates remain readable but are not trea
   assert.doesNotThrow(() => normalizeAndValidateWorkspaceState(state));
 });
 
-test("BW-SYNC-012 Workspace commits the winning SQLite revision before SI runtime sync and reports Core status truthfully", async () => {
+test("BW-SYNC-012 Workspace commits the winning SQLite revision before SI/SO config sync and reports Core status truthfully", async () => {
   const route = await readFile(new URL("../app/api/workspace/route.ts", import.meta.url), "utf8");
   const context = await readFile(new URL("../components/bluewolf/app-context.tsx", import.meta.url), "utf8");
   assert.match(route, /category === "templates" \|\| category === "vehicle-ranges"/);
@@ -57,6 +57,12 @@ test("BW-SYNC-012 Workspace commits the winning SQLite revision before SI runtim
   assert.ok(persist >= 0 && persist < conflict && conflict < sync, "an optimistic-write loser must not update Core config");
   assert.match(context, /התצורה נשמרה והועברה ל־Core; נדרשת הפעלה מחדש של שירות הליבה/);
   assert.match(context, /התצורה נשמרה ב־Workspace, אך סנכרון ה־Core נכשל/);
-  assert.match(route, /תבניות SO עדיין לא סונכרנו לליבה התפעולית/);
+  assert.match(route, /soAppliedTemplateIds/);
+  assert.match(route, /soMissingTemplateIds/);
+  assert.match(route, /תבניות SO עם קשירה מפורשת נכתבו לקובץ התצורה/);
+  assert.match(route, /תבניות SO ללא קשירה תפעולית מלאה/);
+  assert.match(route, /טרם אומתו טעינה מחדש, נתוני Influx, זיהוי נתיב, ציונים ואירועים ב־Python Core; בדיקת E2E חסומה/);
+  assert.match(route, /runtimeSync = \{ \.\.\.runtimeSync, synced: false, reason: details.join\(" "\) \}/);
+  assert.doesNotMatch(route, /תבניות SO עדיין לא סונכרנו לליבה התפעולית/);
   assert.match(route, /קונפיגורציית Core תפעולי אינה מוגדרת; בדיקת E2E חסומה/);
 });
