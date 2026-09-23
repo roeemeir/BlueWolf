@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { DEFAULT_INFLUX_MAPPINGS, DEFAULT_WORKSPACE, type InfluxFieldMapping, type WorkspaceState } from "@/lib/bluewolf";
 import { ensureTelAvivDemoMapState } from "@/lib/default-map-profile";
+import { migrateUntouchedBuiltInSiTemplates } from "@/lib/si-builtin-template-migration";
 
 type StorageMode = "cloud" | "local";
 type RuntimeSyncStatus = { synced: boolean; restartRequired: boolean; reason?: string } | null;
@@ -23,7 +24,8 @@ type WorkspaceContextValue = {
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 function defaultWorkspace(): WorkspaceState {
-  return ensureTelAvivDemoMapState(structuredClone(DEFAULT_WORKSPACE)) as WorkspaceState;
+  const defaults = ensureTelAvivDemoMapState(structuredClone(DEFAULT_WORKSPACE)) as WorkspaceState;
+  return { ...defaults, templates: migrateUntouchedBuiltInSiTemplates(defaults.templates, defaults.vehicleTypes) };
 }
 
 function hydrateState(value: Partial<WorkspaceState> | null | undefined): WorkspaceState {
@@ -33,7 +35,7 @@ function hydrateState(value: Partial<WorkspaceState> | null | undefined): Worksp
   const mappings: InfluxFieldMapping[] = Array.isArray(incomingMappings)
     ? DEFAULT_INFLUX_MAPPINGS.map((fallback) => ({ ...fallback, ...(incomingMappings.find((item) => item.systemKey === fallback.systemKey) ?? {}) }))
     : DEFAULT_INFLUX_MAPPINGS;
-  return {
+  const next: WorkspaceState = {
     ...defaults,
     ...value,
     weights: {
@@ -50,11 +52,12 @@ function hydrateState(value: Partial<WorkspaceState> | null | undefined): Worksp
     arenas: value.arenas?.length ? value.arenas : structuredClone(DEFAULT_WORKSPACE.arenas),
     vehicleTypes: value.vehicleTypes?.map((type, index) => ({ ...DEFAULT_WORKSPACE.vehicleTypes[index % DEFAULT_WORKSPACE.vehicleTypes.length], ...type })) ?? structuredClone(DEFAULT_WORKSPACE.vehicleTypes),
     routes: value.routes?.map((route, index) => ({ ...DEFAULT_WORKSPACE.routes[index % DEFAULT_WORKSPACE.routes.length], ...route })) ?? structuredClone(DEFAULT_WORKSPACE.routes),
-    templates: value.templates?.map((template) => ({ ...template })) ?? structuredClone(DEFAULT_WORKSPACE.templates),
+    templates: value.templates?.map((template) => ({ ...template })) ?? structuredClone(defaults.templates),
     gtSegments: value.gtSegments?.map((segment, index) => ({ ...DEFAULT_WORKSPACE.gtSegments[index % DEFAULT_WORKSPACE.gtSegments.length], ...segment })) ?? structuredClone(DEFAULT_WORKSPACE.gtSegments),
     settings: { ...defaults.settings, ...value.settings },
     investigationEdits: { ...DEFAULT_WORKSPACE.investigationEdits, ...value.investigationEdits },
   };
+  return { ...next, templates: migrateUntouchedBuiltInSiTemplates(next.templates, next.vehicleTypes) };
 }
 
 function getWorkspaceId() {
