@@ -8,7 +8,6 @@ import { readLocalWorkspace, writeLocalWorkspace } from "@/lib/sqlite-workspace"
 import { normalizeAndValidateWorkspaceState } from "@/lib/workspace-validation";
 
 const localStorage = () => process.env.BLUEWOLF_STORAGE === "sqlite";
-
 const workspacePattern = /^[a-zA-Z0-9_-]{8,80}$/;
 
 function getWorkspaceId(request: Request) {
@@ -43,32 +42,20 @@ function siRuntimeFromState(value: unknown): { templates: SyncTemplate[]; vehicl
  * overwrites user-authored templates. A subsequent explicit PUT owns that write.
  */
 function prepareServerSiRead(state: WorkspaceState): WorkspaceState {
-  return {
-    ...state,
-    templates: migrateUntouchedBuiltInSiTemplates(state.templates, state.vehicleTypes),
-  };
+  return { ...state, templates: migrateUntouchedBuiltInSiTemplates(state.templates, state.vehicleTypes) };
 }
 
 async function preparedLocalWorkspace(workspaceId: string) {
   const current = await readLocalWorkspace(workspaceId);
-  // A GET must never create a user revision. Existing optimistic revisions are
-  // user-owned, and an empty installation can expose the out-of-box Tel Aviv
-  // WMTS profile without committing it. The first real PUT therefore remains
-  // revision 1 and browser/WKT/restart contracts stay deterministic.
   const source = current.state ?? DEFAULT_WORKSPACE;
   const prepared = await prepareTelAvivDemoWorkspace(source);
   const normalized = normalizeAndValidateWorkspaceState(prepared) as WorkspaceState;
-  return {
-    ...current,
-    state: prepareServerSiRead(normalized),
-    revision: Number(current.revision ?? 0),
-  };
+  return { ...current, state: prepareServerSiRead(normalized), revision: Number(current.revision ?? 0) };
 }
 
 export async function GET(request: Request) {
   const workspaceId = getWorkspaceId(request);
   if (!workspaceId) return Response.json({ error: "workspace id is required" }, { status: 400 });
-
   try {
     if (localStorage()) return Response.json(await preparedLocalWorkspace(workspaceId));
     const { getDb } = await import("@/db");
@@ -81,37 +68,78 @@ export async function GET(request: Request) {
   }
 }
 
+// Serialize SQLite workspace PUTs within the single-worker offline Web host.
+// A losing optimistic write must never touch the external Core config. The
+// queue also prevents an older successful save from syncing *after* a newer
+// successful save has already synced in this process.
+let localWriteQueue: Promise<void> = Promise.resolve();
+function serializeLocalWrite(task: () => Promise<Response>): Promise<Response> {
+  const current = localWriteQueue.then(task, task);
+  localWriteQueue = current.then(() => undefined, () => undefined);
+  return current;
+}
+
+async function persistAndSyncLocal(
+  workspaceId: string,
+  normalizedState: WorkspaceState,
+  state: string,
+  body: { category?: string; action?: string; detail?: string; expectedRevision?: number },
+): Promise<Response> {
+  const category = body.category ?? "";
+  // Commit and resolve the optimistic version FIRST. The old flow modified
+  // operational config before discovering a 409, letting a stale browser alter
+  // the live Core configuration without owning the Workspace revision.
+  const result = await writeLocalWorkspace(
+    workspaceId, state, category.slice(0, 40) || "configuration",
+    (body.action ?? "save").slice(0, 80), (body.detail ?? "").slice(0, 500), body.expectedRevision,
+  );
+  if (result.conflict) return Response.json({ ...result, runtimeSync: null }, { status: 409 });
+
+  let runtimeSync: { synced: boolean; configPath: string | null; restartRequired: boolean; reason?: string } | null = null;
+  try {
+    if (category === "influx") {
+      const { syncInfluxToOperationalConfig } = await import("@/lib/influx-runtime-sync");
+      runtimeSync = await syncInfluxToOperationalConfig(influxFromState(normalizedState));
+    } else if (category === "templates" || category === "vehicle-ranges") {
+      const { syncSiTemplatesToOperationalConfig } = await import("@/lib/si-runtime-sync");
+      const { templates, vehicleTypes } = siRuntimeFromState(normalizedState);
+      runtimeSync = await syncSiTemplatesToOperationalConfig(templates, vehicleTypes);
+      // This adapter currently syncs SI only. Never claim that saved SO
+      // placements or a new binding are running in the operational Core.
+      if (runtimeSync.synced && templates.some((template) => template.family === "SO")) {
+        runtimeSync = {
+          ...runtimeSync,
+          synced: false,
+          reason: "תבניות SI נכתבו לקונפיגורציה ומחייבות הפעלה מחדש; תבניות SO עדיין לא סונכרנו לליבה התפעולית. בדיקת E2E חסומה.",
+        };
+      }
+    }
+  } catch (error) {
+    // A committed SQLite revision cannot be reported as a failed save or
+    // silently rolled back. Return the durable success with an explicit Core
+    // sync failure for the operator to resolve, never a misleading HTTP 502.
+    runtimeSync = { synced: false, configPath: null, restartRequired: false, reason: `סנכרון הליבה נכשל לאחר שמירה ב־SQLite: ${errorMessage(error)}` };
+  }
+  if (runtimeSync && !runtimeSync.synced && !runtimeSync.reason) {
+    runtimeSync = { ...runtimeSync, reason: "קונפיגורציית Core תפעולי אינה מוגדרת; בדיקת E2E חסומה." };
+  }
+  if (runtimeSync?.reason === "BLUEWOLF_OPERATIONAL_CONFIG is not configured") {
+    runtimeSync = { ...runtimeSync, reason: "קונפיגורציית Core תפעולי אינה מוגדרת; בדיקת E2E חסומה." };
+  }
+  return Response.json({ ...result, runtimeSync }, { status: 200 });
+}
+
 export async function PUT(request: Request) {
   const workspaceId = getWorkspaceId(request);
   if (!workspaceId) return Response.json({ error: "workspace id is required" }, { status: 400 });
-
   try {
     const body = await request.json() as { state?: unknown; category?: string; action?: string; detail?: string; expectedRevision?: number };
-    const normalizedState = normalizeAndValidateWorkspaceState(body.state ?? {});
+    const normalizedState = normalizeAndValidateWorkspaceState(body.state ?? {}) as WorkspaceState;
     const state = JSON.stringify(normalizedState);
     if (state.length > 750_000) return Response.json({ error: "workspace state is too large" }, { status: 413 });
 
     if (localStorage()) {
-      let runtimeSync = null;
-      const category = body.category ?? "";
-      if (category === "influx") {
-        try {
-          const { syncInfluxToOperationalConfig } = await import("@/lib/influx-runtime-sync");
-          runtimeSync = await syncInfluxToOperationalConfig(influxFromState(normalizedState));
-        } catch (error) {
-          return Response.json({ error: `Influx runtime config sync failed: ${errorMessage(error)}` }, { status: 502 });
-        }
-      } else if (category === "templates" || category === "vehicle-ranges") {
-        try {
-          const { syncSiTemplatesToOperationalConfig } = await import("@/lib/si-runtime-sync");
-          const siRuntime = siRuntimeFromState(normalizedState);
-          runtimeSync = await syncSiTemplatesToOperationalConfig(siRuntime.templates, siRuntime.vehicleTypes);
-        } catch (error) {
-          return Response.json({ error: `SI runtime config sync failed: ${errorMessage(error)}` }, { status: 502 });
-        }
-      }
-      const result = await writeLocalWorkspace(workspaceId, state, (body.category ?? "configuration").slice(0,40), (body.action ?? "save").slice(0,80), (body.detail ?? "").slice(0,500), body.expectedRevision);
-      return Response.json({ ...result, runtimeSync }, { status: result.conflict ? 409 : 200 });
+      return await serializeLocalWrite(() => persistAndSyncLocal(workspaceId, normalizedState, state, body));
     }
     const { getDb } = await import("@/db");
     const db = getDb();
