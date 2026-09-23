@@ -10,14 +10,18 @@ const simulation = read("components/bluewolf/so-governed-visuals.tsx");
 const core = read("components/bluewolf/operational-live-map.tsx");
 
 for (const [name, source] of [["SIM", simulation], ["Core", core]]) {
-  test(`${name} renders five independent layer filter controls and actual SVG visibility gates`, () => {
-    const routeLabel = name === "SIM" ? "נתיב מזוהה (SIM: תרחיש, לא Core)" : "נתיב מזוהה";
-    for (const label of ["עקבה נצפית", "עקבה לפי ציון", routeLabel, "קבוצות", "תבנית"]) {
+  test(`${name} renders independently controlled evidence layers and their actual SVG visibility gates`, () => {
+    const routeLabel = name === "SIM" ? "נתיב התרחיש (סימולציה)" : "נתיב מזוהה";
+    for (const label of ["עקבה נצפית", "עקבה לפי ציון", routeLabel, "תבנית", "יחסים"]) {
       assert.ok(source.includes(`>${label}</button>`), `${name}: missing ${label}`);
     }
     if (name === "SIM") {
       assert.match(source, /data-sim-navigation-source="synthetic-sim-navigation"/);
-      assert.match(source, /SIM · GPS סינתטי עם רעש, רוח וחורי מדידה; לא תצפיות Core/);
+      assert.match(source, /סימולציה · מיקומים סינתטיים עם רעש, רוח וחורי מדידה; לא תצפיות מהליבה התפעולית/);
+      assert.doesNotMatch(source, />נתיב מזוהה<\/button>/);
+      assert.doesNotMatch(source, />קבוצות<\/button>/);
+      assert.doesNotMatch(source, />בסיס<\/button>/);
+      assert.match(source, /\{\[\.\.\.siPoints, \.\.\.soPoints\]\.map/);
     } else {
       assert.doesNotMatch(source, /data-sim-navigation-source/);
     }
