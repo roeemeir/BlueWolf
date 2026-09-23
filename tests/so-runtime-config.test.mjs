@@ -33,7 +33,7 @@ const binding = () => ({
     { placementIndex: 1, slotId: 'back', vehicleType: 'TYPE_A' },
   ],
 });
-const config = () => ({ templates: [{ id: 'legacy-core', name: 'Existing Core SO', default: false, routes: [] }], servers: [{ id: 1, groups: [group] }], soTemplateBindings: [binding()] });
+const config = () => ({ templates: [{ id: 'legacy-core', name: 'Existing Core SO', default: false, routes: [] }], servers: [{ id: 1, groups: [structuredClone(group)] }], soTemplateBindings: [binding()] });
 
 test('typed SO direct placement enters the existing Core bank only with explicit routes, types and server member bindings', () => {
   const original = config();
@@ -73,6 +73,24 @@ test('incomplete, duplicate and mismatched SO deployment bindings fail closed', 
     const input = config(); mutate(input);
     assert.throws(() => bindSoDirectTemplatesToCore(input, [authored()]), Error);
   }
+});
+
+test('SO route binding rejects a superset constellation that Core would never select as this template', () => {
+  const additionalRoute = config();
+  additionalRoute.servers[0].groups[0].routeInstances.push({ id: 'extra-route', kind: 'double' });
+  assert.throws(() => bindSoDirectTemplatesToCore(additionalRoute, [authored()]), /no exact Core server group/);
+  const additionalMember = config();
+  additionalMember.servers[0].groups[0].members.push({ vehicleId: 103, vehicleType: 'TYPE_A', routeInstanceId: 'actual-route', workSpeedMps: 12 });
+  assert.throws(() => bindSoDirectTemplatesToCore(additionalMember, [authored()]), /no exact Core server group/);
+});
+
+test('SO runtime binding rejects duplicated vehicle IDs and duplicate route instances despite matching type counts', () => {
+  const duplicateVehicle = config();
+  duplicateVehicle.servers[0].groups[0].members[1].vehicleId = 101;
+  assert.throws(() => bindSoDirectTemplatesToCore(duplicateVehicle, [authored()]), /no exact Core server group/);
+  const duplicateRoute = config();
+  duplicateRoute.servers[0].groups[0].routeInstances.push({ id: 'actual-route', kind: 'single' });
+  assert.throws(() => bindSoDirectTemplatesToCore(duplicateRoute, [authored()]), /no exact Core server group/);
 });
 
 test('reverse SO slot cannot masquerade as supported forward Core quarter law', () => {
