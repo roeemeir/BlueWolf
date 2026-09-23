@@ -75,7 +75,7 @@ export function bindSoDirectTemplatesToCore(existing: unknown, templates: readon
     const binding = bindings.get(template.id);
     if (!binding) { missingTemplateIds.push(template.id); continue; }
     validatePersistedSoTemplate(template as unknown as JsonObject);
-    const spec = template.soSpec as DirectSpec;
+    const spec = template.soSpec as unknown as DirectSpec;
     if (binding.routeInstanceIds.length !== spec.chain.length) throw new Error(`${template.id}: route-instance count differs from saved SO chain`);
     if (binding.slots.length !== spec.directPlacements.length) throw new Error(`${template.id}: every physical placement needs exactly one explicit type binding`);
     const slotsByPosition = new Map(binding.slots.map((item) => [item.placementIndex, item]));
