@@ -12,9 +12,11 @@ test('OP-02 SIM exposes independent layers and a single map/chart shared per-ser
   const source = await readFile('components/bluewolf/so-governed-visuals.tsx', 'utf8');
   const chart = await readFile('components/bluewolf/simulation-timeline.tsx', 'utf8');
   assert.match(source, /data-requirements="OP-02"/);
-  assert.match(source, /עקבה נצפית/);
-  assert.match(source, /נתיב מזוהה/);
-  assert.match(source, /קבוצות/);
+  assert.match(source, />עקבה נצפית<\/button>/);
+  assert.match(source, />נתיב התרחיש \(סימולציה\)<\/button>/);
+  assert.doesNotMatch(source, />נתיב מזוהה<\/button>/);
+  assert.doesNotMatch(source, />קבוצות<\/button>/);
+  assert.doesNotMatch(source, />בסיס<\/button>/);
   assert.deepEqual([...windows.OPERATOR_SHARED_WINDOWS], [30, 60, 90]);
   assert.match(source, /setOperatorWindowForServer\(serverId, minutes\)/);
   assert.match(source, /subscribeOperatorWindow\(serverId, setTraceWindow\)/);
@@ -25,7 +27,6 @@ test('OP-02 SIM exposes independent layers and a single map/chart shared per-ser
   assert.match(source, /observedLayer &&/);
   assert.match(source, /scoreTraceLayer &&/);
   assert.match(source, /relationLayer &&/);
-  assert.match(source, /groupLayer &&/);
   assert.match(source, /showRoutes && routeLayer/);
 });
 
