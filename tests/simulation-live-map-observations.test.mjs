@@ -20,6 +20,7 @@ test('BW-CR-006 map marks SIM observations as synthetic and does not draw across
   assert.doesNotMatch(source, />נתיב מזוהה<\/button>/);
   assert.match(source, /frame\.tick > previous\.tick && frame\.tick - previous\.tick <= 1/);
   assert.match(source, /previous\?\.points\.find\(\(item\) => item\.id === point\.id\)/);
-  assert.match(source, /SIM · SYNTHETIC/);
+  assert.match(source, /סימולציה · נתונים סינתטיים/);
+  assert.match(source, /סימולציה · תמונת מצב/);
   assert.doesNotMatch(source, /\{animate \? "LIVE" : "SNAPSHOT"\}/);
 });
