@@ -95,7 +95,14 @@ async function persistAndSyncLocal(
   );
   if (result.conflict) return Response.json({ ...result, runtimeSync: null }, { status: 409 });
 
-  let runtimeSync: { synced: boolean; configPath: string | null; restartRequired: boolean; reason?: string } | null = null;
+  let runtimeSync: {
+    synced: boolean;
+    configPath: string | null;
+    restartRequired: boolean;
+    reason?: string;
+    soAppliedTemplateIds?: string[];
+    soMissingTemplateIds?: string[];
+  } | null = null;
   try {
     if (category === "influx") {
       const { syncInfluxToOperationalConfig } = await import("@/lib/influx-runtime-sync");
@@ -104,14 +111,23 @@ async function persistAndSyncLocal(
       const { syncSiTemplatesToOperationalConfig } = await import("@/lib/si-runtime-sync");
       const { templates, vehicleTypes } = siRuntimeFromState(normalizedState);
       runtimeSync = await syncSiTemplatesToOperationalConfig(templates, vehicleTypes);
-      // This adapter currently syncs SI only. Never claim that saved SO
-      // placements or a new binding are running in the operational Core.
+      // A successful atomic JSON write is NOT evidence that the running Python
+      // Core reloaded it, detected the route, scored an event or persisted it.
+      // Report separately the explicit SO bindings written and the missing
+      // physical SO bindings. Historical relation-only SO is never invented.
       if (runtimeSync.synced && templates.some((template) => template.family === "SO")) {
-        runtimeSync = {
-          ...runtimeSync,
-          synced: false,
-          reason: "תבניות SI נכתבו לקונפיגורציה ומחייבות הפעלה מחדש; תבניות SO עדיין לא סונכרנו לליבה התפעולית. בדיקת E2E חסומה.",
-        };
+        const applied = runtimeSync.soAppliedTemplateIds ?? [];
+        const missing = runtimeSync.soMissingTemplateIds ?? [];
+        const legacyCount = templates.filter((template) => template.family === "SO" &&
+          (template.soSpec as { schemaVersion?: unknown } | undefined)?.schemaVersion !== "so-direct.v2").length;
+        const details = [
+          "קונפיגורציית SI נכתבה ומחייבת הפעלה מחדש של הליבה.",
+          applied.length ? `תבניות SO עם קשירה מפורשת נכתבו לקובץ התצורה: ${applied.join(", ")}.` : "לא נכתבה לקובץ תבנית SO חדשה עם קשירה מפורשת.",
+          missing.length ? `תבניות SO ללא קשירה תפעולית מלאה: ${missing.join(", ")}.` : "",
+          legacyCount ? `${legacyCount} תבניות SO ישנות ללא מיקומים ישירים לא הומרו למיקומים מומצאים.` : "",
+          "טרם אומתו טעינה מחדש, נתוני Influx, זיהוי נתיב, ציונים ואירועים ב־Python Core; בדיקת E2E חסומה.",
+        ].filter(Boolean);
+        runtimeSync = { ...runtimeSync, synced: false, reason: details.join(" ") };
       }
     }
   } catch (error) {
