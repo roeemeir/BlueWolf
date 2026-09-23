@@ -1,5 +1,8 @@
-name: Blue Wolf QA Quick Tunnel
+name: Blue Wolf E2E Integration — Public Preview Disabled
 
+# This workflow previously published a public QA URL after HTTP 200 while the
+# Python service was in transport-only mode. That is forbidden by the governing
+# Master annex QA-E2E-20260923. This job is PRIVATE and cannot publish a URL.
 on:
   workflow_dispatch:
   pull_request:
@@ -10,6 +13,8 @@ on:
       - components/**
       - lib/**
       - core/**
+      - scripts/verify-e2e-preflight.mjs
+      - docs/E2E_QA_RELEASE_GATE_HE.md
       - package.json
       - package-lock.json
       - .github/workflows/qa-quick-tunnel.yml
@@ -19,21 +24,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  preview:
-    name: SQLite offline QA preview
+  integration:
+    name: Private Web + SQLite + operational Python Core + Influx preflight
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 30
     env:
       NEXT_TELEMETRY_DISABLED: "1"
       BLUEWOLF_STORAGE: sqlite
-      BLUEWOLF_SQLITE_PATH: ${{ github.workspace }}/data/qa-preview.sqlite
-      BLUEWOLF_HOST: 0.0.0.0
-      PORT: "3000"
+      BLUEWOLF_SQLITE_PATH: ${{ github.workspace }}/data/qa-e2e.sqlite
+      BLUEWOLF_OPERATIONAL_CONFIG: ${{ github.workspace }}/data/qa-e2e-operational.json
       BLUEWOLF_CORE_API_URL: http://127.0.0.1:8090
+      BLUEWOLF_E2E_WEB_URL: http://127.0.0.1:3000
       BLUEWOLF_RUNTIME_HOST: 127.0.0.1
       BLUEWOLF_RUNTIME_PORT: "8090"
-      BLUEWOLF_CONFIG_VERSION: qa-preview
-      BLUEWOLF_CODE_SHA: ${{ github.sha }}
+      BLUEWOLF_HOST: 127.0.0.1
+      PORT: "3000"
+      BLUEWOLF_CODE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BLUEWOLF_INFLUX_TOKEN: ${{ secrets.BLUEWOLF_E2E_INFLUX_TOKEN }}
+      BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON: ${{ secrets.BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -43,126 +51,63 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install dependencies
+      - name: Fail closed without a real operational Influx configuration
+        run: |
+          if [ -z "${BLUEWOLF_INFLUX_TOKEN:-}" ] || [ -z "${BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON:-}" ]; then
+            echo 'BLOCKED: a complete E2E operational configuration and Influx token are required. No public QA URL will be created.'
+            exit 1
+          fi
+          mkdir -p data
+          umask 077
+          printf '%s\n' "$BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON" > "$BLUEWOLF_OPERATIONAL_CONFIG"
+          # Never log config contents, Influx tokens, or data-source credentials.
+          node --input-type=module -e 'import {readFileSync} from "node:fs"; const cfg=JSON.parse(readFileSync(process.env.BLUEWOLF_OPERATIONAL_CONFIG,"utf8")); if(!Array.isArray(cfg.servers)||cfg.servers.length<3) throw new Error("all three operational servers must be configured"); if(!cfg.influx?.url || cfg.influx.url.includes("influxdb2.internal")) throw new Error("real Influx endpoint is required");'
+      - name: Install application and Core dependencies
         run: |
           npm ci
           python -m pip install --disable-pip-version-check -e './core[service]'
-      - name: Start Python Core QA service
+      - name: Start actual operational Python Core (not transport-only)
         run: |
-          nohup bluewolf-runtime > /tmp/bluewolf-core.log 2>&1 &
-          echo $! > /tmp/bluewolf-core.pid
+          nohup bluewolf-runtime > /tmp/bluewolf-core-e2e.log 2>&1 &
+          echo $! > /tmp/bluewolf-core-e2e.pid
           ready=0
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent --show-error http://127.0.0.1:8090/healthz >/dev/null; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [ "$ready" != "1" ]; then
-            cat /tmp/bluewolf-core.log
-            exit 1
-          fi
-      - name: Build verified offline application
-        run: npm run build:offline
-      - name: Start SQLite offline server
-        run: |
-          mkdir -p data
-          nohup npm run start:offline > /tmp/bluewolf-server.log 2>&1 &
-          echo $! > /tmp/bluewolf-server.pid
-          ready=0
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent --show-error http://127.0.0.1:3000/ >/dev/null; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [ "$ready" != "1" ]; then
-            cat /tmp/bluewolf-server.log
-            exit 1
-          fi
-      - name: Install cloudflared
-        run: |
-          curl --fail --location --silent --show-error \
-            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
-            --output /tmp/cloudflared
-          chmod +x /tmp/cloudflared
-          /tmp/cloudflared --version
-      - name: Open QA Quick Tunnel
-        id: tunnel
-        run: |
-          nohup /tmp/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:3000 > /tmp/cloudflared.log 2>&1 &
-          echo $! > /tmp/cloudflared.pid
-          url=""
           for attempt in $(seq 1 45); do
-            url=$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cloudflared.log | head -n 1 || true)
-            if [ -n "$url" ]; then
+            if curl --fail --silent --show-error --max-time 3 http://127.0.0.1:8090/readyz > /tmp/bluewolf-core-ready.json 2>/dev/null && \
+              node --input-type=module -e 'import {readFileSync} from "node:fs"; const p=JSON.parse(readFileSync("/tmp/bluewolf-core-ready.json","utf8")); if(p.ok!==true || p.mode!=="operational" || p.running!==true || p.tickCount<2 || !Array.isArray(p.serverErrors) || p.serverErrors.length) process.exit(1);'; then
+              ready=1
               break
             fi
-            sleep 1
-          done
-          if [ -z "$url" ]; then
-            cat /tmp/cloudflared.log
-            exit 1
-          fi
-          echo "url=$url" >> "$GITHUB_OUTPUT"
-      - name: Verify public HTTPS app response
-        env:
-          QA_URL: ${{ steps.tunnel.outputs.url }}
-        run: |
-          # A tunnel hostname alone is not proof that the public route works.
-          # Publish only after a real external HTTPS request returns app HTML.
-          verified=0
-          for attempt in $(seq 1 20); do
-            http_code=$(curl --location --silent --show-error \
-              --connect-timeout 5 --max-time 12 \
-              --output /tmp/bluewolf-public-home.html \
-              --write-out '%{http_code}' "$QA_URL/" || true)
-            if [ "$http_code" = "200" ] && \
-              [ -s /tmp/bluewolf-public-home.html ] && \
-              grep -Eiq '<(!doctype html|html[[:space:]>])' /tmp/bluewolf-public-home.html; then
-              verified=1
-              break
-            fi
+            if ! kill -0 "$(cat /tmp/bluewolf-core-e2e.pid)" 2>/dev/null; then break; fi
             sleep 2
           done
-          if [ "$verified" != "1" ]; then
-            echo "Public HTTPS verification failed; QA URL will not be published."
-            echo "Last response: ${http_code:-none}"
-            tail -n 30 /tmp/cloudflared.log || true
+          if [ "$ready" != "1" ]; then
+            echo 'BLOCKED: operational Core has not produced two error-free polling ticks.'
+            # Logs can contain backend details. They are deliberately not dumped here.
             exit 1
           fi
-          printf '%s\n' "$QA_URL" > /tmp/bluewolf-qa-url.txt
-          {
-            echo '## Blue Wolf QA Preview'
-            echo ''
-            echo "- URL: $QA_URL"
-            echo "- Commit: $GITHUB_SHA"
-            echo '- Public HTTPS GET /: HTTP 200, nonempty app HTML verified'
-            echo '- Storage: local SQLite only'
-            echo '- Python Core QA: http://127.0.0.1:8090 (provenance + QA endpoints)'
-            echo '- Runtime secrets: none'
-            echo '- This is temporary QA, not a production release or product acceptance'
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "BLUEWOLF_QA_URL=$QA_URL"
-      - name: Publish QA URL artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: bluewolf-qa-url
-          path: /tmp/bluewolf-qa-url.txt
-          if-no-files-found: error
-          retention-days: 1
-      - name: Keep preview alive
+      - name: Build verified offline Web application
+        run: npm run build:offline
+      - name: Start SQLite-backed Web server
         run: |
-          server_pid=$(cat /tmp/bluewolf-server.pid)
-          tunnel_pid=$(cat /tmp/cloudflared.pid)
-          while kill -0 "$server_pid" 2>/dev/null && kill -0 "$tunnel_pid" 2>/dev/null; do
-            sleep 30
+          nohup npm run start:offline > /tmp/bluewolf-web-e2e.log 2>&1 &
+          echo $! > /tmp/bluewolf-web-e2e.pid
+          ready=0
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent --show-error --max-time 3 http://127.0.0.1:3000/api/workspace > /dev/null 2>/dev/null; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$(cat /tmp/bluewolf-web-e2e.pid)" 2>/dev/null; then break; fi
+            sleep 2
           done
-          echo "Preview process exited unexpectedly"
-          echo "--- server ---"
-          cat /tmp/bluewolf-server.log || true
-          echo "--- cloudflared ---"
-          cat /tmp/cloudflared.log || true
-          exit 1
+          if [ "$ready" != "1" ]; then
+            echo 'BLOCKED: SQLite Web API did not become available.'
+            exit 1
+          fi
+      - name: Check operational Core feed, three servers and SQLite write/read
+        run: node scripts/verify-e2e-preflight.mjs
+      - name: End-to-end acceptance remains blocked pending event, report, restart and browser checks
+        run: |
+          echo 'Private integration preflight completed. This does NOT authorize a public QA URL.'
+          echo 'BLOCKED: event-start recompute, archive and PDF, persistence/restart, browser/iPhone E2E, original-document audit and BW-GOV-010 evidence still require full verification.'
+          echo 'No tunnel, preview artifact or public link is created by this workflow.'
