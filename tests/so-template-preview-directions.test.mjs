@@ -46,6 +46,6 @@ test('SO operator preview renders one numbered directional arrow per saved slot,
   assert.match(preview, /pointAtSoPhase\(route\.points, placement\.phase, placement\.direction === "reverse"\)/);
   assert.match(preview, /rotate\(\$\{point\.heading\}\)/);
   assert.match(preview, /data-testid=\{`so-preview-direction-\$\{placement\.routeIndex\}-\$\{placement\.phase\}`\}/);
-  assert.match(preview, /בתבנית זו לא נשמר כיוון התקדמות פרטני/);
+  assert.match(preview, /לתבנית זו לא נשמרו מיקומי רכבים וכיוונם; יש לערוך ולשמור אותה במחולל SO/);
   assert.doesNotMatch(preview, /routes\.map\(\(route, index\) => \{ const phase = soPhasesForRoute\(route.kind\)\[0\]/);
 });
