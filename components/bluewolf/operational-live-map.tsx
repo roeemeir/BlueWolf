@@ -86,11 +86,13 @@ export function OperationalLiveMap({
     && recomputeOverride.groupId === selectedGroupId
     && recomputeOverride.eventId === activeEventId ? recomputeOverride : null;
   const [eventEvidence, setEventEvidence] = useState<LiveMapEventEvidence | null>(null);
-  const [showBase, setShowBase] = useState(true);
+  // The basemap and vehicle markers are permanent context. Only the independent
+  // evidence overlays below are togglable; hiding a group hull must never hide
+  // a genuine observed vehicle or its selectable identity.
   const [showObservedTrace, setShowObservedTrace] = useState(false);
   const [showScoreTrace, setShowScoreTrace] = useState(showTrace);
   const [showDetectedRoute, setShowDetectedRoute] = useState(true);
-  const [showGroups, setShowGroups] = useState(true);
+  const [showGroupOutlines, setShowGroupOutlines] = useState(true);
   const [showTemplate, setShowTemplate] = useState(true);
   const [showContext, setShowContext] = useState(showGrid);
   useEffect(() => setShowScoreTrace(showTrace), [showTrace]);
@@ -217,11 +219,10 @@ export function OperationalLiveMap({
     </div>
     <div className="v04-map-layer-controls" style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "6px 8px" }}>
       <strong>שכבות</strong>
-      <button type="button" className={showBase ? "active" : ""} onClick={() => setShowBase((value) => !value)}>בסיס</button>
       <button type="button" className={showObservedTrace ? "active" : ""} onClick={() => setShowObservedTrace((value) => !value)}>עקבה נצפית</button>
       <button type="button" className={showScoreTrace ? "active" : ""} onClick={() => setShowScoreTrace((value) => !value)}>עקבה לפי ציון</button>
       <button type="button" disabled={historical} className={showDetectedRoute && !historical ? "active" : ""} onClick={() => setShowDetectedRoute((value) => !value)}>נתיב מזוהה</button>
-      <button type="button" className={showGroups ? "active" : ""} onClick={() => setShowGroups((value) => !value)}>קבוצות</button>
+      <button type="button" className={showGroupOutlines ? "active" : ""} onClick={() => setShowGroupOutlines((value) => !value)}>מתאר קבוצות SI</button>
       <button type="button" disabled={historical} className={showTemplate && !historical ? "active" : ""} onClick={() => setShowTemplate((value) => !value)}>תבנית</button>
       <button type="button" className={showContext ? "active" : ""} onClick={() => setShowContext((value) => !value)}>רשת</button>
       {wmtsSelections.length > 0 && <><span aria-label="שכבות WMTS">WMTS:</span>{wmtsSelections.map((selection) => {
@@ -237,8 +238,8 @@ export function OperationalLiveMap({
     <svg className="map-svg v04-live-map engineering" viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`} role="img" aria-label="מפת מיקומים מבצעית של רכבי Blue Wolf">
       <defs><pattern id={`operational-grid-${serverId}`} width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" className="v04-grid-line" /></pattern></defs>
       <rect width={VIEW_WIDTH} height={VIEW_HEIGHT} fill="var(--map-bg)" />
-      {showBase && <OperationalBasemap source={mapSource} projection={projection} visibleWmtsLayers={visibleWmtsLayers} />}
-      {showBase && <rect width={VIEW_WIDTH} height={VIEW_HEIGHT} className="v04-map-wash" />}
+      <OperationalBasemap source={mapSource} projection={projection} visibleWmtsLayers={visibleWmtsLayers} />
+      <rect width={VIEW_WIDTH} height={VIEW_HEIGHT} className="v04-map-wash" />
       {showContext && <rect width={VIEW_WIDTH} height={VIEW_HEIGHT} fill={`url(#operational-grid-${serverId})`} />}
       <g className="v04-map-labels"><text x="38" y="45">CORE · WGS84 {historical ? "HISTORY" : "LIVE"}</text><text x="38" y="68">Auto-fit · {groupCount} קבוצות · {points.length} רכבים עם מיקום תקף · עקבה {traceWindowMinutes} דק׳</text></g>
       {points.length === 0 && routeEvidence.length === 0 && <g className="v04-map-labels"><text x={VIEW_WIDTH / 2} y={VIEW_HEIGHT / 2} textAnchor="middle">{historical ? "אין מיקום WGS84 תואם בנקודת הזמן שנבחרה" : "אין כרגע מיקום WGS84 או route evidence תקף"}</text><text x={VIEW_WIDTH / 2} y={VIEW_HEIGHT / 2 + 28} textAnchor="middle">לא מוצג מיקום משוער מפאזה, demo או snapshot חי אחר</text></g>}
@@ -249,20 +250,20 @@ export function OperationalLiveMap({
       })}</g>}
       {showObservedTrace && <g className="observed-trace">{segments.map(([a, b]) => <line key={`observed:${b.vehicleId}:${b.timeMs}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="#7b8790" strokeWidth="2" opacity=".58"><title>עקבה נצפית · רכב {b.vehicleId} · {new Date(b.timeMs).toLocaleTimeString("he-IL")}</title></line>)}</g>}
       {showScoreTrace && <g className="score-trace">{segments.map(([a, b]) => <line key={`score:${b.vehicleId}:${b.timeMs}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} style={{ stroke: traceScoreColor(b.sync) }}><title>רכב {b.vehicleId} · סנכרון {b.sync === null ? "אין מידע" : Math.round(b.sync)} · {new Date(b.timeMs).toLocaleTimeString("he-IL")}</title></line>)}</g>}
-      {showGroups && <g className="v04-group-shapes">{runtimeGroups.filter((group) => group.family === "SI").map((group) => {
+      {showGroupOutlines && !historical && <g className="v04-group-shapes">{runtimeGroups.filter((group) => group.family === "SI").map((group) => {
         const groupPoints = points.filter((point) => point.groupId === group.id);
         if (groupPoints.length < 2) return null;
         const hull = convexHull(groupPoints);
         return <polygon key={`shape:${group.id}`} points={hull.map((point) => `${point.x},${point.y}`).join(" ")} fill={group.color} fillOpacity=".09" stroke={group.color} strokeOpacity=".72" strokeWidth="2"><title>{group.name}</title></polygon>;
       })}</g>}
-      {showGroups && !historical && showTemplate && soRelationLabels.length > 0 && <g className="v04-so-relation-labels" data-testid="so-adjacent-relations">{soRelationLabels.map((item) => <g key={item.key} transform={`translate(${item.x} ${item.y})`}><rect x="-42" y="-14" width="84" height="28" rx="12" fill="var(--map-card)" stroke={selectedRuntimeGroup?.color ?? "#4378e8"} strokeWidth="1.5" /><text x="0" y="5" textAnchor="middle" stroke="none" fill="var(--text)">{item.label}</text></g>)}</g>}
-      {showGroups && <g className="v04-vehicles">{points.map((point) => {
+      {!historical && showTemplate && soRelationLabels.length > 0 && <g className="v04-so-relation-labels" data-testid="so-adjacent-relations">{soRelationLabels.map((item) => <g key={item.key} transform={`translate(${item.x} ${item.y})`}><rect x="-42" y="-14" width="84" height="28" rx="12" fill="var(--map-card)" stroke={selectedRuntimeGroup?.color ?? "#4378e8"} strokeWidth="1.5" /><text x="0" y="5" textAnchor="middle" stroke="none" fill="var(--text)">{item.label}</text></g>)}</g>}
+      <g className="v04-vehicles">{points.map((point) => {
         const selected = !historical && point.groupId === selectedGroupId && point.vehicle.id === selectedVehicle; const heading = point.vehicle.headingDeg ?? 0;
         const activate = () => { if (historical) return; onSelectGroup(point.groupId); onSelectVehicle(point.vehicle.id, point.groupId); };
         return <g key={`${point.groupId}:${point.vehicle.id}`} className={`v04-vehicle ${selected ? "selected" : ""}`} transform={`translate(${point.x} ${point.y})`} role={historical ? undefined : "button"} tabIndex={historical ? undefined : 0} aria-disabled={historical || undefined} aria-label={`${point.groupName}, רכב ${point.vehicle.id}${historical ? ", היסטורי" : ""}`} onClick={activate} onKeyDown={(event) => { if (!historical && (event.key === "Enter" || event.key === " ")) activate(); }}>
           {selected && <circle r="20" className="v04-selection-ring" stroke={point.color} />}<g transform={`rotate(${heading})`} className="v04-vehicle-body"><path d="M0-18 7-9 10 9 0 14-10 9-7-9Z" fill="var(--map-card)" stroke={point.color} strokeWidth="2.4" /><path d="M0-18 4-11H-4Z" fill={point.color} /><TypeIcon type={typeById(point.vehicle.typeId)} color={point.color} /></g><g className="v04-id-label" transform="translate(0 28)"><rect x="-19" y="-9" width="38" height="18" rx="9" /><text y="4" textAnchor="middle">{point.vehicle.id}</text></g>
         </g>;
-      })}</g>}
+      })}</g>
       {showTemplate && !historical && <g className="v04-template-assignment-layer">{points.map((point) => {
         const assignment = assignmentByVehicle.get(point.vehicle.id); if (!assignment) return null;
         return <g key={`template:${point.vehicle.id}`} transform={`translate(${point.x + 18} ${point.y - 22})`}><rect x="0" y="-18" width="116" height="24" rx="10" fill="var(--map-card)" opacity=".9" /><text x="8" y="0" textAnchor="start" stroke="none">{assignment.slotId} · φ {Math.round(assignment.expectedPhase * 100)}%</text></g>;
