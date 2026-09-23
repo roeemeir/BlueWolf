@@ -1,8 +1,9 @@
 import { desc, eq, sql } from "drizzle-orm";
 
 import { auditEntries, workspaces } from "@/db/schema";
-import { DEFAULT_WORKSPACE, type InfluxSettings, type SyncTemplate, type VehicleType } from "@/lib/bluewolf";
+import { DEFAULT_WORKSPACE, type InfluxSettings, type SyncTemplate, type VehicleType, type WorkspaceState } from "@/lib/bluewolf";
 import { prepareTelAvivDemoWorkspace } from "@/lib/default-map-profile-server";
+import { migrateUntouchedBuiltInSiTemplates } from "@/lib/si-builtin-template-migration";
 import { readLocalWorkspace, writeLocalWorkspace } from "@/lib/sqlite-workspace";
 import { normalizeAndValidateWorkspaceState } from "@/lib/workspace-validation";
 
@@ -37,6 +38,17 @@ function siRuntimeFromState(value: unknown): { templates: SyncTemplate[]; vehicl
   return { templates: row.templates as SyncTemplate[], vehicleTypes: row.vehicleTypes as VehicleType[] };
 }
 
+/** Normalize first; upgrade only complete, untouched historical SI presets.
+ * A read never persists the migrated view, changes the user's revision or
+ * overwrites user-authored templates. A subsequent explicit PUT owns that write.
+ */
+function prepareServerSiRead(state: WorkspaceState): WorkspaceState {
+  return {
+    ...state,
+    templates: migrateUntouchedBuiltInSiTemplates(state.templates, state.vehicleTypes),
+  };
+}
+
 async function preparedLocalWorkspace(workspaceId: string) {
   const current = await readLocalWorkspace(workspaceId);
   // A GET must never create a user revision. Existing optimistic revisions are
@@ -45,10 +57,10 @@ async function preparedLocalWorkspace(workspaceId: string) {
   // revision 1 and browser/WKT/restart contracts stay deterministic.
   const source = current.state ?? DEFAULT_WORKSPACE;
   const prepared = await prepareTelAvivDemoWorkspace(source);
-  const normalized = normalizeAndValidateWorkspaceState(prepared);
+  const normalized = normalizeAndValidateWorkspaceState(prepared) as WorkspaceState;
   return {
     ...current,
-    state: normalized,
+    state: prepareServerSiRead(normalized),
     revision: Number(current.revision ?? 0),
   };
 }
