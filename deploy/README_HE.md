@@ -1,87 +1,22 @@
-# זאב כחול — פריסת Runtime מבצעי
+# זאב כחול — פריסת Runtime מבצעי ושער QA מחייב
 
-מסמך זה מתאר את מעטפת הפריסה של שירות `bluewolf-runtime` שנמצא ב־`core/`.
-המעטפת הנוכחית היא **single process / single worker** משום ש־`RuntimeSnapshotStore`
-הוא process-local. אין להגדיל replicas או workers לפני הכנסת שכבת persistence
-משותפת.
+עודכן: 23/09/2026. [שער הקבלה המלא](../docs/E2E_QA_RELEASE_GATE_HE.md) ונספח `QA-E2E-20260923` ב־Master המקורי גוברים על כל ניסוח קודם שאפשר למסור קישור לגרסת Web בלבד. **אין למסור קישור לבדיקת מערכת בלי אימות אינטגרציה מקצה לקצה של Web, SQLite, Python Core מבצעי, InfluxDB2, אירועים, תחקור ו־PDF באותה סביבה.** קישור שהחזיר HTML 200 אינו גרסת QA תקינה.
 
-## מה מוכן באבן הדרך הזו
+## ארכיטקטורת ריצה ומה נדרש לחבר
 
-- endpoint בריאות: `GET /healthz`.
-- endpoint נתונים: `GET /v1/live-runtime?serverId=<id>`.
-- Bearer token דרך `BLUEWOLF_CORE_API_TOKEN`.
-- stale/expire enforcement בצד השירות.
-- InfluxDB2 adapter, WindowReader, polling cursor ו־transactional ingest coordinator.
-- Docker image, OpenShift Deployment/Service ו־Windows launcher.
+מעטפת `bluewolf-runtime` ב־`core/` כוללת ASGI, מאגר snapshots, מפיק תוצאות Core, InfluxDB2 adapter, מתאם join/פולינג, ארכיון דגימות ואירועים, ממשקי recompute ו־QA. היא **אינה מפעילה את לולאת העיבוד התפעולית רק מעצם הפעלת ה־API**. יש להגדיר `BLUEWOLF_OPERATIONAL_CONFIG` כקובץ JSON תפעולי מלא; אז `runtime_host.host_from_environment` בוחר את `mixed_environment_factory` ומקים לולאת Core המפרסמת snapshots לאותו תהליך API. בלעדיו השירות במצב `transport-only` ועשוי להחזיר HTTP 200 ב־`/healthz` בלי לחשב נתיב/ציון אחד.
 
-## מה עדיין אינו מחובר אוטומטית
+ה־store עדיין process-local: הפעילו עובד יחיד ו־replica אחד ל־Runtime עד פתרון שיתוף ואחסון משותף. תצורת ה־Core/Influx וה־SQLite של Web אינן מחוברות אוטומטית ביניהן; נדרש להגדיר נתיבי תצורה, token, רשת, התמדה והרשאות נכונים ולוודא שפעולות שמירה ב־Web אכן נכנסות לתוקף ב־Core. `BLUEWOLF_OPERATIONAL_CONFIG` הוא קובץ ציבורי ללא סודות; `BLUEWOLF_INFLUX_TOKEN` ו־`BLUEWOLF_CORE_API_TOKEN` נשמרים רק במנגנון סודות מאובטח.
 
-שירות ה־ASGI עדיין אינו מפעיל בעצמו את producer שמתרגם את תוצאות
-`Semantic CoreSession` ל־`bluewolf.live-runtime.v1` ומפרסם אותן ל־store.
-החיבור הזה תלוי ב־metadata מבצעי מפורש (סוג רכב, מהירות עבודה, Route Instance,
-constellation/template bank) ובהחלטת המוצר לגבי הציון המוחלק שמוצג למפעיל.
-לכן `/healthz` מאשר שהשירות רץ — הוא **אינו** הוכחה שקיים snapshot מבצעי.
-בקשת runtime ללא snapshot מחזירה 404/fail-closed.
+## הפעלה ואימות תפעולי
 
-## Docker
+- בנו והתקינו image מן `deploy/runtime/Dockerfile` או התקנת Windows באמצעות `deploy/windows/install-runtime.ps1`, בהתאם לסביבת היעד; קובץ `deploy/runtime/operational-config.example.json` הוא דוגמה בלבד, לא תצורה מוכנה להפעלה. החליפו URL, bucket, server tags, מיפוי שדות, קבוצות, רכבים ותבניות בערכים מאומתים.
+- הגדירו `BLUEWOLF_OPERATIONAL_CONFIG`, `BLUEWOLF_INFLUX_TOKEN`, `BLUEWOLF_RUNTIME_HOST`, `BLUEWOLF_RUNTIME_PORT`, והגדרות `BLUEWOLF_OPERATIONAL_STATE_PATH`/ארכיון כאשר נדרשת רציפות. Web חייב לפנות לאותו Core דרך `BLUEWOLF_CORE_API_URL` עם אותו מנגנון הרשאות.
+- אימות שירות: `GET /healthz` מאשר שהשרת מאזין **בלבד**. `GET /readyz` חייב להחזיר `mode: operational`, `ok: true`, `running: true`, שני טיקים לפחות ו־`serverErrors` ריק. לאחר מכן בודקים `GET /v1/live-runtime?serverId=...` עבור שלושת השרתים — זמן מקור מתקדם, WGS84 נצפה, נתיב מזוהה בליבה, SI/SO וציונים תקפים. כישלון או חוסר נתוני מקור הוא חסם, אין להחליף אותו בדמו.
+- במערך אופליין מותקן, מגדירים `BLUEWOLF_STORAGE=sqlite` ו־`BLUEWOLF_SQLITE_PATH` לקובץ SQLite קבוע, בודקים כתיבה/קריאה בין לקוחות והתמדה לאחר restart. Web ו־Core צריכים להיחשף דרך מקור מפעיל אחד, עם ממשקי האירועים, התחקור וה־PDF המחוברים לראיות המקוריות.
 
-מ־root של המאגר:
+## מסירת גרסת בדיקות
 
-```bash
-docker build -f deploy/runtime/Dockerfile -t bluewolf-runtime:local .
-docker run --rm -p 8080:8080 \
-  -e BLUEWOLF_CORE_API_TOKEN='<secret>' \
-  bluewolf-runtime:local
-```
+ה־workflow ההיסטורי `qa-quick-tunnel.yml` **אינו מפרסם יותר Tunnel/קישור**. הוא מפעיל בדיקת קדם פרטית בלבד ודורש הגדרות Influx/Core אמיתיות; ללא credentials או ללא דגימות מתעדכנות הוא נכשל במכוון. אפילו הצלחת קדם־בדיקה אינה מספיקה: חובה להוכיח שמירת תבנית והחלתה במנוע, אירוע ושחזור מתחילתו, דוח PDF ו־scatter/מפות, restart, תרחישים משתנים בשלושה שרתים, בדיקת דפדפן/iPhone, התאמת שני מסמכי המקור וביקורת `BW-GOV-010`. אין לפרסם URL עד שכל התנאים עוברים באותו HEAD וסביבת בדיקה.
 
-בדיקת שירות:
-
-```bash
-curl http://127.0.0.1:8080/healthz
-```
-
-אין להכניס token ל־Dockerfile או ל־Git.
-
-## OpenShift
-
-1. בונים ומעלים image שנבנה מ־`deploy/runtime/Dockerfile` ל־registry המאושר.
-2. מעדכנים את `image:` ב־`deploy/openshift/runtime.yaml`.
-3. יוצרים Secret מחוץ ל־Git, לדוגמה:
-
-```bash
-oc create secret generic bluewolf-runtime-secrets \
-  --from-literal=core-api-token='<secret>'
-```
-
-4. מחילים:
-
-```bash
-oc apply -f deploy/openshift/runtime.yaml
-```
-
-ה־Deployment מוגדר `replicas: 1` ו־`Recreate` בכוונה כדי למנוע שני stores
-process-local במקביל.
-
-## Windows
-
-PowerShell מתוך root של המאגר:
-
-```powershell
-.\deploy\windows\install-runtime.ps1
-$env:BLUEWOLF_CORE_API_TOKEN = '<secret>'
-.\deploy\windows\run-runtime.ps1
-```
-
-בפריסה כשירות Windows יש לספק את `BLUEWOLF_CORE_API_TOKEN` דרך מנגנון secrets /
-service environment של הארגון ולא לשמור אותו בקובץ script.
-
-## משתני סביבה של שירות ה־API
-
-- `BLUEWOLF_CORE_API_TOKEN` — Bearer token; חובה בפריסה המבצעית.
-- `BLUEWOLF_RUNTIME_HOST` — ברירת מחדל `0.0.0.0`.
-- `BLUEWOLF_RUNTIME_PORT` — ברירת מחדל `8080`.
-- `BLUEWOLF_RUNTIME_STALE_SECONDS` — ברירת מחדל `15`.
-- `BLUEWOLF_RUNTIME_EXPIRE_SECONDS` — ברירת מחדל `60`, חייב להיות גדול מסף stale.
-
-הגדרות Influx אינן מועברות עדיין ל־ASGI service עצמו; הן שייכות ל־producer
-שיחובר באבן הדרך הבאה.
+לא למזג ל־`main`, לא להפוך PR מ־Draft ולא לשחרר לייצור ללא אישור מפורש של בעל המוצר.
