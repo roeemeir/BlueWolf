@@ -12,10 +12,11 @@ const core = read("components/bluewolf/operational-live-map.tsx");
 for (const [name, source] of [["SIM", simulation], ["Core", core]]) {
   test(`${name} renders independently controlled evidence layers and their actual SVG visibility gates`, () => {
     const routeLabel = name === "SIM" ? "נתיב התרחיש (סימולציה)" : "נתיב מזוהה";
-    for (const label of ["עקבה נצפית", "עקבה לפי ציון", routeLabel, "תבנית", "יחסים"]) {
+    for (const label of ["עקבה נצפית", "עקבה לפי ציון", routeLabel, "תבנית"]) {
       assert.ok(source.includes(`>${label}</button>`), `${name}: missing ${label}`);
     }
     if (name === "SIM") {
+      assert.ok(source.includes('>יחסים</button>'), 'SIM: missing relation control');
       assert.match(source, /data-sim-navigation-source="synthetic-sim-navigation"/);
       assert.match(source, /סימולציה · מיקומים סינתטיים עם רעש, רוח וחורי מדידה; לא תצפיות מהליבה התפעולית/);
       assert.doesNotMatch(source, />נתיב מזוהה<\/button>/);
