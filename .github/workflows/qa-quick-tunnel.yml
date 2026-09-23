@@ -1,8 +1,7 @@
 name: Blue Wolf E2E Integration — Public Preview Disabled
 
-# This workflow previously published a public QA URL after HTTP 200 while the
-# Python service was in transport-only mode. That is forbidden by the governing
-# Master annex QA-E2E-20260923. This job is PRIVATE and cannot publish a URL.
+# This PRIVATE workflow does not publish a QA URL. An HTTP 200 or a
+# transport-only service is never an E2E acceptance version.
 on:
   workflow_dispatch:
   pull_request:
@@ -25,13 +24,14 @@ concurrency:
 
 jobs:
   integration:
-    name: Private Web + SQLite + operational Python Core + Influx preflight
+    name: Private SQLite → Core → Influx → Web preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       NEXT_TELEMETRY_DISABLED: "1"
       BLUEWOLF_STORAGE: sqlite
       BLUEWOLF_SQLITE_PATH: ${{ github.workspace }}/data/qa-e2e.sqlite
+      BLUEWOLF_WORKSPACE_DB: ${{ github.workspace }}/data/qa-e2e.sqlite
       BLUEWOLF_OPERATIONAL_CONFIG: ${{ github.workspace }}/data/qa-e2e-operational.json
       BLUEWOLF_CORE_API_URL: http://127.0.0.1:8090
       BLUEWOLF_E2E_WEB_URL: http://127.0.0.1:3000
@@ -54,40 +54,21 @@ jobs:
       - name: Fail closed without a real operational Influx configuration
         run: |
           if [ -z "${BLUEWOLF_INFLUX_TOKEN:-}" ] || [ -z "${BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON:-}" ]; then
-            echo 'BLOCKED: a complete E2E operational configuration and Influx token are required. No public QA URL will be created.'
+            echo 'BLOCKED: three-server E2E config and Influx token are required. No public QA URL will be created.'
             exit 1
           fi
           mkdir -p data
           umask 077
           printf '%s\n' "$BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON" > "$BLUEWOLF_OPERATIONAL_CONFIG"
-          # Never log config contents, Influx tokens, or data-source credentials.
-          node --input-type=module -e 'import {readFileSync} from "node:fs"; const cfg=JSON.parse(readFileSync(process.env.BLUEWOLF_OPERATIONAL_CONFIG,"utf8")); if(!Array.isArray(cfg.servers)||cfg.servers.length<3) throw new Error("all three operational servers must be configured"); if(!cfg.influx?.url || cfg.influx.url.includes("influxdb2.internal")) throw new Error("real Influx endpoint is required");'
+          # Never log secret config contents or Influx credentials.
+          node --input-type=module -e 'import {readFileSync} from "node:fs"; const c=JSON.parse(readFileSync(process.env.BLUEWOLF_OPERATIONAL_CONFIG,"utf8")); if(!Array.isArray(c.servers)||c.servers.length<3) throw new Error("three servers are mandatory"); if(!c.influx?.url || c.influx.url.includes("influxdb2.internal")) throw new Error("real Influx endpoint is mandatory"); if(!c.influx.stream?.vehicleNumberColumn || !c.influx.stream?.timeColumn || !c.influx.stream?.serverColumn) throw new Error("E2E requires an explicit three-column Influx join schema");'
       - name: Install application and Core dependencies
         run: |
           npm ci
           python -m pip install --disable-pip-version-check -e './core[service]'
-      - name: Start actual operational Python Core (not transport-only)
-        run: |
-          nohup bluewolf-runtime > /tmp/bluewolf-core-e2e.log 2>&1 &
-          echo $! > /tmp/bluewolf-core-e2e.pid
-          ready=0
-          for attempt in $(seq 1 45); do
-            if curl --fail --silent --show-error --max-time 3 http://127.0.0.1:8090/readyz > /tmp/bluewolf-core-ready.json 2>/dev/null && \
-              node --input-type=module -e 'import {readFileSync} from "node:fs"; const p=JSON.parse(readFileSync("/tmp/bluewolf-core-ready.json","utf8")); if(p.ok!==true || p.mode!=="operational" || p.running!==true || p.tickCount<2 || !Array.isArray(p.serverErrors) || p.serverErrors.length) process.exit(1);'; then
-              ready=1
-              break
-            fi
-            if ! kill -0 "$(cat /tmp/bluewolf-core-e2e.pid)" 2>/dev/null; then break; fi
-            sleep 2
-          done
-          if [ "$ready" != "1" ]; then
-            echo 'BLOCKED: operational Core has not produced two error-free polling ticks.'
-            # Logs can contain backend details. They are deliberately not dumped here.
-            exit 1
-          fi
-      - name: Build verified offline Web application
+      - name: Build offline Web application with SQLite storage
         run: npm run build:offline
-      - name: Start SQLite-backed Web server
+      - name: Start SQLite-backed Web server before Core reads its database
         run: |
           nohup npm run start:offline > /tmp/bluewolf-web-e2e.log 2>&1 &
           echo $! > /tmp/bluewolf-web-e2e.pid
@@ -104,10 +85,61 @@ jobs:
             echo 'BLOCKED: SQLite Web API did not become available.'
             exit 1
           fi
-      - name: Check operational Core feed, three servers and SQLite write/read
-        run: node scripts/verify-e2e-preflight.mjs
-      - name: End-to-end acceptance remains blocked pending event, report, restart and browser checks
+      - name: Commit the exact E2E Influx join schema to SQLite before Core boot
         run: |
-          echo 'Private integration preflight completed. This does NOT authorize a public QA URL.'
-          echo 'BLOCKED: event-start recompute, archive and PDF, persistence/restart, browser/iPhone E2E, original-document audit and BW-GOV-010 evidence still require full verification.'
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFile } from 'node:fs/promises';
+          const cfg = JSON.parse(await readFile(process.env.BLUEWOLF_OPERATIONAL_CONFIG, 'utf8'));
+          const origin = process.env.BLUEWOLF_E2E_WEB_URL;
+          const initialResponse = await fetch(`${origin}/api/workspace`, { cache: 'no-store' });
+          assert.equal(initialResponse.status, 200);
+          const initial = await initialResponse.json();
+          assert.equal(initial.storage, 'sqlite');
+          assert.equal(initial.revision, 0, 'E2E SQLite DB must be fresh for this run');
+          assert.ok(initial.state?.influx?.stream, 'workspace Influx schema is missing');
+          const state = initial.state;
+          state.influx.stream = {
+            serverColumn: cfg.influx.stream.serverColumn,
+            timeColumn: cfg.influx.stream.timeColumn,
+            vehicleNumberColumn: cfg.influx.stream.vehicleNumberColumn,
+          };
+          state.influx.token = '';
+          const commit = await fetch(`${origin}/api/workspace`, {
+            method: 'PUT', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ state, category: 'configuration', action: 'e2e-schema-bootstrap', expectedRevision: 0 }),
+          });
+          assert.equal(commit.status, 200, 'SQLite join schema was not persisted');
+          const saved = await commit.json();
+          assert.equal(saved.revision, 1);
+          const verify = await (await fetch(`${origin}/api/workspace`, { cache: 'no-store' })).json();
+          assert.equal(verify.revision, 1);
+          assert.deepEqual(verify.state.influx.stream, state.influx.stream);
+          console.log('PASS: E2E SQLite schema committed before operational Core startup; no credential printed.');
+          NODE
+      - name: Start actual operational Python Core connected to the saved SQLite schema
+        run: |
+          test -s "$BLUEWOLF_WORKSPACE_DB" || { echo 'BLOCKED: operational Core cannot read SQLite'; exit 1; }
+          nohup bluewolf-runtime > /tmp/bluewolf-core-e2e.log 2>&1 &
+          echo $! > /tmp/bluewolf-core-e2e.pid
+          ready=0
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent --show-error --max-time 3 http://127.0.0.1:8090/readyz > /tmp/bluewolf-core-ready.json 2>/dev/null && \
+              node --input-type=module -e 'import {readFileSync} from "node:fs"; const p=JSON.parse(readFileSync("/tmp/bluewolf-core-ready.json","utf8")); if(p.ok!==true || p.mode!=="operational" || p.running!==true || p.tickCount<2 || !Array.isArray(p.serverErrors) || p.serverErrors.length) process.exit(1);'; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$(cat /tmp/bluewolf-core-e2e.pid)" 2>/dev/null; then break; fi
+            sleep 2
+          done
+          if [ "$ready" != "1" ]; then
+            echo 'BLOCKED: SQLite-connected operational Core has not produced two error-free polling ticks.'
+            exit 1
+          fi
+      - name: Check operational Core feed and three servers through Web plus SQLite round trip
+        run: node scripts/verify-e2e-preflight.mjs
+      - name: Full E2E acceptance is not yet granted
+        run: |
+          echo 'Private Core/SQLite/Influx/Web preflight completed. This does NOT authorize a public QA URL.'
+          echo 'BLOCKED until event-start recompute, archive/PDF, persistence/restart, browser/iPhone E2E and BW-GOV-010 verification pass together.'
           echo 'No tunnel, preview artifact or public link is created by this workflow.'
