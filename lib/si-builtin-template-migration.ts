@@ -26,9 +26,10 @@ export function migrateUntouchedBuiltInSiTemplates(
   templates: readonly SyncTemplate[],
   vehicleTypes: readonly VehicleType[],
 ): SyncTemplate[] {
-  // Some older persisted Workspaces are partial documents. Do not invent a
-  // template bank or roles when the source did not contain either field.
-  if (!Array.isArray(templates) || !Array.isArray(vehicleTypes)) return templates;
+  // Server-side reads may encounter partial historical Workspaces despite the
+  // complete client-side type. Preserve a missing bank as missing (never []),
+  // otherwise a read could override the browser's built-in defaults.
+  if (!Array.isArray(templates) || !Array.isArray(vehicleTypes)) return templates as SyncTemplate[];
   const original = DEFAULT_WORKSPACE.templates.filter((template) => template.family === "SI");
   const placements: Record<string, SiPosition[]> = {
     "tpl-si-90": [
