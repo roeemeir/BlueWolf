@@ -3,8 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-// Prerequisite smoke only, NOT full acceptance. The publishing workflow must
-// additionally prove actual event recompute, PDF, browser/iPhone and restart.
+// Prerequisite smoke only, NOT full acceptance. Do not publish a QA URL
+// without actual archive/recompute, PDF, restart and browser/iPhone evidence.
 export function assertOperationalReady(payload) {
   assert.equal(payload?.ok, true, 'operational Core readiness is not healthy');
   assert.equal(payload?.mode, 'operational', 'transport-only QA is never a Core');
@@ -52,20 +52,53 @@ const getJson = async (base, path, headers = {}) => {
   return response.json();
 };
 
+/** A genuine active Core typically polls every ~5 seconds, not every 1.2s.
+ * Wait for an actual newer source observation, not simply a successful HTTP
+ * response or another transport-only readiness tick. Bound the wait and fail
+ * closed if the feed stays static. Injectable read/sleep keep this testable.
+ */
+export async function awaitNewCoreObservation({
+  firstObservedMs, serverId, read, sleep = ms => new Promise(done => setTimeout(done, ms)),
+  pollSeconds = 5, maxWaitMs = 30_000,
+}) {
+  assert.ok(Number.isFinite(firstObservedMs), 'initial Core timestamp is invalid');
+  assert.ok(Number.isFinite(pollSeconds) && pollSeconds > 0, 'poll cadence must be positive');
+  assert.ok(Number.isFinite(maxWaitMs) && maxWaitMs >= 1_000, 'observation wait must be bounded');
+  const stepMs = Math.min(1_000, maxWaitMs);
+  const attempts = Math.ceil(maxWaitMs / stepMs);
+  let latestObserved = firstObservedMs;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    await sleep(stepMs);
+    const candidate = await read();
+    const observedMs = assertObservedCoreSnapshot(candidate, serverId);
+    if (observedMs > firstObservedMs) return observedMs;
+    latestObserved = observedMs;
+  }
+  throw new Error(`Core feed did not advance for server ${serverId} within ${maxWaitMs}ms (poll cadence ${pollSeconds}s; latest ${latestObserved})`);
+}
+
 export async function runE2EPreflight(env = process.env) {
   const configPath = env.BLUEWOLF_OPERATIONAL_CONFIG?.trim();
   assert.ok(configPath, 'E2E operational configuration path is missing');
   const config = JSON.parse(await readFile(resolve(configPath), 'utf8'));
-  const serverIds = assertOperationalConfig(config, Boolean(env.BLUEWOLF_INFLUX_TOKEN?.trim()));
+  const tokenName = config.influx?.tokenEnv || 'BLUEWOLF_INFLUX_TOKEN';
+  const serverIds = assertOperationalConfig(config, Boolean(env[tokenName]?.trim()));
   const coreUrl = env.BLUEWOLF_CORE_API_URL?.trim().replace(/\/$/, '');
   const webUrl = env.BLUEWOLF_E2E_WEB_URL?.trim().replace(/\/$/, '');
   assert.ok(coreUrl?.startsWith('http') && webUrl?.startsWith('http'), 'E2E Core/Web origins are required');
+  assert.ok(env.BLUEWOLF_SQLITE_PATH && env.BLUEWOLF_WORKSPACE_DB &&
+    resolve(env.BLUEWOLF_SQLITE_PATH) === resolve(env.BLUEWOLF_WORKSPACE_DB),
+    'Web SQLite and Core workspace bridge must use the same file');
   const coreHeaders = env.BLUEWOLF_CORE_API_TOKEN?.trim() ? { authorization: `Bearer ${env.BLUEWOLF_CORE_API_TOKEN.trim()}` } : {};
   const readiness = await getJson(coreUrl, '/readyz');
   assertOperationalReady(readiness);
   const workspace = await getJson(webUrl, '/api/workspace');
   assert.equal(workspace?.storage, 'sqlite', 'Web is not using the required SQLite backend');
   assert.ok(workspace?.state && typeof workspace.state === 'object');
+  const savedJoin = workspace.state.influx?.stream;
+  assert.deepEqual(savedJoin, config.influx?.stream, 'Core and saved SQLite Influx join columns are not identical');
+  assert.ok(Number.isSafeInteger(workspace.revision) && workspace.revision >= 1,
+    'E2E Core boot requires a committed SQLite Workspace revision');
   const profile = workspace.state.settings?.defaultMap;
   assert.ok(typeof profile === 'string' && profile.length, 'SQLite map profile is not initialized');
   const scopeId = `e2e-${env.GITHUB_RUN_ID || process.pid}`;
@@ -89,12 +122,14 @@ export async function runE2EPreflight(env = process.env) {
     const first = await getJson(coreUrl, path, coreHeaders);
     const old = assertObservedCoreSnapshot(first, id);
     const fromWeb = await getJson(webUrl, `/api/live-runtime?serverId=${encodeURIComponent(id)}`);
-    assert.equal(fromWeb.observedAt, first.observedAt, 'Web/Core source times diverge');
-    assert.equal(fromWeb.source?.kind, 'python-core', 'Web substituted a fake source');
-    await new Promise(resolve => setTimeout(resolve, 1200));
-    const second = await getJson(coreUrl, path, coreHeaders);
-    const newer = assertObservedCoreSnapshot(second, id);
-    assert.ok(newer > old, `source time has not advanced for server ${id}`);
+    const webObserved = assertObservedCoreSnapshot(fromWeb, id);
+    assert.ok(webObserved >= old, 'Web delivered an older Core observation');
+    await awaitNewCoreObservation({
+      firstObservedMs: old, serverId: id,
+      read: () => getJson(coreUrl, path, coreHeaders),
+      pollSeconds: config.polling?.activePollSeconds ?? 5,
+      maxWaitMs: Math.min(60_000, Math.max(20_000, (config.polling?.activePollSeconds ?? 5) * 3_000)),
+    });
   }
   return { serverCount: serverIds.length, sqliteRevision: persisted.revision, mode: readiness.mode };
 }
