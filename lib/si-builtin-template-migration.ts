@@ -2,6 +2,21 @@ import { DEFAULT_WORKSPACE, type SiPosition, type SyncTemplate, type VehicleType
 import { deriveSiPairRules, validateSiPositions } from "./si-direct-placement";
 
 /**
+ * A SQLite/D1 or browser JSON round-trip may reorder object keys, including
+ * nested siPairs. Compare the entire historical record structurally instead of
+ * relying on insertion order. Arrays (including vehicle slots) remain ordered,
+ * and extra/missing fields or any user-edited value must still prevent migration.
+ */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+    return `{${Object.keys(object).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
+}
+
+/**
  * Only upgrade the two historical, unedited built-in SI records. In particular,
  * the old [90,90,90] complete pair law has no physical three-vehicle solution.
  * User-authored templates (even ones reusing a built-in ID) must never be
@@ -12,7 +27,6 @@ export function migrateUntouchedBuiltInSiTemplates(
   vehicleTypes: readonly VehicleType[],
 ): SyncTemplate[] {
   const original = DEFAULT_WORKSPACE.templates.filter((template) => template.family === "SI");
-  const expectedKeys = (template: SyncTemplate) => Object.keys(template).sort().join("|");
   const placements: Record<string, SiPosition[]> = {
     "tpl-si-90": [
       { typeId: "storm", ring: "inner", angleDeg: 0 },
@@ -29,10 +43,9 @@ export function migrateUntouchedBuiltInSiTemplates(
     const legacy = original.find((item) => item.id === template.id);
     const positions = placements[template.id];
     if (!legacy || !positions || template.siPositions !== undefined) return template;
-    // The complete legacy record must match, including updatedAt, every pair,
-    // all display fields and whether it was selected as the default.
-    if (expectedKeys(template) !== expectedKeys(legacy) ||
-        JSON.stringify(template) !== JSON.stringify(legacy)) return template;
+    // Compare every historical field (including timestamp, pair rules and
+    // default flag); key reordering alone does not indicate a user edit.
+    if (canonicalJson(template) !== canonicalJson(legacy)) return template;
     if (validateSiPositions(positions, [...vehicleTypes])) return template;
     const siPairs = deriveSiPairRules(positions);
     return {
