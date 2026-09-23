@@ -22,7 +22,8 @@ for (const [name, source] of [["SIM", simulation], ["Core", core]]) {
       assert.doesNotMatch(source, />נתיב מזוהה<\/button>/);
       assert.doesNotMatch(source, />קבוצות<\/button>/);
       assert.doesNotMatch(source, />בסיס<\/button>/);
-      assert.match(source, /\{\[\.\.\.siPoints, \.\.\.soPoints\]\.map/);
+      assert.match(source, /<g className="v04-vehicles" data-testid="operator-always-visible-vehicles">\{siPoints\.map/);
+      assert.match(source, /\{soPoints\.map\(\(point\) => <VehicleMarker/);
     } else {
       assert.doesNotMatch(source, /data-sim-navigation-source/);
     }
