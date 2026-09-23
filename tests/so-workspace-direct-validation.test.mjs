@@ -76,3 +76,29 @@ test("BW-SYNC SO v2: persisted relation, numeric code and generator composition 
     assert.throws(() => normalizeAndValidateWorkspaceState(state), /do not match/, mutate.toString());
   }
 });
+
+test("BW-SYNC SO v2: hidden vehicle identity, type, and physical slot metadata cannot masquerade as anonymous authoring", () => {
+  const mutations = [
+    (t) => { t.soSpec.directPlacements[0].typeId = "storm"; },
+    (t) => { t.soSpec.directPlacements[0].vehicleId = 101; },
+    (t) => { t.soSpec.directPlacements[0].slotId = "other-source"; },
+    (t) => { t.soSpec.directPlacements[0].phaseOffset = 0.5; },
+    (t) => { t.soSpec.singleCounts = { storm: 1 }; },
+    (t) => { t.soSpec.doubleCounts = { lightning: 1 }; },
+    (t) => { t.soSpec.singleCounts = []; },
+  ];
+  for (const mutate of mutations) {
+    const state = stateWith();
+    mutate(state.templates.at(-1));
+    assert.throws(() => normalizeAndValidateWorkspaceState(state), /anonymous|type counters/, mutate.toString());
+  }
+});
+
+test("BW-SYNC SO v2: direction is part of the physical placement and is retained without inferring vehicle types", () => {
+  const state = stateWith();
+  state.templates.at(-1).soSpec.directPlacements[1].direction = "reverse";
+  // For phases 0 and 0.5, reverse leaves the semantic opposite-quarter relation unchanged.
+  const normalized = normalizeAndValidateWorkspaceState(state);
+  assert.equal(normalized.templates.at(-1).soSpec.directPlacements[1].direction, "reverse");
+  assert.equal(normalized.templates.at(-1).soSpec.directPlacements[1].typeId, undefined);
+});
