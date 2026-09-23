@@ -5,11 +5,20 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function emptyTypeCounts(value: unknown): boolean {
+  return record(value) && Object.keys(value).length === 0;
+}
+
 /**
  * Only schema-versioned, direct-placement SO templates are checked here.
  * Historical SO templates without the direct placement contract remain readable,
  * but an incomplete or internally inconsistent new template must not become
  * persisted truth in SQLite/D1 or be silently rendered with missing vehicles.
+ *
+ * SO direct v2 describes anonymous physical positions: vehicle types and vehicle
+ * identifiers must be bound separately at runtime, not smuggled into template
+ * slots or the v1 per-type counters. Rejecting hidden fields here prevents a
+ * later consumer from assigning different semantics to the same saved template.
  */
 export function validatePersistedSoTemplate(template: Record<string, unknown>): void {
   if (template.family !== "SO" || template.soSpec === undefined) return;
@@ -24,12 +33,21 @@ export function validatePersistedSoTemplate(template: Record<string, unknown>): 
     throw new Error(`${id}.soSpec.chain must contain 1–8 valid single/double routes`);
   }
   if (!Array.isArray(spec.directPlacements) || spec.directPlacements.length < 1) {
-    throw new Error(`${id}.soSpec.directPlacements must contain at least one vehicle`);
+    throw new Error(`${id}.soSpec.directPlacements must contain at least one position`);
+  }
+  // The v2 editor deliberately persists empty legacy counters. They cannot
+  // secretly override the anonymous positions or introduce type-dependent SO.
+  if ((spec.singleCounts !== undefined && !emptyTypeCounts(spec.singleCounts)) ||
+      (spec.doubleCounts !== undefined && !emptyTypeCounts(spec.doubleCounts))) {
+    throw new Error(`${id}.soSpec v2 type counters must be empty`);
   }
   const chain = spec.chain as SoRouteKind[];
   const placements = spec.directPlacements.map((value, index) => {
     const label = `${id}.soSpec.directPlacements[${index}]`;
     if (!record(value)) throw new Error(`${label} must be an object`);
+    if (Object.keys(value).some((key) => key !== "routeIndex" && key !== "phase" && key !== "direction")) {
+      throw new Error(`${label} must contain only anonymous routeIndex, phase and direction; vehicle binding belongs to the operational Core`);
+    }
     if (!Number.isInteger(value.routeIndex) || (value.routeIndex as number) < 0 || (value.routeIndex as number) >= chain.length) {
       throw new Error(`${label}.routeIndex must reference an existing route`);
     }
