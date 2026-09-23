@@ -9,6 +9,7 @@ type ExplicitBinding = {
   routeInstanceIds: string[];
   slots: { placementIndex: number; slotId: string; vehicleType: string }[];
 };
+type BoundRoute = { id: string; kind: "single" | "double"; slots: { id: string; vehicleType: string; quarter: string }[] };
 
 export type SoRuntimeBridgeResult = {
   config: JsonObject;
@@ -26,6 +27,33 @@ function nonempty(value: unknown, name: string): string {
 }
 function unique(values: readonly string[], name: string): void {
   if (new Set(values).size !== values.length) throw new Error(`${name} must contain unique values`);
+}
+
+/**
+ * The Core selects templates by the COMPLETE group constellation, not by a
+ * matching subset of routes. A group with an additional route/member may not
+ * activate a bank entry, even if every route in that bank entry appears in it.
+ * Require exactly the same route IDs, kinds, per-route vehicle-type multiset,
+ * and actual uniquely identified members; never treat a superset as proof of
+ * an operational binding. This is configuration validation, not live E2E proof.
+ */
+function groupHasExactConstellation(groupValue: unknown, routes: readonly BoundRoute[]): boolean {
+  if (!groupValue || typeof groupValue !== "object" || Array.isArray(groupValue)) return false;
+  const group = groupValue as { routeInstances?: unknown; members?: unknown };
+  if (!Array.isArray(group.routeInstances) || !Array.isArray(group.members)) return false;
+  if (group.routeInstances.length !== routes.length ||
+      group.members.length !== routes.reduce((sum, route) => sum + route.slots.length, 0)) return false;
+  const instances = group.routeInstances as { id?: unknown; kind?: unknown }[];
+  const members = group.members as { routeInstanceId?: unknown; vehicleType?: unknown; vehicleId?: unknown; workSpeedMps?: unknown }[];
+  const routeIds = instances.map((item) => item?.id);
+  if (routeIds.some((id) => typeof id !== "string") || new Set(routeIds).size !== routeIds.length) return false;
+  const vehicleIds = members.map((member) => member?.vehicleId);
+  if (vehicleIds.some((id) => !Number.isInteger(id) || (id as number) < 0) || new Set(vehicleIds).size !== vehicleIds.length) return false;
+  if (members.some((member) => typeof member?.workSpeedMps !== "number" ||
+      !Number.isFinite(member.workSpeedMps) || member.workSpeedMps <= 0)) return false;
+  return routes.every((route) => instances.some((item) => item.id === route.id && item.kind === route.kind) &&
+    JSON.stringify(members.filter((member) => member.routeInstanceId === route.id).map((member) => member.vehicleType).sort()) ===
+    JSON.stringify(route.slots.map((slot) => slot.vehicleType).sort()));
 }
 
 /**
@@ -85,7 +113,7 @@ export function bindSoDirectTemplatesToCore(existing: unknown, templates: readon
     if (spec.directPlacements.some((placement) => placement.direction !== "forward")) {
       throw new Error(`${template.id}: reverse SO direction is not yet enforced by operational Python Core; refusing a false forward-only binding`);
     }
-    const routes = spec.chain.map((kind, routeIndex) => ({
+    const routes: BoundRoute[] = spec.chain.map((kind, routeIndex) => ({
       id: binding.routeInstanceIds[routeIndex],
       kind,
       slots: spec.directPlacements.flatMap((placement, placementIndex) => {
@@ -97,21 +125,11 @@ export function bindSoDirectTemplatesToCore(existing: unknown, templates: readon
     }));
     if (routes.some((route) => route.slots.length === 0)) throw new Error(`${template.id}: every Core route instance needs an explicitly bound member`);
     const matchingGroup = root.servers.some((rawServer) => {
+      if (!rawServer || typeof rawServer !== "object" || Array.isArray(rawServer)) return false;
       const server = rawServer as { groups?: unknown };
-      if (!Array.isArray(server?.groups)) return false;
-      return server.groups.some((rawGroup) => {
-        const group = rawGroup as { routeInstances?: unknown; members?: unknown };
-        if (!Array.isArray(group?.routeInstances) || !Array.isArray(group.members)) return false;
-        const instanceMap = new Map((group.routeInstances as { id?: string; kind?: string }[]).map((item) => [item.id, item.kind]));
-        const memberTypes = group.members as { routeInstanceId?: string; vehicleType?: string; vehicleId?: unknown; workSpeedMps?: unknown }[];
-        return routes.every((route) => instanceMap.get(route.id) === route.kind &&
-          JSON.stringify(memberTypes.filter((member) => member.routeInstanceId === route.id).map((member) => member.vehicleType).sort()) ===
-          JSON.stringify(route.slots.map((slot) => slot.vehicleType).sort()) &&
-          memberTypes.filter((member) => member.routeInstanceId === route.id).every((member) =>
-            Number.isInteger(member.vehicleId) && typeof member.workSpeedMps === "number" && member.workSpeedMps > 0));
-      });
+      return Array.isArray(server.groups) && server.groups.some((group) => groupHasExactConstellation(group, routes));
     });
-    if (!matchingGroup) throw new Error(`${template.id}: no explicitly configured Core server group binds all route IDs, vehicle types/IDs and work speeds`);
+    if (!matchingGroup) throw new Error(`${template.id}: no exact Core server group matches the entire SO route/vehicle constellation and uniquely identified members`);
     const next = { id: template.id, name: template.name, default: template.isDefault, routes };
     const existingIndex = operational.findIndex((row) => row !== null && typeof row === "object" && (row as { id?: unknown }).id === template.id);
     if (existingIndex >= 0) operational[existingIndex] = next;
