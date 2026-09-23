@@ -3,6 +3,7 @@ import { validateInfluxSettings, validateLiveLatencyBudget } from "./influx-runt
 import { normalizeMapSources } from "./map-source-config";
 import { formatRouteWkt, parseRouteWkt } from "./route-wkt";
 import { validateSiPositions } from "./si-direct-placement";
+import { validatePersistedSoTemplate } from "./so-persisted-validation";
 import { validateVehicleIdRanges } from "./vehicle-id-ranges";
 
 type JsonObject = Record<string, unknown>;
@@ -67,6 +68,9 @@ function validateTemplates(state: JsonObject) {
     if (typeof value.id !== "string" || !value.id.trim()) throw new Error(`template ${index + 1} id is required`);
     if (ids.has(value.id)) throw new Error(`duplicate template id: ${value.id}`);
     ids.add(value.id);
+    // New SO direct-placements are physical source truth, not unvalidated UI metadata.
+    // Legacy relation-only SO stays readable until the user explicitly authors slots.
+    validatePersistedSoTemplate(value);
     if (value.family !== "SI" || value.siPositions === undefined) return;
     if (!Array.isArray(value.siPositions)) throw new Error(`${value.id}.siPositions must be an array`);
     const positions = value.siPositions.map((raw, positionIndex) => {
@@ -138,6 +142,8 @@ function validateMapSources(state: JsonObject) {
  * 30-degree/ring/type rules used by the editor before they may become persisted
  * runtime truth. Legacy SI templates without siPositions remain readable but are
  * never reverse-engineered into operational coordinates.
+ * Schema-versioned SO placements must have valid route, phase, direction and
+ * derived relation/values evidence before either storage backend may accept them.
  */
 export function normalizeAndValidateWorkspaceState(value: unknown): unknown {
   if (!isObject(value)) throw new Error("workspace state must be an object");
