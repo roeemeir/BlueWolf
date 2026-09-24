@@ -73,7 +73,10 @@ class NavigationSimulationPipelineTests(unittest.TestCase):
             store = RuntimeSnapshotStore()
             with patch.dict(os.environ, {
                 "BLUEWOLF_TEST_MODE": "1",
+                "BLUEWOLF_TEST_STORAGE_ROOT": directory,
                 "BLUEWOLF_SAMPLE_ARCHIVE_PATH": "",
+                "BLUEWOLF_OPERATIONAL_STATE_PATH": "",
+                "BLUEWOLF_WORKSPACE_DB": "",
                 "BLUEWOLF_INFLUX_TOKEN": "",
             }):
                 loop = build_operational_runtime(_config(archive_path), store)
