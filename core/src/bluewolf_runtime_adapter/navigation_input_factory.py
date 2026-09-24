@@ -21,6 +21,7 @@ from bluewolf_ingest.navigation_simulation import (
 from bluewolf_ingest.window_reader import InfluxDB2WindowReader
 
 from .runtime_config_common import _connection_and_reader, _integer, _number, _object
+from .simulation_storage_guard import assert_simulation_storage_isolated
 
 
 def navigation_source_mode(config: Mapping[str, Any]) -> str:
@@ -73,6 +74,10 @@ def navigation_reader_and_schema(
         return _connection_and_reader(config)
     if os.environ.get("BLUEWOLF_TEST_MODE") != "1":
         raise ValueError("simulation navigation requires BLUEWOLF_TEST_MODE=1")
+    # The same SQLite archive contains otherwise indistinguishable VehicleSample
+    # records for simulated/real navigation. Reject cross-environment paths
+    # before any reader, checkpoint or archive can be started.
+    assert_simulation_storage_isolated(config)
     source = _object(config.get("navigationSource"), "navigationSource")
     started_raw = source.get("startedAtUtc")
     if not isinstance(started_raw, str) or not started_raw:
