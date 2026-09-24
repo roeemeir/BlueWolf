@@ -1,13 +1,13 @@
-"""Navigation-only SO integration: route, group, score and event MUST come from Core.
+"""Navigation-only SO integration: Core must own all derived outcomes.
 
-No fixture injects routes, group IDs, template selections, scores or events. The
-explicit SO configuration supplies only the product-owned template and member
-bindings. Synthetic input is permitted solely as TEST raw navigation and must
-remain visibly marked in the actual published snapshot/history.
+Synthetic input replaces only raw navigation. The template and explicit route
+instance/member bindings are product configuration; confirmed route geometry,
+structural group, selected-template scores and events must be discovered by the
+running Core. This is NOT a customer Influx or browser/report E2E test.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import math
 import os
 from pathlib import Path
@@ -20,11 +20,11 @@ from bluewolf_runtime_adapter.family_environment_factory import build_operationa
 from bluewolf_runtime_adapter.service import RuntimeSnapshotStore
 from test_navigation_simulation_pipeline import _config
 
-START = datetime(2026, 9, 24, 12, 0, tzinfo=UTC)
+START = datetime(2026, 9, 24, 12, 0, tzinfo=timezone.utc)
 
 
 class NavigationToScoredSOFullPathTests(unittest.TestCase):
-    def test_navigation_only_must_confirm_so_and_publish_core_score_event(self):
+    def test_two_distinct_navigation_routes_reach_actual_so_group_score_and_event(self):
         with tempfile.TemporaryDirectory() as directory:
             config = _config(str(Path(directory) / "navigation.sqlite"))
             config["servers"] = config["servers"][:1]
@@ -34,32 +34,42 @@ class NavigationToScoredSOFullPathTests(unittest.TestCase):
             config["polling"]["idleProbeSeconds"] = 5
             radius_m, straight_m, period_s = 60.0, 220.0, 90.0
             speed = (2 * straight_m + 2 * math.pi * radius_m) / period_s
+            # Two distinct physical neighboring SO tracks with positive gap.
+            # Route IDs and geometry are still independently derived by Core.
             config["navigationSource"]["vehicles"] = [
                 {
                     "serverId": 1, "vehicleNumber": number,
-                    "centerLatitude": 32.08, "centerLongitude": 34.79,
+                    "centerLatitude": latitude, "centerLongitude": 34.79,
                     "radiusMeters": radius_m, "straightLengthMeters": straight_m,
                     "periodSeconds": period_s, "phaseFraction": phase,
                     "shape": "hippodrome",
                 }
-                for number, phase in ((111, 0.0), (112, 0.5))
+                for number, latitude, phase in (
+                    (111, 32.08, 0.0), (112, 32.0815, 0.5),
+                )
             ]
             config["templates"] = [{
-                "id": "hippodrome-opposite", "name": "SO opposite phase",
+                "id": "two-so-routes", "name": "SO two neighboring route instances",
                 "default": True,
-                "routes": [{
-                    "id": "r1", "kind": "single", "slots": [
-                        {"id": "front", "vehicleType": "A", "quarter": "Q0"},
-                        {"id": "rear", "vehicleType": "A", "quarter": "Q2"},
-                    ],
-                }],
+                "routes": [
+                    {"id": "r1", "kind": "single", "slots": [
+                        {"id": "first", "vehicleType": "A", "quarter": "Q0"},
+                    ]},
+                    {"id": "r2", "kind": "single", "slots": [
+                        {"id": "second", "vehicleType": "A", "quarter": "Q2"},
+                    ]},
+                ],
             }]
             config["servers"][0]["groups"] = [{
                 "name": "Real Core SO", "arena": "test-only", "color": "#3366cc",
-                "routeInstances": [{"id": "r1", "kind": "single"}],
+                "routeInstances": [
+                    {"id": "r1", "kind": "single"},
+                    {"id": "r2", "kind": "single"},
+                ],
                 "members": [
-                    {"vehicleId": number, "vehicleType": "A", "routeInstanceId": "r1", "workSpeedMps": speed}
-                    for number in (111, 112)
+                    {"vehicleId": number, "vehicleType": "A", "routeInstanceId": route,
+                     "workSpeedMps": speed}
+                    for number, route in ((111, "r1"), (112, "r2"))
                 ],
             }]
             environment = {
@@ -103,7 +113,7 @@ class NavigationToScoredSOFullPathTests(unittest.TestCase):
                 for group in groups:
                     self.assertIn(group["id"], {item.group_id for item in confirmed})
                     self.assertEqual({member["id"] for member in group["members"]}, {111, 112})
-                    self.assertTrue(group["detectedRoutes"])
+                    self.assertEqual({route["routeInstanceId"] for route in group["detectedRoutes"]}, {"r1", "r2"})
                     self.assertTrue(all(route["family"] == "SO" for route in group["detectedRoutes"]))
                     if group["scoreValid"]:
                         self.assertTrue(group["event"]["id"])
