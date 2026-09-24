@@ -18,6 +18,8 @@ from bluewolf_core.semantic_session import CoreSession
 from bluewolf_core.so_template_selection import SOTemplateSelectionRegistry
 from bluewolf_ingest import ServerPollCursor
 
+from .core_scored_si import CoreScoredSIRuntime, CoreScoredSIRuntimeProducer
+from .core_scored_si_family import CoreScoredSIFamilyRuntimeAdapter
 from .family_runtime import (
     FamilyRuntimeHost,
     SIFamilyRuntimeAdapter,
@@ -31,7 +33,7 @@ from .navigation_input_factory import (
 )
 from .operational_pipeline import OperationalRuntimeLoop, OperationalServerPipeline
 from .operational_state import AtomicOperationalStateStore, CheckpointedOperationalRuntimeLoop
-from .producer import LiveRuntimeProducer
+from .producer import DisplayedScoreValue, LiveRuntimeProducer
 from .runtime_config_common import (
     _config_fingerprint,
     _displayed_score_resolver,
@@ -89,6 +91,20 @@ def build_operational_runtime(
     if so_bank is None and not si_templates:
         raise ValueError("at least one SI or SO template family must be configured")
 
+    score_config = _object(config.get("displayedScore", {"mode": "invalid"}), "displayedScore")
+    score_mode = _text(score_config.get("mode", "invalid"), "displayedScore.mode")
+    if score_mode == "core-si":
+        if so_bank is not None or not si_templates:
+            raise ValueError("displayedScore.mode='core-si' requires SI-only templates; SO score bridge is not yet accepted")
+        # The scored SI producer takes its displayed score ONLY from the exact
+        # selected-template Core pass. It cannot use a resolver or external
+        # number. Keep the required legacy resolver slot invalid/fail-closed.
+        displayed_score_resolver = lambda group_id, observed_at: DisplayedScoreValue(None, False)
+        use_scored_si = True
+    else:
+        displayed_score_resolver = _displayed_score_resolver(config)
+        use_scored_si = False
+
     reader, stream_schema = navigation_reader_and_schema(config)
     simulation_navigation = navigation_source_mode(config) == "simulation"
     # Publication retains Python Core provenance, but marks synthetic input on
@@ -96,7 +112,6 @@ def build_operational_runtime(
     publication_store = SimulatedNavigationPublicationStore(store) if simulation_navigation else store
     poll_config = _poll_config(config, reader.join_config.tolerance_seconds)
     sample_archive = _sample_archive(config)
-    displayed_score_resolver = _displayed_score_resolver(config)
     comparison = TemplateComparisonDimension(
         _text(config.get("comparisonDimension", "sync"), "comparisonDimension")
     )
@@ -148,16 +163,20 @@ def build_operational_runtime(
             families.append(SOFamilyRuntimeAdapter(so_producer))
 
         if si_templates:
-            si_producer = LiveSIRuntimeProducer(
+            si_producer = (CoreScoredSIRuntimeProducer if use_scored_si else LiveSIRuntimeProducer)(
                 server_id=server_id,
                 session=session,
                 templates=si_templates,
                 vehicle_profiles=si_vehicle_types,
                 store=publication_store,
                 displayed_score_resolver=displayed_score_resolver,
+                runtime=CoreScoredSIRuntime(tuple(entry.template for entry in si_templates)) if use_scored_si else None,
                 arena=_server_arena(server),
             )
-            families.append(SIFamilyRuntimeAdapter(si_producer))
+            families.append(
+                CoreScoredSIFamilyRuntimeAdapter(si_producer)
+                if use_scored_si else SIFamilyRuntimeAdapter(si_producer)
+            )
 
         producer = FamilyRuntimeHost(
             server_id=server_id,
