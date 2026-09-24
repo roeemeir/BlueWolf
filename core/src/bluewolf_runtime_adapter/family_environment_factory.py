@@ -20,6 +20,9 @@ from bluewolf_ingest import ServerPollCursor
 
 from .core_scored_si import CoreScoredSIRuntime, CoreScoredSIRuntimeProducer
 from .core_scored_si_family import CoreScoredSIFamilyRuntimeAdapter
+from .core_scored_so import CoreScoredSOEventRuntime
+from .core_scored_so_family import CoreScoredSOFamilyRuntimeAdapter
+from .core_scored_so_producer import CoreScoredSOProducer
 from .family_runtime import (
     FamilyRuntimeHost,
     SIFamilyRuntimeAdapter,
@@ -93,17 +96,20 @@ def build_operational_runtime(
 
     score_config = _object(config.get("displayedScore", {"mode": "invalid"}), "displayedScore")
     score_mode = _text(score_config.get("mode", "invalid"), "displayedScore.mode")
-    if score_mode == "core-si":
-        if so_bank is not None or not si_templates:
-            raise ValueError("displayedScore.mode='core-si' requires SI-only templates; SO score bridge is not yet accepted")
-        # The scored SI producer takes its displayed score ONLY from the exact
-        # selected-template Core pass. It cannot use a resolver or external
-        # number. Keep the required legacy resolver slot invalid/fail-closed.
+    if score_mode == "core-si" and (so_bank is not None or not si_templates):
+        raise ValueError("displayedScore.mode='core-si' requires SI-only templates; use 'core' for mixed scoring")
+    if score_mode == "core-so" and (bool(si_templates) or so_bank is None):
+        raise ValueError("displayedScore.mode='core-so' requires SO-only templates; use 'core' for mixed scoring")
+    if score_mode in {"core-si", "core-so", "core"}:
+        # An externally configured or fabricated value must never reach a Core-
+        # scored event. Each enabled family publishes ONLY its actual selected
+        # scorer result from that same observation. The legacy resolver slot is
+        # deliberately invalid, not a fallback to simulation or another family.
         displayed_score_resolver = lambda group_id, observed_at: DisplayedScoreValue(None, False)
-        use_scored_si = True
     else:
         displayed_score_resolver = _displayed_score_resolver(config)
-        use_scored_si = False
+    use_scored_si = bool(si_templates) and score_mode in {"core-si", "core"}
+    use_scored_so = so_bank is not None and score_mode in {"core-so", "core"}
 
     reader, stream_schema = navigation_reader_and_schema(config)
     simulation_navigation = navigation_source_mode(config) == "simulation"
@@ -151,8 +157,12 @@ def build_operational_runtime(
         if so_bank is not None:
             so_registry = SOTemplateSelectionRegistry(so_bank)
             so_scorer = LiveSOGroupScorer(so_registry)
-            so_runtime = LiveSOEventRuntime(so_scorer, comparison_dimension=comparison)
-            so_producer = LiveRuntimeProducer(
+            so_runtime = (
+                CoreScoredSOEventRuntime if use_scored_so else LiveSOEventRuntime
+            )(so_scorer, comparison_dimension=comparison)
+            so_producer = (
+                CoreScoredSOProducer if use_scored_so else LiveRuntimeProducer
+            )(
                 server_id=server_id,
                 session=session,
                 runtime=so_runtime,
@@ -160,7 +170,10 @@ def build_operational_runtime(
                 binding_resolver=binding_resolver(server),
                 displayed_score_resolver=displayed_score_resolver,
             )
-            families.append(SOFamilyRuntimeAdapter(so_producer))
+            families.append(
+                CoreScoredSOFamilyRuntimeAdapter(so_producer)
+                if use_scored_so else SOFamilyRuntimeAdapter(so_producer)
+            )
 
         if si_templates:
             si_producer = (CoreScoredSIRuntimeProducer if use_scored_si else LiveSIRuntimeProducer)(
