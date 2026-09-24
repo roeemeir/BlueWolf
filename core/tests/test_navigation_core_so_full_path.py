@@ -114,7 +114,7 @@ class NavigationToScoredSOFullPathTests(unittest.TestCase):
                     self.assertIn(group["id"], {item.group_id for item in confirmed})
                     self.assertEqual({member["id"] for member in group["members"]}, {111, 112})
                     self.assertEqual({route["routeInstanceId"] for route in group["detectedRoutes"]}, {"r1", "r2"})
-                    self.assertTrue(all(route["family"] == "SO" for route in group["detectedRoutes"]))
+                    self.assertTrue(all(route["family"] == "so" for route in group["detectedRoutes"]))
                     if group["scoreValid"]:
                         self.assertTrue(group["event"]["id"])
                         self.assertTrue(all(member["scoreValid"] for member in group["members"]))
