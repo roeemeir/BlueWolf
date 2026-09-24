@@ -24,12 +24,16 @@ from .family_runtime import (
     SOFamilyRuntimeAdapter,
 )
 from .ingest_coordinator import LiveCoreIngestCoordinator
+from .navigation_input_factory import (
+    SimulatedNavigationPublicationStore,
+    navigation_reader_and_schema,
+    navigation_source_mode,
+)
 from .operational_pipeline import OperationalRuntimeLoop, OperationalServerPipeline
 from .operational_state import AtomicOperationalStateStore, CheckpointedOperationalRuntimeLoop
 from .producer import LiveRuntimeProducer
 from .runtime_config_common import (
     _config_fingerprint,
-    _connection_and_reader,
     _displayed_score_resolver,
     _integer,
     _list,
@@ -85,7 +89,11 @@ def build_operational_runtime(
     if so_bank is None and not si_templates:
         raise ValueError("at least one SI or SO template family must be configured")
 
-    reader, stream_schema = _connection_and_reader(config)
+    reader, stream_schema = navigation_reader_and_schema(config)
+    simulation_navigation = navigation_source_mode(config) == "simulation"
+    # Publication retains Python Core provenance, but marks synthetic input on
+    # every published snapshot. Influx is NEVER replaced on credential failure.
+    publication_store = SimulatedNavigationPublicationStore(store) if simulation_navigation else store
     poll_config = _poll_config(config, reader.join_config.tolerance_seconds)
     sample_archive = _sample_archive(config)
     displayed_score_resolver = _displayed_score_resolver(config)
@@ -133,7 +141,7 @@ def build_operational_runtime(
                 server_id=server_id,
                 session=session,
                 runtime=so_runtime,
-                store=store,
+                store=publication_store,
                 binding_resolver=binding_resolver(server),
                 displayed_score_resolver=displayed_score_resolver,
             )
@@ -145,7 +153,7 @@ def build_operational_runtime(
                 session=session,
                 templates=si_templates,
                 vehicle_profiles=si_vehicle_types,
-                store=store,
+                store=publication_store,
                 displayed_score_resolver=displayed_score_resolver,
                 arena=_server_arena(server),
             )
@@ -155,7 +163,7 @@ def build_operational_runtime(
             server_id=server_id,
             session=session,
             families=tuple(sorted(families, key=lambda item: item.family)),
-            store=store,
+            store=publication_store,
         )
         pipelines.append(OperationalServerPipeline(coordinator, producer))
 
