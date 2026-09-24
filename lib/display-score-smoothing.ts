@@ -7,8 +7,15 @@ function eventIdentity(group: LiveRuntimeHistoryGroup) {
   return group.event?.id ?? null;
 }
 
+function rawScore(group: LiveRuntimeHistoryGroup) {
+  // Backward-compatible legacy history has no rawTotal. Never fabricate one
+  // by claiming its already-filtered Core total to be an original observation.
+  return group.rawTotal === undefined ? group.total : group.rawTotal;
+}
+
 function hasFiniteScores(group: LiveRuntimeHistoryGroup) {
   return Number.isFinite(group.total)
+    && (group.rawTotal === undefined || Number.isFinite(group.rawTotal))
     && Number.isFinite(group.sync)
     && Number.isFinite(group.route);
 }
@@ -19,6 +26,9 @@ function sameDisplaySegment(current: LiveRuntimeHistoryGroup, candidate: LiveRun
     && candidate.scoreValid
     && hasFiniteScores(current)
     && hasFiniteScores(candidate)
+    // A legacy filtered total cannot be averaged into an independently
+    // observed raw-total segment, even on the same group and event.
+    && (current.rawTotal === undefined) === (candidate.rawTotal === undefined)
     && eventIdentity(current) === eventIdentity(candidate);
 }
 
@@ -34,19 +44,15 @@ function mean(values: number[]) {
 }
 
 /**
- * BW-SYNC-013 display-only trailing smoothing.
- *
- * The function never mutates the supplied Core history and never feeds a
- * smoothed value back into scoring, alerts, grouping or event lifecycle. A
- * window of zero is an explicit raw-display mode. Smoothing is segmented by
- * server, navigation origin, group/event and invalid score frames so a visual
- * line cannot bleed across TEST and operational navigation, a server switch,
- * structural event boundary or unavailable score.
- *
- * NOTE: A Core-scored runtime can already smooth its selected group total.
- * This display function is not a second independent source of raw scores;
- * the Core raw/display distinction must be carried in the runtime contract
- * before configurable windows can be claimed to represent raw Core totals.
+ * BW-SYNC-013 display-only trailing smoothing. Core total is never altered
+ * in the input history: event/alert decisions always retain Core's checkpointed
+ * ten-second total. Where Core publishes rawTotal, the zero-second display
+ * shows that original and every configurable nonzero window averages ONLY
+ * original Core totals, not a second average of a filtered alert score.
+ * Legacy history with no rawTotal remains backward-readable; its original
+ * score cannot be reconstructed from a prior moving mean.
+ * Segments stop at navigation source, server, group/event, validity or
+ * raw/legacy provenance boundaries.
  */
 export function smoothRuntimeHistoryForDisplay(
   history: readonly LiveRuntimeHistoryPoint[],
@@ -56,7 +62,14 @@ export function smoothRuntimeHistoryForDisplay(
     throw new Error("display smoothing window must be in [0,300] seconds");
   }
   const output = structuredClone(history) as LiveRuntimeHistoryPoint[];
-  if (windowSeconds === 0 || output.length < 2) return output;
+  if (windowSeconds === 0 || output.length < 2) {
+    output.forEach((point) => {
+      point.groups = point.groups.map((group) => group.scoreValid && group.rawTotal !== undefined
+        ? { ...group, total: group.rawTotal }
+        : group);
+    });
+    return output;
+  }
   const windowMs = windowSeconds * 1000;
 
   output.forEach((point, pointIndex) => {
@@ -68,15 +81,12 @@ export function smoothRuntimeHistoryForDisplay(
       const routes: number[] = [];
       for (let index = pointIndex; index >= 0; index -= 1) {
         const sourcePoint = history[index];
-        // Group and event identifiers are only meaningful within their source
-        // server and navigation origin. Never blend a TEST/Core score into an
-        // operational score, even when the route/group/event ids are identical.
         if (sourcePoint.serverId !== point.serverId || !sameNavigationOrigin(point, sourcePoint)) break;
         const age = now - Date.parse(sourcePoint.observedAt);
         if (!Number.isFinite(age) || age < 0 || age > windowMs) break;
         const candidate = sourcePoint.groups.find((item) => item.id === group.id);
         if (!candidate || !sameDisplaySegment(group, candidate)) break;
-        totals.push(candidate.total);
+        totals.push(rawScore(candidate));
         syncs.push(candidate.sync);
         routes.push(candidate.route);
       }
