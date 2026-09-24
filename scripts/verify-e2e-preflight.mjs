@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { verifyCoreProxyParity } from './e2e-core-proxy-parity.mjs';
 
 // Prerequisite smoke only, NOT full acceptance. Do not publish a QA URL
 // without actual archive/recompute, PDF, restart and browser/iPhone evidence.
@@ -121,7 +122,11 @@ export async function runE2EPreflight(env = process.env) {
     const path = `/v1/live-runtime?serverId=${encodeURIComponent(id)}`;
     const first = await getJson(coreUrl, path, coreHeaders);
     const old = assertObservedCoreSnapshot(first, id);
-    const fromWeb = await getJson(webUrl, `/api/live-runtime?serverId=${encodeURIComponent(id)}`);
+    const fromWeb = await verifyCoreProxyParity({
+      serverId: id,
+      readCore: () => getJson(coreUrl, path, coreHeaders),
+      readWeb: () => getJson(webUrl, `/api/live-runtime?serverId=${encodeURIComponent(id)}`),
+    });
     const webObserved = assertObservedCoreSnapshot(fromWeb, id);
     assert.ok(webObserved >= old, 'Web delivered an older Core observation');
     await awaitNewCoreObservation({
