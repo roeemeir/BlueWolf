@@ -1,4 +1,5 @@
 import type { LiveRuntimeSnapshot } from "./live-runtime";
+import { normalizeTestNavigationProvenance, type TestNavigationProvenance } from "./runtime-navigation-provenance";
 
 export const LIVE_RUNTIME_HISTORY_SCHEMA_VERSION = "bluewolf.live-runtime-history.v1" as const;
 
@@ -31,6 +32,9 @@ export type LiveRuntimeHistoryPoint = {
   serverId: string;
   observedAt: string;
   groups: LiveRuntimeHistoryGroup[];
+  // Python's compact history carries this ONLY for TEST navigation. Do not
+  // discard it on HTTP readback, UI timeline changes, or local checkpoint replay.
+  source?: { kind: "python-core" } & TestNavigationProvenance;
 };
 
 const RUNTIME_HISTORY: Record<string, LiveRuntimeHistoryPoint[] | undefined> = {};
@@ -76,6 +80,15 @@ function normalizeGroup(value: unknown): LiveRuntimeHistoryGroup {
   };
 }
 
+function normalizeSource(value: unknown): LiveRuntimeHistoryPoint["source"] {
+  if (value === undefined) return undefined;
+  const provenance = normalizeTestNavigationProvenance(value);
+  if (!provenance) {
+    throw new Error("runtime history source must be the explicit TEST lineage when supplied");
+  }
+  return { kind: "python-core", ...provenance };
+}
+
 function normalizePoint(value: unknown, requestedServerId: string): LiveRuntimeHistoryPoint {
   if (!value || typeof value !== "object") throw new Error("runtime history point must be an object");
   const row = value as Record<string, unknown>;
@@ -90,11 +103,13 @@ function normalizePoint(value: unknown, requestedServerId: string): LiveRuntimeH
     serverId: requestedServerId,
     observedAt: row.observedAt,
     groups: row.groups.map(normalizeGroup),
+    source: normalizeSource(row.source),
   };
 }
 
 function pointFromSnapshot(snapshot: LiveRuntimeSnapshot): LiveRuntimeHistoryPoint {
   const groups = snapshot.groupList ?? Object.values(snapshot.groups).filter((group) => Boolean(group));
+  const provenance = normalizeTestNavigationProvenance(snapshot.source);
   return {
     schemaVersion: LIVE_RUNTIME_HISTORY_SCHEMA_VERSION,
     serverId: snapshot.serverId,
@@ -109,6 +124,7 @@ function pointFromSnapshot(snapshot: LiveRuntimeSnapshot): LiveRuntimeHistoryPoi
       scoreValid: group!.scoreValid,
       event: group!.event ? { id: group!.event.id, active: group!.event.active } : undefined,
     })),
+    source: provenance ? { kind: "python-core", ...provenance } : undefined,
   };
 }
 
@@ -121,8 +137,12 @@ function normalizedHistory(
   validateLimit(limit);
   if (!Number.isFinite(windowMs) || windowMs <= 0) throw new Error("history window must be positive");
   const byObservedAt = new Map<string, LiveRuntimeHistoryPoint>();
-  for (const point of points) {
-    if (point.serverId !== serverId) throw new Error("runtime history contains a different serverId");
+  for (const candidate of points) {
+    const point = normalizePoint(candidate, serverId);
+    const previous = byObservedAt.get(point.observedAt);
+    if (previous && Boolean(previous.source) !== Boolean(point.source)) {
+      throw new Error("history cannot replace TEST navigation with unmarked data at one timestamp");
+    }
     byObservedAt.set(point.observedAt, structuredClone(point));
   }
   const ordered = [...byObservedAt.values()].sort(
