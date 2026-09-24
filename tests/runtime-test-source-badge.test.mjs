@@ -18,6 +18,6 @@ test('operator header, source selector and mode badge never label TEST Core as o
 
 test('Core-generated alerts from TEST input keep visible TEST provenance rather than live operational source claims', () => {
   assert.match(dashboard, /testNavigationCore \? "TEST NAVIGATION · Python Core" : "Python Core"/);
-  assert.match(dashboard, /testNavigationCore \? "התרעות שחושבו בליבה מנתוני ניווט סינתטיים לצורכי TEST בלבד — לא נתונים מבצעיים\."/);
+  assert.match(dashboard, /testNavigationCore \? "התראות שחושבו בליבה מנתוני ניווט סינתטיים לצורכי TEST בלבד — לא נתונים מבצעיים\."/);
   assert.match(dashboard, /\{testNavigationCore \? "TEST · " : ""\}\{item\.sourceLabel\}/);
 });
