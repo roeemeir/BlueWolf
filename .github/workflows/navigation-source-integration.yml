@@ -1,0 +1,27 @@
+name: Blue Wolf Navigation Input Integration
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: bluewolf-navigation-input-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  navigation-source:
+    name: Navigation-only SIM → real join → Python Core → SQLite
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the actual Blue Wolf core and runtime adapters
+        working-directory: core
+        run: python -m pip install -e '.[service,influx]'
+      - name: Exercise SIM source gating, real temporal join, three-server Core and SQLite archive
+        working-directory: core/tests
+        run: python -m unittest -v test_navigation_simulation test_navigation_simulation_pipeline
