@@ -1,13 +1,15 @@
 name: Blue Wolf Public Civilian InfluxDB2 Adapter
 
 # This workflow never receives operational/customer tokens, never contacts the
-# closed military network, and never publishes a QA/preview URL. It verifies
-# schema-agnostic retrieval and joining, NOT a live vehicle/Core system.
+# closed military network, and never publishes a QA/preview URL. Public GPS
+# has historical source timestamps; the moving replay clock and its vehicle/
+# server/status/velocity metadata are synthetic LAB values, NOT live vehicles.
 on:
   pull_request:
     paths:
       - 'core/src/bluewolf_ingest/**'
       - 'core/tests/integration_public_civil_influx.py'
+      - 'core/tests/integration_civilian_replay_influx.py'
       - '.github/workflows/civilian-influx-adapter.yml'
   workflow_dispatch:
 
@@ -59,6 +61,13 @@ jobs:
         run: |
           set -euo pipefail
           python core/tests/integration_public_civil_influx.py
+      - name: Replay public historical GPS on a synthetic clock and verify real windowed joins
+        shell: bash
+        env:
+          BW_CIVIL_INFLUX_URL: http://127.0.0.1:8086
+        run: |
+          set -euo pipefail
+          python core/tests/integration_civilian_replay_influx.py
       - name: Remove disposable database
         if: always()
         run: docker rm -f bluewolf-civil-influx || true
