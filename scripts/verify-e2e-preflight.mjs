@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { verifyCoreProxyParity } from './e2e-core-proxy-parity.mjs';
+import { assertCoherentLiveGroupEvidence } from './e2e-coherent-group-evidence.mjs';
 
 // Prerequisite smoke only, NOT full acceptance. Do not publish a QA URL
 // without actual archive/recompute, PDF, restart and browser/iPhone evidence.
@@ -72,7 +73,12 @@ export async function awaitNewCoreObservation({
     await sleep(stepMs);
     const candidate = await read();
     const observedMs = assertObservedCoreSnapshot(candidate, serverId);
-    if (observedMs > firstObservedMs) return observedMs;
+    // An advancing server clock is insufficient: the new source observation
+    // must still contain a complete, coherent, fresh scored Core group.
+    if (observedMs > firstObservedMs) {
+      assertCoherentLiveGroupEvidence(candidate, serverId);
+      return observedMs;
+    }
     latestObserved = observedMs;
   }
   throw new Error(`Core feed did not advance for server ${serverId} within ${maxWaitMs}ms (poll cadence ${pollSeconds}s; latest ${latestObserved})`);
@@ -122,12 +128,14 @@ export async function runE2EPreflight(env = process.env) {
     const path = `/v1/live-runtime?serverId=${encodeURIComponent(id)}`;
     const first = await getJson(coreUrl, path, coreHeaders);
     const old = assertObservedCoreSnapshot(first, id);
+    assertCoherentLiveGroupEvidence(first, id);
     const fromWeb = await verifyCoreProxyParity({
       serverId: id,
       readCore: () => getJson(coreUrl, path, coreHeaders),
       readWeb: () => getJson(webUrl, `/api/live-runtime?serverId=${encodeURIComponent(id)}`),
     });
     const webObserved = assertObservedCoreSnapshot(fromWeb, id);
+    assertCoherentLiveGroupEvidence(fromWeb, id);
     assert.ok(webObserved >= old, 'Web delivered an older Core observation');
     await awaitNewCoreObservation({
       firstObservedMs: old, serverId: id,
