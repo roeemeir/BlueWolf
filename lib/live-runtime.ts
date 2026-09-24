@@ -1,4 +1,5 @@
 import { mergeScoreTrace, type ScoreTracePoint } from "./score-trace";
+import { normalizeTestNavigationProvenance, type TestNavigationProvenance } from "./runtime-navigation-provenance";
 import {
   SERVER_SCENARIOS,
   type DemoGroup,
@@ -78,7 +79,7 @@ export type LiveRuntimeSnapshot = {
     kind: RuntimeSourceKind;
     health: RuntimeHealth;
     detail?: string;
-  };
+  } & Partial<TestNavigationProvenance>;
   groups: Partial<Record<DemoGroupKey, LiveRuntimeGroup>>;
   groupList?: LiveRuntimeGroup[];
 };
@@ -242,10 +243,9 @@ function normalizeVehicle(value: unknown): LiveRuntimeVehicle | null {
   }
   let speedMps: number | undefined;
   if (row.speedMps !== undefined) {
-    if (typeof row.speedMps !== "number" || !Number.isFinite(row.speedMps) || row.speedMps < 0) return null;
+    if (typeof row.speedMps !== "number" || !Number.isFinite(row.speedMps)) return null;
     speedMps = row.speedMps;
   }
-
   return {
     id: row.id,
     typeId: row.typeId,
@@ -360,6 +360,7 @@ export function normalizeLiveRuntimeSnapshot(value: unknown, requestedServerId?:
   if (typeof row.observedAt !== "string") throw new Error("runtime observedAt is missing");
   const sourceValue = row.source && typeof row.source === "object" ? row.source as Record<string, unknown> : null;
   if (!sourceValue || sourceValue.kind !== "python-core") throw new Error("runtime source must be python-core");
+  const provenance = normalizeTestNavigationProvenance(sourceValue);
   const health: RuntimeHealth = sourceValue.health === "healthy" || sourceValue.health === "stale" || sourceValue.health === "unavailable" ? sourceValue.health : "unavailable";
   const groupsValue = row.groups && typeof row.groups === "object" ? row.groups as Record<string, unknown> : {};
   const groups: Partial<Record<DemoGroupKey, LiveRuntimeGroup>> = {};
@@ -381,6 +382,7 @@ export function normalizeLiveRuntimeSnapshot(value: unknown, requestedServerId?:
       kind: "python-core",
       health,
       detail: typeof sourceValue.detail === "string" ? sourceValue.detail : undefined,
+      ...provenance,
     },
     groups,
     groupList,
