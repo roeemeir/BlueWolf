@@ -37,6 +37,15 @@ function notificationTime(value: string | null, timezone: string) {
   }
 }
 
+/** Do not mount the legacy operator's demo-group fallbacks as operational evidence. */
+export function hasVerifiedOperationalEvidence(snapshot: LiveRuntimeSnapshot | null, serverId: string, nowMs: number, refreshSeconds: number): boolean {
+  if (!snapshot || snapshot.serverId !== serverId || snapshot.source.kind !== "python-core" || snapshot.source.health !== "healthy") return false;
+  const observedMs = Date.parse(snapshot.observedAt);
+  if (!Number.isFinite(observedMs) || observedMs > nowMs + 5_000 || nowMs - observedMs > Math.max(30_000, refreshSeconds * 3_000)) return false;
+  const groups = snapshot.groupList ?? Object.values(snapshot.groups).filter((group) => Boolean(group));
+  return groups.some((group) => group?.scoreValid === true && group.members.some((vehicle) => vehicle.scoreValid === true && typeof vehicle.latitude === "number" && typeof vehicle.longitude === "number" && Number.isFinite(vehicle.latitude) && Number.isFinite(vehicle.longitude)));
+}
+
 function AppInner() {
   const { state, ready, loadProgress, storageMode, revision } = useWorkspace();
   const { resolvedTheme, setTheme } = useTheme();
@@ -49,6 +58,7 @@ function AppInner() {
   const [coreSnapshot, setCoreSnapshot] = useState<LiveRuntimeSnapshot | null>(null);
   const [readAlertKeys, setReadAlertKeys] = useState<string[]>([]);
   const [, setRuntimeRevision] = useState(0);
+  const [currentTimeMs, setCurrentTimeMs] = useState(0);
   // Keep per-server source timestamps and HTTP completion order across effect
   // restarts. In particular, changing uiRefreshSeconds must not reset history.
   const pollOrder = useRef(createRuntimePollOrder());
@@ -91,7 +101,11 @@ function AppInner() {
   };
 
   useEffect(() => {
-    const update = () => setClock(new Intl.DateTimeFormat("he-IL", { timeZone: state.settings.timezone, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date()));
+    const update = () => {
+      const now = new Date();
+      setCurrentTimeMs(now.getTime());
+      setClock(new Intl.DateTimeFormat("he-IL", { timeZone: state.settings.timezone, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(now));
+    };
     update();
     const timer = window.setInterval(update, 1000);
     return () => window.clearInterval(timer);
@@ -150,14 +164,15 @@ function AppInner() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [dataMode, serverValue, state.settings.uiRefreshSeconds]);
 
-  const runtimeLabel = dataMode === "simulation" ? "סימולציה" : runtimeState === "healthy" ? "Python Core" : runtimeState === "stale" ? "Core מיושן" : runtimeState === "connecting" ? "מתחבר ל-Core" : "Core לא זמין";
+  const operationalEvidenceReady = dataMode === "influx" && hasVerifiedOperationalEvidence(coreSnapshot, serverValue, currentTimeMs, state.settings.uiRefreshSeconds);
+  const runtimeLabel = dataMode === "simulation" ? "סימולציה" : operationalEvidenceReady ? "Python Core · נתונים מאומתים" : runtimeState === "healthy" ? "Core · נתונים חלקיים" : runtimeState === "stale" ? "Core מיושן" : runtimeState === "connecting" ? "מתחבר ל-Core" : "Core לא זמין";
   if (!ready) return <LoadingScreen progress={loadProgress} />;
 
   return <main className="app-shell v04-shell">
     <header className="topbar glass-panel">
       <button type="button" className="brand" onClick={() => setTab("operator")}><div className="brand-mark"><WolfLogo /></div><div><h1>זאב כחול</h1><p>ניטור סנכרון רכבים</p></div></button>
       <Dialog>
-        <DialogTrigger asChild><button type="button" className={`live-state source-${dataMode}`}><span className="live-dot" /><div><strong>{dataMode === "simulation" ? "SIM · סימולציה" : `חי · ${runtimeLabel}`}</strong><small>{runtimeDetail}</small></div></button></DialogTrigger>
+        <DialogTrigger asChild><button type="button" className={`live-state source-${dataMode}`}><span className="live-dot" /><div><strong>{dataMode === "simulation" ? "SIM · סימולציה" : operationalEvidenceReady ? `חי · ${runtimeLabel}` : `לא מאומת · ${runtimeLabel}`}</strong><small>{runtimeDetail}</small></div></button></DialogTrigger>
         <DialogContent className="glass-dialog source-dialog" dir="rtl"><DialogHeader><DialogTitle>מקור הנתונים</DialogTitle><DialogDescription>בחירת מקור אינה משנה שרת או זירה. במצב Influx הציונים מוצגים רק כאשר Python Core מחזיר snapshot תקף.</DialogDescription></DialogHeader><div className="source-choice-grid"><button type="button" className={dataMode === "simulation" ? "active" : ""} onClick={() => changeDataMode("simulation")}><Radio /><strong>סימולציה</strong><span>תרחיש דטרמיניסטי</span></button><button type="button" className={dataMode === "influx" ? "active" : ""} onClick={() => changeDataMode("influx")}><Database /><strong>InfluxDB 2 + Python Core</strong><span>{dataMode === "influx" ? runtimeLabel : "runtime מבצעי"}</span></button></div><div className="system-dialog-grid"><span><HardDrive />אחסון<b>{storageMode === "cloud" ? "מרכזי" : "מקומי"}</b></span><span><CheckCircle2 />קונפיגורציה<b>גרסה {revision || 1}</b></span><span><Clock3 />טיק<b>{state.settings.uiRefreshSeconds} שניות</b></span></div></DialogContent>
       </Dialog>
       <div className="top-actions">
@@ -180,8 +195,10 @@ function AppInner() {
       </div>
     </header>
     <Tabs value={tab} onValueChange={(value) => setTab(value as MainTab)} dir="rtl" className="main-tabs">
-      <div className="nav-row glass-panel"><TabsList variant="line"><TabsTrigger value="operator"><Activity />מבצעי</TabsTrigger><TabsTrigger value="investigation"><FileChartColumn />תחקור</TabsTrigger><TabsTrigger value="developer"><Settings2 />מפתחים</TabsTrigger></TabsList><div className="nav-status"><span><Wifi />{activeServer}</span><span className={`mode-chip ${dataMode}`}>{dataMode === "simulation" ? "SIM" : runtimeState === "healthy" ? "CORE" : "NO CORE"}</span><Badge variant="outline">v0.4 QA</Badge></div></div>
-      <TabsContent value="operator"><OperatorView key={serverValue} serverId={serverValue} serverName={activeServer} dataMode={dataMode} onDataModeChange={changeDataMode} onInvestigate={() => setTab("investigation")} /></TabsContent>
+      <div className="nav-row glass-panel"><TabsList variant="line"><TabsTrigger value="operator"><Activity />מבצעי</TabsTrigger><TabsTrigger value="investigation"><FileChartColumn />תחקור</TabsTrigger><TabsTrigger value="developer"><Settings2 />מפתחים</TabsTrigger></TabsList><div className="nav-status"><span><Wifi />{activeServer}</span><span className={`mode-chip ${dataMode}`}>{dataMode === "simulation" ? "SIM" : operationalEvidenceReady ? "CORE" : "NO CORE SCORE"}</span><Badge variant="outline">v0.4 QA</Badge></div></div>
+      <TabsContent value="operator">{dataMode === "simulation" || operationalEvidenceReady
+        ? <OperatorView key={`${serverValue}:${dataMode}`} serverId={serverValue} serverName={activeServer} dataMode={dataMode} onDataModeChange={changeDataMode} onInvestigate={() => setTab("investigation")} />
+        : <section className="glass-panel empty-state" role="status" aria-label="אין נתונים תפעוליים מאומתים" dir="rtl" style={{ margin: 24, padding: 32 }}><TriangleAlert /><h2>אין נתונים תפעוליים מאומתים</h2><p>לא התקבלה מה־Python Core של השרת הנבחר דגימה עדכנית עם ציון תקף ומיקום רכב נצפה. גם אם הוגדרו פרטי InfluxDB2, אין בכך הוכחה שהמערכת שולפת או מחשבת נתונים חיים.</p><p>{runtimeDetail}</p><p>כרטיסי קבוצות, ציונים וגרפים סינתטיים אינם מוצגים במצב Core. אפשר לבחור במפורש ״סימולציה״ בתפריט מקור הנתונים כדי לבדוק תרחיש הדגמה מסומן.</p></section>}</TabsContent>
       <TabsContent value="investigation"><InvestigationWorkspace server={serverValue} onServerChange={changeServer} dataMode={dataMode} /></TabsContent>
       <TabsContent value="developer"><DeveloperGovernanceWorkbench /></TabsContent>
     </Tabs>
