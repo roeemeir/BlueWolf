@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
   si-live-runtime:
-    name: SI Web-to-Core live runtime + SI/SO family symmetry and Core SO score
+    name: SI/SO first-class runtime and truth-backed selected-template score
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,7 +20,7 @@ jobs:
       - name: Install Python core/runtime
         working-directory: core
         run: python -m pip install -e '.[service,influx]'
-      - name: Run SI runtime, sibling-family and one-pass SO scoring regressions
+      - name: Run SI runtime, sibling-family and one-pass SO scoring/publication regressions
         working-directory: core/tests
         run: >-
           python -m unittest -v
@@ -34,3 +34,4 @@ jobs:
           test_runtime_host
           test_live_so_event_runtime
           test_core_scored_so
+          test_core_scored_so_publication
