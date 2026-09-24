@@ -63,6 +63,9 @@ export type LiveRuntimeGroup = Omit<DemoGroup, "members" | "alert"> & {
   members: LiveRuntimeVehicle[];
   scoreValid: boolean;
   observedAt: string;
+  // rawTotal comes from the SAME selected-template Core scoring pass. total
+  // remains the checkpointed ten-second event/alert score, never UI feedback.
+  rawTotal?: number;
   detectedRoutes?: LiveRuntimeDetectedRoute[];
   alert?: LiveRuntimeAlert;
   event?: LiveRuntimeEvent;
@@ -270,6 +273,8 @@ function normalizeGroup(value: unknown, key: DemoGroupKey, observedAt: string): 
   const family: Family = row.family === "SI" || row.family === "SO" ? row.family : key === "si" ? "SI" : "SO";
   if (typeof row.id !== "string" || typeof row.templateId !== "string") return null;
   if (![row.total, row.sync, row.route, row.confidence].every(isFiniteScore)) return null;
+  // A malformed raw score is never replaced by the already-smoothed total.
+  if (row.rawTotal !== undefined && (!isFiniteScore(row.rawTotal) || row.scoreValid === false)) return null;
   const members = Array.isArray(row.members) ? row.members.map(normalizeVehicle) : [];
   if (members.some((member) => member === null)) return null;
   const detectedRoutes = normalizeDetectedRoutes(row.detectedRoutes);
@@ -317,6 +322,7 @@ function normalizeGroup(value: unknown, key: DemoGroupKey, observedAt: string): 
     family,
     subtitle: typeof row.subtitle === "string" ? row.subtitle : family === "SO" ? "Runtime SO" : "Runtime SI",
     total: row.total as number,
+    rawTotal: row.rawTotal as number | undefined,
     sync: row.sync as number,
     route: row.route as number,
     confidence: row.confidence as number,
