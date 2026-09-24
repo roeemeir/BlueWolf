@@ -243,7 +243,7 @@ function normalizeVehicle(value: unknown): LiveRuntimeVehicle | null {
   }
   let speedMps: number | undefined;
   if (row.speedMps !== undefined) {
-    if (typeof row.speedMps !== "number" || !Number.isFinite(row.speedMps)) return null;
+    if (typeof row.speedMps !== "number" || !Number.isFinite(row.speedMps) || row.speedMps < 0) return null;
     speedMps = row.speedMps;
   }
   return {
