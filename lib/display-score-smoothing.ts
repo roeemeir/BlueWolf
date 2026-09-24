@@ -22,6 +22,13 @@ function sameDisplaySegment(current: LiveRuntimeHistoryGroup, candidate: LiveRun
     && eventIdentity(current) === eventIdentity(candidate);
 }
 
+function sameNavigationOrigin(current: LiveRuntimeHistoryPoint, candidate: LiveRuntimeHistoryPoint) {
+  // History source is present only for explicitly marked Core-scored TEST
+  // navigation. Matching server/group/event IDs do not authorize averaging
+  // synthetic navigation scores into an unmarked operational chart segment.
+  return (current.source?.syntheticNavigation === true) === (candidate.source?.syntheticNavigation === true);
+}
+
 function mean(values: number[]) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
@@ -32,8 +39,14 @@ function mean(values: number[]) {
  * The function never mutates the supplied Core history and never feeds a
  * smoothed value back into scoring, alerts, grouping or event lifecycle. A
  * window of zero is an explicit raw-display mode. Smoothing is segmented by
- * server, group/event and invalid score frames so a visual line cannot bleed
- * across a server switch, structural event boundary or unavailable score.
+ * server, navigation origin, group/event and invalid score frames so a visual
+ * line cannot bleed across TEST and operational navigation, a server switch,
+ * structural event boundary or unavailable score.
+ *
+ * NOTE: A Core-scored runtime can already smooth its selected group total.
+ * This display function is not a second independent source of raw scores;
+ * the Core raw/display distinction must be carried in the runtime contract
+ * before configurable windows can be claimed to represent raw Core totals.
  */
 export function smoothRuntimeHistoryForDisplay(
   history: readonly LiveRuntimeHistoryPoint[],
@@ -56,8 +69,9 @@ export function smoothRuntimeHistoryForDisplay(
       for (let index = pointIndex; index >= 0; index -= 1) {
         const sourcePoint = history[index];
         // Group and event identifiers are only meaningful within their source
-        // server. Never average an identically named group from another server.
-        if (sourcePoint.serverId !== point.serverId) break;
+        // server and navigation origin. Never blend a TEST/Core score into an
+        // operational score, even when the route/group/event ids are identical.
+        if (sourcePoint.serverId !== point.serverId || !sameNavigationOrigin(point, sourcePoint)) break;
         const age = now - Date.parse(sourcePoint.observedAt);
         if (!Number.isFinite(age) || age < 0 || age > windowMs) break;
         const candidate = sourcePoint.groups.find((item) => item.id === group.id);
