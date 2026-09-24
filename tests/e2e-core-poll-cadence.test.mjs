@@ -7,9 +7,14 @@ function snapshot(at, kind = 'python-core') {
     schemaVersion: 'bluewolf.live-runtime.v1', serverId: '1', observedAt: new Date(at).toISOString(),
     source: { kind, health: 'healthy' },
     groups: { si: {
-      members: [{ scoreValid: true, latitude: 32, longitude: 34 }],
-      detectedRoutes: [{ centerline: [[34, 32], [34.01, 32.01], [34.02, 32.02]] }],
-      event: { id: 'core-event' },
+      id: 'si-group-1', family: 'SI', observedAt: new Date(at).toISOString(),
+      scoreValid: true, total: 82, sync: 80, route: 84, templateId: 'si-bound',
+      members: [{ id: 101, scoreValid: true, score: 81, latitude: 32, longitude: 34 }],
+      detectedRoutes: [{ routeId: 'confirmed-route', centerline: [
+        { latitude: 32, longitude: 34 }, { latitude: 32.01, longitude: 34.01 },
+        { latitude: 32.02, longitude: 34.02 },
+      ] }],
+      event: { id: 'core-event', startedAt: new Date(at - 20_000).toISOString(), active: true },
     } },
   };
 }
