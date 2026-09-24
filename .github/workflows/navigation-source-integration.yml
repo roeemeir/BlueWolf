@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
   navigation-source:
-    name: Navigation-only SIM → real join → Python Core → isolated SQLite
+    name: Navigation-only SIM → real join → Python Core → isolated SQLite → HTTP
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -22,6 +22,6 @@ jobs:
       - name: Install the actual Blue Wolf core and runtime adapters
         working-directory: core
         run: python -m pip install -e '.[service,influx]'
-      - name: Verify SIM isolation, true route/group, live SI score publication and SQLite
+      - name: Verify SIM isolation, true route/group, SI member scoring, SQLite and authenticated HTTP history
         working-directory: core/tests
-        run: python -m unittest -v test_navigation_simulation test_navigation_simulation_pipeline test_simulation_storage_guard test_navigation_route_confirmation test_navigation_runtime_publication
+        run: python -m unittest -v test_navigation_simulation test_navigation_simulation_pipeline test_simulation_storage_guard test_navigation_route_confirmation test_navigation_runtime_publication test_navigation_http_history
