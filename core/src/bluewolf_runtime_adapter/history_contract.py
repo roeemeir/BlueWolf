@@ -4,6 +4,10 @@ The live snapshot contract carries map positions, per-member scores and other
 operator details needed for the current frame. The 30-minute score timeline does
 not need to persist that full payload at every poll. This module defines a
 separate versioned contract containing only group-level score/event points.
+
+Synthetic-navigation provenance must survive compact history and checkpoint
+restoration: a TEST track may never become indistinguishable from real Influx
+navigation merely because the operator moves the timeline slider.
 """
 from __future__ import annotations
 
@@ -76,20 +80,38 @@ def _compact_group(value: object) -> dict[str, Any]:
     return output
 
 
+def _test_navigation_source(value: object) -> dict[str, Any] | None:
+    """Keep only an explicit, validated TEST origin; never infer it from scores."""
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("runtime history source must be an object")
+    synthetic = value.get("syntheticNavigation")
+    origin = value.get("navigationOrigin")
+    if synthetic is None and origin is None:
+        return None
+    if synthetic is not True or origin != "simulation" or value.get("kind", "python-core") != "python-core":
+        raise ValueError("runtime history simulation source must identify real Python Core with synthetic navigation")
+    return {"kind": "python-core", "navigationOrigin": "simulation", "syntheticNavigation": True}
+
+
 def compact_runtime_history_point(snapshot: Mapping[str, Any]) -> dict[str, Any]:
     """Project one full ``bluewolf.live-runtime.v1`` snapshot to one history point."""
-
     if snapshot.get("schemaVersion") != LIVE_RUNTIME_SCHEMA_VERSION:
         raise ValueError("unsupported live runtime schema for history projection")
     server_id = _text(snapshot.get("serverId"), "runtime history serverId")
     observed_at = _text(snapshot.get("observedAt"), "runtime history observedAt")
     groups = [_compact_group(group) for group in _groups_from_runtime_snapshot(snapshot)]
-    return {
+    test_source = _test_navigation_source(snapshot.get("source"))
+    result = {
         "schemaVersion": LIVE_RUNTIME_HISTORY_SCHEMA_VERSION,
         "serverId": server_id,
         "observedAt": observed_at,
         "groups": groups,
     }
+    if test_source is not None:
+        result["source"] = test_source
+    return result
 
 
 def normalize_runtime_history_point(
@@ -98,7 +120,6 @@ def normalize_runtime_history_point(
     expected_server_id: str | None = None,
 ) -> dict[str, Any]:
     """Validate a persisted/API history point and return a detached copy."""
-
     if value.get("schemaVersion") != LIVE_RUNTIME_HISTORY_SCHEMA_VERSION:
         raise ValueError("unsupported live runtime history schema")
     server_id = _text(value.get("serverId"), "runtime history serverId")
@@ -109,14 +130,16 @@ def normalize_runtime_history_point(
     if not isinstance(raw_groups, list):
         raise ValueError("runtime history groups must be a list")
     groups = [_compact_group(group) for group in raw_groups]
-    return deepcopy(
-        {
-            "schemaVersion": LIVE_RUNTIME_HISTORY_SCHEMA_VERSION,
-            "serverId": server_id,
-            "observedAt": observed_at,
-            "groups": groups,
-        }
-    )
+    test_source = _test_navigation_source(value.get("source"))
+    normalized = {
+        "schemaVersion": LIVE_RUNTIME_HISTORY_SCHEMA_VERSION,
+        "serverId": server_id,
+        "observedAt": observed_at,
+        "groups": groups,
+    }
+    if test_source is not None:
+        normalized["source"] = test_source
+    return deepcopy(normalized)
 
 
 __all__ = [
