@@ -74,6 +74,12 @@ def _compact_group(value: object) -> dict[str, Any]:
         "route": _score(value.get("route"), "runtime history group route"),
         "scoreValid": score_valid,
     }
+    # Optional for older checkpoints, mandatory when a current scored Core
+    # producer supplies it. Never reconstruct raw scores from filtered totals.
+    if "rawTotal" in value:
+        if not score_valid:
+            raise ValueError("invalid history group cannot carry a valid raw Core score")
+        output["rawTotal"] = _score(value["rawTotal"], "runtime history group rawTotal")
     event = _compact_event(value.get("event"))
     if event is not None:
         output["event"] = event
