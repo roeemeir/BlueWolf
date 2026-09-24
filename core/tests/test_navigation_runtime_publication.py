@@ -25,6 +25,7 @@ class NavigationRuntimePublicationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             config = _config(str(Path(directory) / "navigation.sqlite"))
             config["servers"] = config["servers"][:1]
+            config["polling"]["idleProbeSeconds"] = 5  # Explicit fast QA probe, not an operational default.
             config["siVehicleTypes"][0]["workSpeedMps"] = 2.0 * 3.141592653589793 * 100.0 / 60.0
             for vehicle in config["navigationSource"]["vehicles"]:
                 vehicle["periodSeconds"] = 60.0
@@ -41,7 +42,9 @@ class NavigationRuntimePublicationTests(unittest.TestCase):
             adapter = loop.pipelines[0].coordinator.reader.adapter
             published_groups = []
             core_group_evidence = False
-            for elapsed in range(0, 151, 5):
+            # The real cursor's safe end is now minus five seconds. Begin
+            # after the first source fixes so the initial probe sees activity.
+            for elapsed in range(10, 171, 5):
                 now = START + timedelta(seconds=elapsed)
                 adapter.clock = lambda current=now: current
                 tick = loop.tick(now)
