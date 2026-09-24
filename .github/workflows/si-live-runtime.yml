@@ -35,3 +35,4 @@ jobs:
           test_live_so_event_runtime
           test_core_scored_so
           test_core_scored_so_publication
+          test_core_scored_so_route_binding_guard
