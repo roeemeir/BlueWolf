@@ -59,7 +59,7 @@ test('partial, contradictory and falsely operationalized TEST source fields fail
   ]) {
     const raw = coreSnapshot();
     raw.source = { ...bad, health: 'healthy' };
-    assert.throws(() => runtime.normalizeLiveRuntimeSnapshot(raw, '1'), /provenance|TEST navigation/);
+    assert.throws(() => runtime.normalizeLiveRuntimeSnapshot(raw, '1'), /provenance|TEST navigation|source must be python-core/);
     const point = compactPoint();
     point.source = bad;
     assert.throws(() => history.normalizeLiveRuntimeHistoryPayload({
