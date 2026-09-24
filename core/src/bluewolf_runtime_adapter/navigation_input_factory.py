@@ -7,7 +7,7 @@ never be silently selected by production configuration or secret failure.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 import os
 from typing import Any
@@ -112,15 +112,31 @@ def navigation_reader_and_schema(
 
 
 class SimulatedNavigationPublicationStore:
-    """Mark every *real Core-derived* snapshot as having synthetic TEST input."""
+    """Mark and preserve TEST source provenance through publication AND restart."""
 
     def __init__(self, store: Any) -> None:
         self.store = store
+
+    @staticmethod
+    def _valid_test_source(source: object) -> bool:
+        return (
+            isinstance(source, Mapping)
+            and source.get("kind") == "python-core"
+            and source.get("navigationOrigin") == "simulation"
+            and source.get("syntheticNavigation") is True
+        )
 
     def publish(self, snapshot: Mapping[str, object]) -> None:
         source = snapshot.get("source")
         if not isinstance(source, Mapping) or source.get("kind") != "python-core":
             raise ValueError("synthetic navigation may only publish a real Python Core result")
+        has_marker = "navigationOrigin" in source or "syntheticNavigation" in source
+        if has_marker and not self._valid_test_source(source):
+            raise ValueError("synthetic navigation checkpoint has conflicting source provenance")
+        if has_marker:
+            # Replaying a checkpoint must not repeatedly prepend TEST labels.
+            self.store.publish(snapshot)
+            return
         marked_source = {
             **dict(source),
             "navigationOrigin": "simulation",
@@ -132,6 +148,22 @@ class SimulatedNavigationPublicationStore:
             "source": marked_source,
             "status": f"בדיקות ניווט סינתטי · {snapshot.get('status', '')}",
         })
+
+    def get(self, server_id: str) -> dict[str, Any] | None:
+        return self.store.get(server_id)
+
+    def history(self, server_id: str, *, limit: int | None = None) -> list[dict[str, Any]]:
+        return self.store.history(server_id, limit=limit)
+
+    def restore_history(self, server_id: str, rows: Sequence[Mapping[str, Any]]) -> None:
+        # Restored TEST history cannot shed its navigation-origin marker and
+        # masquerade as true Influx data. Validate before mutating the store.
+        if any(not self._valid_test_source(row.get("source")) for row in rows):
+            raise ValueError("restored synthetic-navigation history must retain TEST source provenance")
+        self.store.restore_history(server_id, rows)
+
+    def clear(self, server_id: str | None = None) -> None:
+        self.store.clear(server_id)
 
 
 __all__ = [
