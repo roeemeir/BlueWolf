@@ -1,0 +1,38 @@
+name: Blue Wolf BW-SYNC-013 Raw Score Contract
+
+on:
+  pull_request:
+    paths:
+      - "core/src/bluewolf_runtime_adapter/**"
+      - "core/tests/test_runtime_raw_score_history.py"
+      - "core/tests/test_core_scored_so_publication.py"
+      - "lib/live-runtime*.ts"
+      - "lib/display-score-smoothing.ts"
+      - "tests/runtime-core-raw-total.test.mjs"
+      - ".github/workflows/sync13-raw-score.yml"
+  push:
+    branches:
+      - work/requirements-governance-2026-09-15
+    paths:
+      - "core/src/bluewolf_runtime_adapter/**"
+      - "core/tests/test_runtime_raw_score_history.py"
+      - "core/tests/test_core_scored_so_publication.py"
+      - "lib/live-runtime*.ts"
+      - "lib/display-score-smoothing.ts"
+      - "tests/runtime-core-raw-total.test.mjs"
+      - ".github/workflows/sync13-raw-score.yml"
+
+jobs:
+  core-raw-score:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install real Python Core and runtime dependencies
+        working-directory: core
+        run: python -m pip install -e '.[service,influx]'
+      - name: Verify compact score history and real selected-template SO publisher
+        working-directory: core/tests
+        run: python -m unittest -v test_runtime_raw_score_history test_core_scored_so_publication
