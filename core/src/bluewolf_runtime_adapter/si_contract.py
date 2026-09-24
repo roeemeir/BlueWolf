@@ -89,6 +89,7 @@ def build_si_live_runtime_snapshot(
         and displayed_score.score is not None
         and group_scores is not None
         and group_scores.valid
+        and group_scores.total is not None
     )
     reason = result.pending_reason
     if group_scores is not None and group_scores.primary_reason:
@@ -102,6 +103,8 @@ def build_si_live_runtime_snapshot(
         "name": group_name or f"קבוצה {result.group_id}",
         "family": "SI",
         "subtitle": subtitle,
+        # The source score is the SAME selected-template Core pass. total is
+        # the ten-second checkpointed alert/window score, not raw evidence.
         "total": _score(displayed_score.score if group_valid else None),
         "sync": _score(group_scores.sync if group_valid and group_scores is not None else None),
         "route": _score(group_scores.route if group_valid and group_scores is not None else None),
@@ -114,6 +117,8 @@ def build_si_live_runtime_snapshot(
         "scoreValid": group_valid,
         "observedAt": observed_at,
     }
+    if group_valid:
+        group["rawTotal"] = _score(group_scores.total)
     return {
         "schemaVersion": LIVE_RUNTIME_SCHEMA_VERSION,
         "serverId": str(server_id),
