@@ -7,7 +7,7 @@ No group, binding, template, geometry or vehicle type is inferred here.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from types import MappingProxyType
 
 from bluewolf_core.live_so_event_runtime import TemplateComparisonDimension
@@ -61,6 +61,20 @@ class CoreScoredSOProducer(LiveRuntimeProducer):
             if members is None:
                 skipped[group.group_id] = "runtime_member_evidence_incomplete_or_route_mismatch"
                 continue
+            # Validate the explicit route-instance binding BEFORE the stateful
+            # scorer/event pass. Two independently confirmed Core routes may
+            # not masquerade as one physical instance; quarantine that group
+            # without aborting publication of valid sibling groups.
+            try:
+                detected_routes = _detected_route_payload(members)
+            except ValueError as exc:
+                if str(exc) != "one live route instance maps to conflicting confirmed routes":
+                    raise
+                skipped[group.group_id] = "binding_route_instance_conflicts_with_confirmed_core_routes"
+                self.runtime.end_group(
+                    group.group_id, observed_at, reason="invalid_route_instance_binding",
+                )
+                continue
             result = self.runtime.process_snapshot(
                 group.group_id,
                 binding.constellation,
@@ -89,7 +103,7 @@ class CoreScoredSOProducer(LiveRuntimeProducer):
                 color=binding.color,
             )
             payload = one["groups"]["so"]
-            payload["detectedRoutes"] = _detected_route_payload(members)
+            payload["detectedRoutes"] = detected_routes
             group_payloads.append((group.group_id, _utc(observed_at), binding.arena, payload))
         if not group_payloads:
             return RuntimePublicationResult(None, (), skipped)
