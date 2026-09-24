@@ -180,6 +180,7 @@ def build_so_live_runtime_snapshot(
         and displayed_group_score is not None
         and group_scores is not None
         and group_scores.valid
+        and group_scores.total is not None
     )
     active_template_id = live.selection.template_id or _UNSELECTED_TEMPLATE_ID
     group_reason = live.pending_reason
@@ -194,6 +195,8 @@ def build_so_live_runtime_snapshot(
         "name": group_name or f"קבוצה {result.group_id}",
         "family": "SO",
         "subtitle": subtitle,
+        # total is the checkpointed alert-window score, while rawTotal comes
+        # from this SAME selected-template Core pass and is never re-scored.
         "total": _score(displayed_group_score if group_valid else None),
         "sync": _score(group_scores.sync if group_valid and group_scores is not None else None),
         "route": _score(group_scores.route if group_valid and group_scores is not None else None),
@@ -206,6 +209,8 @@ def build_so_live_runtime_snapshot(
         "scoreValid": group_valid,
         "observedAt": observed_at,
     }
+    if group_valid:
+        group["rawTotal"] = _score(group_scores.total)
 
     if result.event is not None:
         event_snapshot = result.event.snapshot
