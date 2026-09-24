@@ -1,29 +1,21 @@
 name: Blue Wolf E2E Integration — Public Preview Disabled
 
-# This PRIVATE workflow does not publish a QA URL. An HTTP 200 or a
-# transport-only service is never an E2E acceptance version.
+# Runs only by explicit owner dispatch on the trusted integration branch.
+# Never inject real Influx tokens or operational configuration into a PR job.
+# This PRIVATE preflight does not publish a QA URL or certify full E2E.
 on:
   workflow_dispatch:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - app/**
-      - components/**
-      - lib/**
-      - core/**
-      - scripts/verify-e2e-preflight.mjs
-      - docs/E2E_QA_RELEASE_GATE_HE.md
-      - package.json
-      - package-lock.json
-      - .github/workflows/qa-quick-tunnel.yml
+
+permissions:
+  contents: read
 
 concurrency:
-  group: bluewolf-qa-quick-tunnel
+  group: bluewolf-e2e-private-dispatch
   cancel-in-progress: true
 
 jobs:
   integration:
+    if: github.event_name == 'workflow_dispatch' && github.actor == 'roeemeir' && github.ref == 'refs/heads/work/requirements-governance-2026-09-15'
     name: Private SQLite → Core → Influx → Web preflight
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -39,11 +31,13 @@ jobs:
       BLUEWOLF_RUNTIME_PORT: "8090"
       BLUEWOLF_HOST: 127.0.0.1
       PORT: "3000"
-      BLUEWOLF_CODE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BLUEWOLF_CODE_SHA: ${{ github.sha }}
       BLUEWOLF_INFLUX_TOKEN: ${{ secrets.BLUEWOLF_E2E_INFLUX_TOKEN }}
       BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON: ${{ secrets.BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
