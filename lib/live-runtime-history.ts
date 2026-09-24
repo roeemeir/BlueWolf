@@ -20,7 +20,10 @@ export type LiveRuntimeHistoryGroup = {
   id: string;
   name: string;
   color: string;
+  // total is Core's checkpointed alert-window score. rawTotal, when present,
+  // is the independently observed selected-template Core score on this tick.
   total: number;
+  rawTotal?: number;
   sync: number;
   route: number;
   scoreValid: boolean;
@@ -68,11 +71,13 @@ function normalizeGroup(value: unknown): LiveRuntimeHistoryGroup {
   if (typeof row.name !== "string" || !row.name) throw new Error("history group name is missing");
   if (typeof row.color !== "string" || !row.color) throw new Error("history group color is missing");
   if (typeof row.scoreValid !== "boolean") throw new Error("history group scoreValid must be boolean");
+  if (row.rawTotal !== undefined && !row.scoreValid) throw new Error("invalid history group cannot have raw Core score");
   return {
     id: row.id,
     name: row.name,
     color: row.color,
     total: finiteScore(row.total, "history total"),
+    rawTotal: row.rawTotal === undefined ? undefined : finiteScore(row.rawTotal, "history rawTotal"),
     sync: finiteScore(row.sync, "history sync"),
     route: finiteScore(row.route, "history route"),
     scoreValid: row.scoreValid,
@@ -119,6 +124,7 @@ function pointFromSnapshot(snapshot: LiveRuntimeSnapshot): LiveRuntimeHistoryPoi
       name: group!.name,
       color: group!.color,
       total: group!.total,
+      rawTotal: group!.rawTotal,
       sync: group!.sync,
       route: group!.route,
       scoreValid: group!.scoreValid,
@@ -142,6 +148,14 @@ function normalizedHistory(
     const previous = byObservedAt.get(point.observedAt);
     if (previous && Boolean(previous.source) !== Boolean(point.source)) {
       throw new Error("history cannot replace TEST navigation with unmarked data at one timestamp");
+    }
+    if (previous) {
+      for (const oldGroup of previous.groups) {
+        const incoming = point.groups.find((item) => item.id === oldGroup.id);
+        if (oldGroup.rawTotal !== undefined && incoming && incoming.rawTotal === undefined) {
+          throw new Error("history cannot downgrade an observed raw Core score at one timestamp");
+        }
+      }
     }
     byObservedAt.set(point.observedAt, structuredClone(point));
   }
