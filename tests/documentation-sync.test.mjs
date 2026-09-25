@@ -24,10 +24,10 @@ test('BW-GOV-010 manifest binds the governed Master and research documents to th
   const manifest = JSON.parse(await readFile('docs/documentation-sync.json', 'utf8'));
   assert.equal(manifest.masterDocument.driveFileId, '1pcjq50LchceDYsCqek_jqxkkRYbnef4l');
   assert.equal(manifest.masterDocument.version, '2.8');
-  assert.equal(manifest.implementationFingerprint.digest, 'e38d6e14a2b9ae28');
-  assert.equal(manifest.implementationFingerprint.fileCount, 271);
-  assert.equal(manifest.masterDocument.verifiedImplementationBaseline, '907c4af7a9ecad94a724f3059d0afa13af395239');
-  assert.equal(manifest.masterDocument.verifiedCiRun, 2953);
+  assert.equal(manifest.implementationFingerprint.digest, 'c7e1c6a5ea4c2a2b');
+  assert.equal(manifest.implementationFingerprint.fileCount, 272);
+  assert.equal(manifest.masterDocument.verifiedImplementationBaseline, '2ec209e01f9ec02ff78ca239f2d69d5bc235378c');
+  assert.equal(manifest.masterDocument.verifiedCiRun, 2963);
   assert.deepEqual(
     { version: manifest.coreResearchDocument.version, title: manifest.coreResearchDocument.title, driveFileId: manifest.coreResearchDocument.driveFileId },
     ACTIVE_CORE_RESEARCH,
