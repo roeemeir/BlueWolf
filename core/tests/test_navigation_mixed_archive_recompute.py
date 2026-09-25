@@ -8,22 +8,74 @@ that archived evidence without changing source identity.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 import json
 import math
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from bluewolf_core.event_recompute import recompute_si_event, recompute_so_event
+from bluewolf_runtime_adapter import qa_service
 from bluewolf_runtime_adapter.event_archive_binding import attach_event_archives
 from bluewolf_runtime_adapter.family_environment_factory import build_operational_runtime
+from bluewolf_runtime_adapter.qa_service import QaEnabledASGI
 from bluewolf_runtime_adapter.service import RuntimeSnapshotStore
 from test_navigation_simulation_pipeline import _config
 
 START = datetime(2026, 9, 24, 12, 0, tzinfo=UTC)
+
+
+async def _request(app, path: str, *, method: str = "GET", query: str = "", payload: dict | None = None):
+    messages = []
+    body = json.dumps(payload or {}).encode("utf-8")
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("ascii"),
+        "query_string": query.encode("utf-8"),
+        "headers": [
+            (b"host", b"test"),
+            (b"content-type", b"application/json"),
+            (b"authorization", b"Bearer mixed-test-token"),
+        ],
+        "client": ("127.0.0.1", 12345),
+        "server": ("test", 80),
+    }
+    delivered = False
+
+    async def receive():
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        delivered = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(message):
+        messages.append(message)
+
+    await app(scope, receive, send)
+    start = next(message for message in messages if message["type"] == "http.response.start")
+    response_body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    return start["status"], json.loads(response_body.decode("utf-8"))
+
+
+async def _base(scope, receive, send):
+    del scope, receive
+    await send({"type": "http.response.start", "status": 404, "headers": []})
+    await send({"type": "http.response.body", "body": b"{}"})
 
 
 class MixedNavigationArchiveRecomputeTests(unittest.TestCase):
@@ -205,6 +257,64 @@ class MixedNavigationArchiveRecomputeTests(unittest.TestCase):
                         point["group"]["rawTotal"] == point["group"]["total"]
                         for point in scored_points
                     ))
+
+            # Exercise the production investigation ASGI boundary against the
+            # same three-server runtime and immutable archive, not a fixture.
+            app = QaEnabledASGI(_base, token="mixed-test-token")
+            host = SimpleNamespace(loop=loop, config_fingerprint="mixed-http-config")
+            with (
+                patch.object(qa_service, "event_archive", observation_archive),
+                patch.object(qa_service, "event_lifecycle_archive", _lifecycle_archive),
+                patch.object(qa_service.service, "operational_host", host),
+                patch.dict(os.environ, {"BLUEWOLF_CODE_SHA": "mixed-http-sha"}, clear=False),
+            ):
+                for server_id in (1, 2, 3):
+                    status, listing = asyncio.run(_request(
+                        app,
+                        "/v1/investigation/events",
+                        query=f"serverId={server_id}",
+                    ))
+                    self.assertEqual(status, 200)
+                    self.assertEqual(listing["serverId"], server_id)
+                    self.assertEqual({row["family"] for row in listing["templates"]}, {"SI", "SO"})
+                    event_ids = {row["eventId"] for row in listing["events"]}
+                    latest = store.get(str(server_id))
+                    self.assertIsNotNone(latest)
+                    scored = {group["family"]: group for group in latest["groupList"] if group["scoreValid"]}
+                    self.assertIn(scored["SI"]["event"]["id"], event_ids)
+                    self.assertIn(scored["SO"]["event"]["id"], event_ids)
+
+                    for family, template_id in (
+                        ("SI", "sim-input-si-template"),
+                        ("SO", "mixed-so-two-routes"),
+                    ):
+                        event_id = scored[family]["event"]["id"]
+                        status, result = asyncio.run(_request(
+                            app,
+                            "/v1/investigation/recompute",
+                            method="POST",
+                            payload={
+                                "eventId": event_id,
+                                "templateId": template_id,
+                                "scenarioId": f"http-{family.lower()}-{server_id}",
+                            },
+                        ))
+                        self.assertEqual(status, 200, result)
+                        self.assertEqual(result["serverId"], server_id)
+                        self.assertEqual(result["family"], family)
+                        self.assertEqual(result["codeVersion"], "mixed-http-sha")
+                        self.assertEqual(result["configVersion"], "mixed-http-config")
+                        self.assertEqual(result["source"], {
+                            "kind": "python-core",
+                            "navigationOrigin": "simulation",
+                            "syntheticNavigation": True,
+                        })
+                        scored_points = [point for point in result["points"] if point["group"]["valid"]]
+                        self.assertTrue(scored_points)
+                        self.assertTrue(all(
+                            point["group"]["rawTotal"] == point["group"]["total"]
+                            for point in scored_points
+                        ))
 
 
 if __name__ == "__main__":
