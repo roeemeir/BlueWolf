@@ -142,7 +142,7 @@ test('REP-01/02 renderer remains the base of lifecycle and release PDF with loca
   assert.match(release, /buildInvestigationWmtsMapPages/);
   assert.match(release, /buildInvestigationBrandedCover/);
   assert.match(release, /const pages = \[brandCover, \.\.\.engineeringPages\.slice\(0, overviewCount\), mapPages\[0\]\]/);
-  assert.match(release, /pages\.push\(\s*\.\.\.engineeringPages\.slice\(cursor, cursor \+ eventPageCount\),\s*\.\.\.buildInvestigationEventSynopsisPages\(event, index, report\.events\.length\),\s*mapPages\[index \+ 1\],\s*\)/);
+  assert.match(release, /pages\.push\(\s*\.\.\.engineeringPages\.slice\(cursor, cursor \+ eventPageCount\),\s*\.\.\.buildInvestigationEventSynopsisPages\(event, index, report\.events\.length, report\.source\),\s*mapPages\[index \+ 1\],\s*\)/);
   assert.match(release, /pages\.push\(\.\.\.engineeringPages\.slice\(cursor\)\)/);
   assert.match(panel, /format: "data"/);
   assert.match(panel, /normalizeInvestigationReportData/);

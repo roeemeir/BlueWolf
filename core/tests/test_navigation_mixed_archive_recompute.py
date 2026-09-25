@@ -261,7 +261,7 @@ class MixedNavigationArchiveRecomputeTests(unittest.TestCase):
             # Exercise the production investigation ASGI boundary against the
             # same three-server runtime and immutable archive, not a fixture.
             app = QaEnabledASGI(_base, token="mixed-test-token")
-            host = SimpleNamespace(loop=loop, config_fingerprint="mixed-http-config")
+            host = SimpleNamespace(loop=SimpleNamespace(\n                pipelines=loop.pipelines,\n                config_fingerprint="mixed-http-config",\n            ))
             with (
                 patch.object(qa_service, "event_archive", observation_archive),
                 patch.object(qa_service, "event_lifecycle_archive", _lifecycle_archive),
