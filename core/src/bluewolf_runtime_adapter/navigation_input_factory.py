@@ -27,8 +27,8 @@ from .simulation_storage_guard import assert_simulation_storage_isolated
 def navigation_source_mode(config: Mapping[str, Any]) -> str:
     source = _object(config.get("navigationSource", {"mode": "influxdb2"}), "navigationSource")
     mode = source.get("mode", "influxdb2")
-    if mode not in {"influxdb2", "simulation"}:
-        raise ValueError("navigationSource.mode must be influxdb2 or simulation")
+    if mode not in {"influxdb2", "influxdb2-test", "simulation"}:
+        raise ValueError("navigationSource.mode must be influxdb2, influxdb2-test or simulation")
     return str(mode)
 
 
@@ -73,11 +73,13 @@ def navigation_reader_and_schema(
         # No fallback on missing/invalid Influx credentials or failed reads.
         return _connection_and_reader(config)
     if os.environ.get("BLUEWOLF_TEST_MODE") != "1":
-        raise ValueError("simulation navigation requires BLUEWOLF_TEST_MODE=1")
-    # The same SQLite archive contains otherwise indistinguishable VehicleSample
-    # records for simulated/real navigation. Reject cross-environment paths
-    # before any reader, checkpoint or archive can be started.
+        raise ValueError("TEST navigation requires BLUEWOLF_TEST_MODE=1")
+    # TEST navigation may come either from the in-process raw simulator or from
+    # an actual disposable InfluxDB2. Both must use isolated persistence and
+    # both retain explicit TEST provenance after the real join/Core pipeline.
     assert_simulation_storage_isolated(config)
+    if mode == "influxdb2-test":
+        return _connection_and_reader(config)
     source = _object(config.get("navigationSource"), "navigationSource")
     started_raw = source.get("startedAtUtc")
     if not isinstance(started_raw, str) or not started_raw:

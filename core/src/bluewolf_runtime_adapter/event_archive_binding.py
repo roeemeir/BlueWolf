@@ -59,8 +59,8 @@ def _navigation_source_mode(path: str | os.PathLike[str]) -> str:
         return "influxdb2"
     source = _mapping(raw, "navigationSource")
     mode = source.get("mode", "influxdb2")
-    if mode not in {"influxdb2", "simulation"}:
-        raise ValueError("navigationSource.mode must be influxdb2 or simulation")
+    if mode not in {"influxdb2", "influxdb2-test", "simulation"}:
+        raise ValueError("navigationSource.mode must be influxdb2, influxdb2-test or simulation")
     return str(mode)
 
 
@@ -105,7 +105,7 @@ def attach_event_archives(
         return None
     observation_archive = SOEventObservationArchive(archive_path)
     lifecycle_archive = SOEventLifecycleArchive(archive_path)
-    synthetic_navigation = _navigation_source_mode(config_path) == "simulation"
+    synthetic_navigation = _navigation_source_mode(config_path) in {"simulation", "influxdb2-test"}
     observation_sink = observation_archive.record_frame
     if synthetic_navigation:
         def observation_sink(frame):

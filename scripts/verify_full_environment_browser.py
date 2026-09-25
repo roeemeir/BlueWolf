@@ -17,7 +17,8 @@ def coherent(payload: dict, server_id: int) -> None:
     source = payload.get("source") or {}
     assert source.get("kind") == "python-core"
     assert source.get("health") == "healthy"
-    assert source.get("syntheticNavigation") is not True
+    assert source.get("navigationOrigin") == "simulation"
+    assert source.get("syntheticNavigation") is True
     groups = payload.get("groupList") or list((payload.get("groups") or {}).values())
     assert groups, f"server {server_id}: no groups"
     ok = False
@@ -112,7 +113,7 @@ def run() -> None:
         meaningful_errors = [item for item in console_errors if "favicon" not in item.lower()]
         assert not meaningful_errors, f"browser console errors: {meaningful_errors}"
         browser.close()
-    print("PASS full-environment browser: " + ORIGIN + " desktop + iPhone 390x844, SQLite and live Python Core evidence")
+    print("PASS full-environment TEST browser: " + ORIGIN + " desktop + iPhone 390x844, disposable InfluxDB2 raw navigation, SQLite and live Python Core evidence")
 
 
 if __name__ == "__main__":

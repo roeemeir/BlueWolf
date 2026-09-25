@@ -112,10 +112,11 @@ def build_operational_runtime(
     use_scored_so = so_bank is not None and score_mode in {"core-so", "core"}
 
     reader, stream_schema = navigation_reader_and_schema(config)
-    simulation_navigation = navigation_source_mode(config) == "simulation"
-    # Publication retains Python Core provenance, but marks synthetic input on
-    # every published snapshot. Influx is NEVER replaced on credential failure.
-    publication_store = SimulatedNavigationPublicationStore(store) if simulation_navigation else store
+    test_navigation = navigation_source_mode(config) in {"simulation", "influxdb2-test"}
+    # Publication retains Python Core provenance, but marks TEST input on every
+    # published snapshot. The explicit influxdb2-test mode still uses the real
+    # Influx adapter; production influxdb2 never falls back on test data.
+    publication_store = SimulatedNavigationPublicationStore(store) if test_navigation else store
     poll_config = _poll_config(config, reader.join_config.tolerance_seconds)
     sample_archive = _sample_archive(config)
     comparison = TemplateComparisonDimension(
