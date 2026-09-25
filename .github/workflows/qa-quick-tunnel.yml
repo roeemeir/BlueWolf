@@ -28,21 +28,21 @@ jobs:
     env:
       NEXT_TELEMETRY_DISABLED: "1"
       BLUEWOLF_STORAGE: sqlite
-      BLUEWOLF_SQLITE_PATH: \${{ github.workspace }}/data/qa-e2e.sqlite
-      BLUEWOLF_WORKSPACE_DB: \${{ github.workspace }}/data/qa-e2e.sqlite
-      BLUEWOLF_OPERATIONAL_CONFIG: \${{ github.workspace }}/data/qa-e2e-operational.json
-      BLUEWOLF_SAMPLE_ARCHIVE_PATH: \${{ github.workspace }}/data/qa-e2e-archive.sqlite
-      BLUEWOLF_OPERATIONAL_STATE_PATH: \${{ github.workspace }}/data/qa-e2e-runtime-state.json
-      BLUEWOLF_E2E_STATE_FILE: \${{ github.workspace }}/data/qa-e2e-expected.json
+      BLUEWOLF_SQLITE_PATH: ${{ github.workspace }}/data/qa-e2e.sqlite
+      BLUEWOLF_WORKSPACE_DB: ${{ github.workspace }}/data/qa-e2e.sqlite
+      BLUEWOLF_OPERATIONAL_CONFIG: ${{ github.workspace }}/data/qa-e2e-operational.json
+      BLUEWOLF_SAMPLE_ARCHIVE_PATH: ${{ github.workspace }}/data/qa-e2e-archive.sqlite
+      BLUEWOLF_OPERATIONAL_STATE_PATH: ${{ github.workspace }}/data/qa-e2e-runtime-state.json
+      BLUEWOLF_E2E_STATE_FILE: ${{ github.workspace }}/data/qa-e2e-expected.json
       BLUEWOLF_CORE_API_URL: http://127.0.0.1:8090
       BLUEWOLF_E2E_WEB_URL: http://127.0.0.1:3000
       BLUEWOLF_RUNTIME_HOST: 127.0.0.1
       BLUEWOLF_RUNTIME_PORT: "8090"
       BLUEWOLF_HOST: 127.0.0.1
       PORT: "3000"
-      BLUEWOLF_CODE_SHA: \${{ github.sha }}
-      BLUEWOLF_INFLUX_TOKEN: \${{ secrets.BLUEWOLF_E2E_INFLUX_TOKEN }}
-      BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON: \${{ secrets.BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON }}
+      BLUEWOLF_CODE_SHA: ${{ github.sha }}
+      BLUEWOLF_INFLUX_TOKEN: ${{ secrets.BLUEWOLF_E2E_INFLUX_TOKEN }}
+      BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON: ${{ secrets.BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,7 +57,7 @@ jobs:
 
       - name: Fail closed without real three-server Influx and pin QA persistence paths
         run: |
-          if [ -z "\${BLUEWOLF_INFLUX_TOKEN:-}" ] || [ -z "\${BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON:-}" ]; then
+          if [ -z "${BLUEWOLF_INFLUX_TOKEN:-}" ] || [ -z "${BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON:-}" ]; then
             echo 'BLOCKED: three-server E2E config and Influx token are required. No QA URL will be created.'
             exit 1
           fi
@@ -214,7 +214,7 @@ jobs:
 
       - name: Verify public authenticated path in Chromium
         env:
-          BLUEWOLF_BROWSER_ORIGIN: \${{ env.BLUEWOLF_QA_URL }}
+          BLUEWOLF_BROWSER_ORIGIN: ${{ env.BLUEWOLF_QA_URL }}
         run: python scripts/verify_full_environment_browser.py
 
       - name: Publish READY coordinates and keep verified QA environment alive
