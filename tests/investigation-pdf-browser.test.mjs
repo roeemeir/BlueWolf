@@ -13,6 +13,7 @@ function recomputePayload() {
   return {
     schemaVersion: 'bluewolf.event-recompute.v1', runId: 'run-rtl', scenarioId: 'report:event-rtl', eventId: 'event-rtl', serverId: 7, groupId: 'g1',
     templateId: 'tpl-a', templateVersion: 'tpl-v1', codeVersion: 'sha-rtl', configVersion: 'cfg-rtl',
+    evidenceVersion: `evidence-${'c'.repeat(64)}`,
     startAt: '2026-09-15T06:00:00Z', endAt: '2026-09-15T06:00:05Z', frameCount: 1, scoredFrameCount: 1, missingFrameCount: 0,
     routes: [{
       routeInstanceId: 'r1', routeId: 'route-core-1', family: 'so', subtype: 'hippodrome', topology: 'simple',
@@ -67,6 +68,7 @@ test('report data contract preserves Hebrew metadata, detected route evidence an
   assert.equal(envelope.report.events[0].arena, 'זירה צפונית');
   assert.equal(envelope.report.events[0].note, 'טקסט תחקור בעברית');
   assert.equal(envelope.report.events[0].result.codeVersion, 'sha-rtl');
+  assert.equal(envelope.report.events[0].result.evidenceVersion, `evidence-${'c'.repeat(64)}`);
   assert.equal(envelope.report.events[0].result.routes[0].routeId, 'route-core-1');
   assert.equal(envelope.report.events[0].result.routes[0].centerline.length, 4);
   assert.throws(() => reportData.normalizeInvestigationReportData({ ...envelope, codeVersion: 'different-sha' }), /code version mismatch/);
@@ -106,6 +108,7 @@ test('REP-01/02 renderer sends Hebrew metadata to RTL canvas, draws summary map 
     assert.ok(rendered.some((item) => item.text.includes('זירה צפונית') && item.direction === 'rtl'));
     assert.ok(rendered.some((item) => item.text.includes('טקסט תחקור בעברית ללא חיתוך') && item.direction === 'rtl'));
     assert.ok(rendered.some((item) => item.text.includes('רכב v65') && item.direction === 'rtl'));
+    assert.ok(rendered.some((item) => item.text.includes(`evidence-${'c'.repeat(64)}`) && item.direction === 'ltr'));
   } finally {
     if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument;
   }

@@ -13,7 +13,7 @@ function result(source) {
     schemaVersion: 'bluewolf.event-recompute.v1', family: 'SO',
     runId: 'run-1', scenarioId: 'scenario-1', eventId: 'event-1', serverId: 7, groupId: 'g1',
     templateId: 'tpl-a', templateVersion: 'v1', codeVersion: 'sha-1', configVersion: 'cfg-1',
-    ...(source ? { source } : {}),
+    ...(source ? { source, evidenceVersion: `evidence-${'d'.repeat(64)}` } : {}),
     startAt: '2026-09-25T04:00:00Z', endAt: '2026-09-25T04:00:01Z',
     frameCount: 2, scoredFrameCount: 2, missingFrameCount: 0, routes: [],
     lifecycle: { status: 'unknown', openedAt: null, openingReason: null, endedAt: null, endingReason: null, finalizeAt: null, closedAt: null, changes: [] },
@@ -68,6 +68,7 @@ test('release PDF carries TEST navigation provenance across its actual browser c
     const joined=pages.join('\n');
     assert.match(joined,/Core event archive · includes TEST NAVIGATION/);
     assert.match(joined,/TEST NAVIGATION · synthetic raw navigation scored by Python Core/);
+    assert.match(joined,new RegExp(`evidence-${'d'.repeat(64)}`));
     assert.ok(pages.filter(page=>page.includes('TEST NAVIGATION')).length >= 4, 'TEST provenance must survive multiple release chapters');
   } finally { browser.restore(); }
 });
@@ -83,6 +84,7 @@ test('release PDF labels simulator evidence without any Python Core claim', asyn
     const pages=extractCanvasJpegPages(bytes).map(({jpeg})=>Buffer.from(jpeg).toString('utf8'));
     const joined=pages.join('\n');
     assert.match(joined,/SIMULATOR ARCHIVE · synthetic QA evidence · no Python Core claim/);
+    assert.match(joined,/LEGACY · unversioned event evidence/);
     assert.doesNotMatch(joined,/synthetic raw navigation scored by Python Core/);
   } finally { browser.restore(); }
 });

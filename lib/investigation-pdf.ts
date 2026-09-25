@@ -53,6 +53,10 @@ export function investigationEventSourceLabel(result: EventRecomputeResult, repo
     : "Core event archive · no TEST navigation marker";
 }
 
+export function investigationEvidenceVersionLabel(result: EventRecomputeResult) {
+  return result.evidenceVersion ?? "LEGACY · unversioned event evidence";
+}
+
 export function investigationReportSourceLabel(report: InvestigationPdfReport) {
   if (report.source === "simulator-archive") {
     return "SIMULATOR ARCHIVE · synthetic QA evidence · no Python Core claim";
@@ -183,8 +187,9 @@ function eventMainPage(item: InvestigationPdfEvent, index: number, reportSource?
     text(42, 760, 9, `${result.startAt} -> ${result.endAt} | frames ${result.frameCount} | scored ${result.scoredFrameCount} | missing ${result.missingFrameCount}`),
     text(42, 742, 9, `Template ${result.templateId} | template version ${result.templateVersion}`),
     text(42, 724, 9, `Code ${result.codeVersion} | config ${result.configVersion} | run ${result.runId}`),
-    text(42, 696, 11, `Scores: sync ${score(result.summary.sync)} | route ${score(result.summary.route)} | total ${score(result.summary.total)}`, true),
-    text(42, 670, 10, `Root causes: ${result.rootCauses.length} | Vehicle detail rows: ${Array.from(new Set(result.points.flatMap((point) => point.members.map((member) => member.memberId)))).length}`, true),
+    text(42, 708, 8, `Evidence ${investigationEvidenceVersionLabel(result)}`),
+    text(42, 680, 11, `Scores: sync ${score(result.summary.sync)} | route ${score(result.summary.route)} | total ${score(result.summary.total)}`, true),
+    text(42, 654, 10, `Root causes: ${result.rootCauses.length} | Vehicle detail rows: ${Array.from(new Set(result.points.flatMap((point) => point.members.map((member) => member.memberId)))).length}`, true),
   ];
   if (item.note) lines.push(text(300, 670, 8, `Investigation note: ${ascii(item.note).slice(0, 70)}`));
 
@@ -205,6 +210,7 @@ function eventDetailLines(item: InvestigationPdfEvent, reportSource?: Investigat
   rows.push(`EVENT ${result.eventId}`);
   rows.push(`TEMPLATE ${result.templateId} | VERSION ${result.templateVersion}`);
   rows.push(`CODE ${result.codeVersion} | CONFIG ${result.configVersion} | RUN ${result.runId}`);
+  rows.push(`EVIDENCE ${investigationEvidenceVersionLabel(result)}`);
   rows.push(`NAVIGATION SOURCE ${investigationEventSourceLabel(result, reportSource)}`);
   rows.push("ROOT CAUSES");
   if (!result.rootCauses.length) rows.push("  none");

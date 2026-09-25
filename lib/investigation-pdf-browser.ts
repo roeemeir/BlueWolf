@@ -1,4 +1,4 @@
-import { investigationEventSourceLabel, investigationReportSourceLabel, type InvestigationPdfEvent, type InvestigationPdfReport } from "@/lib/investigation-pdf";
+import { investigationEventSourceLabel, investigationEvidenceVersionLabel, investigationReportSourceLabel, type InvestigationPdfEvent, type InvestigationPdfReport } from "@/lib/investigation-pdf";
 
 const PAGE_WIDTH_PT = 595;
 const PAGE_HEIGHT_PT = 842;
@@ -441,6 +441,7 @@ function eventMainPage(event: InvestigationPdfEvent, index: number, total: numbe
   drawText(ctx, `code ${result.codeVersion}`, PAGE_WIDTH_PX - MARGIN, Math.max(noteY + 56, 1160), { size: 16, color: MUTED, dir: "ltr", align: "right" });
   drawText(ctx, `config ${result.configVersion}`, PAGE_WIDTH_PX - MARGIN, Math.max(noteY + 84, 1188), { size: 16, color: MUTED, dir: "ltr", align: "right" });
   drawText(ctx, `run ${result.runId}`, PAGE_WIDTH_PX - MARGIN, Math.max(noteY + 112, 1216), { size: 16, color: MUTED, dir: "ltr", align: "right" });
+  drawText(ctx, `evidence ${investigationEvidenceVersionLabel(result)}`, PAGE_WIDTH_PX - MARGIN, Math.max(noteY + 140, 1244), { size: 15, color: MUTED, dir: "ltr", align: "right" });
   drawFooter(ctx, `אירוע ${index + 1} · עמוד ראשי`, report, event);
   return canvas;
 }
@@ -451,6 +452,7 @@ function detailRows(event: InvestigationPdfEvent, report: InvestigationPdfReport
   rows.push({ label: "מקור ניווט", value: investigationEventSourceLabel(result, report.source) });
   rows.push({ label: "תבנית", value: `${result.templateId} · ${result.templateVersion}` });
   rows.push({ label: "גרסת חישוב", value: `code ${result.codeVersion} · config ${result.configVersion}` });
+  rows.push({ label: "גרסת ראיות", value: investigationEvidenceVersionLabel(result) });
   rows.push({ label: "נתיבים מזוהים", value: result.routes.length ? result.routes.map((route) => `${route.routeInstanceId}: ${route.subtype} · ${route.routeId} · ${route.direction} · quality ${route.detectionQuality.toFixed(3)}`).join(" · ") : "אין route geometry evidence בארכיון" });
   rows.push({ label: "סיבות שורש", value: result.rootCauses.length ? result.rootCauses.map((cause) => `${cause.reason}: ${cause.occurrences}`).join(" · ") : "ללא סיבה מדווחת" });
   const lastScored = [...result.points].reverse().find((point) => point.members.length > 0);
