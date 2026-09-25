@@ -1,0 +1,29 @@
+name: Blue Wolf BW-CORE-009 Material Event Boundary
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: bluewolf-core09-material-event-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  material-event-boundary:
+    name: BW-CORE-009 — configurable route materiality opens a new SI/SO event
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python core/runtime
+        working-directory: core
+        run: python -m pip install -e '.[service,influx]'
+      - name: Verify material threshold and SI/SO event boundaries
+        working-directory: core/tests
+        run: >-
+          python -m unittest -v
+          test_route_change.AdaptiveRouteChangeTests.test_bw_core_009_geometry_materiality_threshold_is_configurable
+          test_si_producer.SIProducerTests.test_bw_core_009_material_route_replacement_opens_new_si_event_without_group_split
+          test_live_so_event_runtime.LiveSOEventRuntimeTests.test_bw_core_009_material_route_replacement_opens_new_so_event_without_group_split

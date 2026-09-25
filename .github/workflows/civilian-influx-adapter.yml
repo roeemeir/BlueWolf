@@ -1,0 +1,73 @@
+name: Blue Wolf Public Civilian InfluxDB2 Adapter
+
+# This workflow never receives operational/customer tokens, never contacts the
+# closed military network, and never publishes a QA/preview URL. Public GPS
+# has historical source timestamps; the moving replay clock and its vehicle/
+# server/status/velocity metadata are synthetic LAB values, NOT live vehicles.
+on:
+  pull_request:
+    paths:
+      - 'core/src/bluewolf_ingest/**'
+      - 'core/tests/integration_public_civil_influx.py'
+      - 'core/tests/integration_civilian_replay_influx.py'
+      - '.github/workflows/civilian-influx-adapter.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-civilian-real-influxdb2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install actual Blue Wolf Influx adapter
+        run: python -m pip install -e './core[influx]'
+      - name: Boot disposable actual InfluxDB2 (local-only; no repository secrets)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_token="$(openssl rand -hex 32)"
+          echo "::add-mask::$test_token"
+          echo "BW_CIVIL_INFLUX_TOKEN=$test_token" >> "$GITHUB_ENV"
+          docker run -d --rm --name bluewolf-civil-influx \
+            -p 127.0.0.1:8086:8086 \
+            -e DOCKER_INFLUXDB_INIT_MODE=setup \
+            -e DOCKER_INFLUXDB_INIT_USERNAME=civil-qa \
+            -e DOCKER_INFLUXDB_INIT_PASSWORD="$(openssl rand -hex 24)" \
+            -e DOCKER_INFLUXDB_INIT_ORG=civil-join-qa \
+            -e DOCKER_INFLUXDB_INIT_BUCKET=civil-public-coordinates \
+            -e DOCKER_INFLUXDB_INIT_ADMIN_TOKEN="$test_token" \
+            influxdb:2.7
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8086/health > /dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" -eq 1 || { echo 'Disposable InfluxDB2 did not become healthy'; exit 1; }
+      - name: Download public civilian GPS and verify actual Flux queries and configurable join
+        shell: bash
+        env:
+          BW_CIVIL_INFLUX_URL: http://127.0.0.1:8086
+        run: |
+          set -euo pipefail
+          python core/tests/integration_public_civil_influx.py
+      - name: Replay public historical GPS on a synthetic clock and verify real windowed joins
+        shell: bash
+        env:
+          BW_CIVIL_INFLUX_URL: http://127.0.0.1:8086
+        run: |
+          set -euo pipefail
+          python core/tests/integration_civilian_replay_influx.py
+      - name: Remove disposable database
+        if: always()
+        run: docker rm -f bluewolf-civil-influx || true

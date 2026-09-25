@@ -6,6 +6,22 @@ InfluxDB, SQLite, HTTP, maps, reports, or display time zones.
 """
 
 from .config import CoreConfig
+from .double_lobe_geometry import (
+    derive_double_hippodrome_components,
+    derive_double_hippodrome_components_from_route,
+)
+from .double_lobe_phase import (
+    AmbiguousDoubleLobeProjection,
+    DoubleLobeSemanticProjection,
+    project_double_active_lobe_wgs84,
+)
+from .event_alert import (
+    EventAlertConfig,
+    EventAlertEngine,
+    EventAlertResult,
+    EventAlertSnapshot,
+    EventObservation,
+)
 from .geometry import (
     PolylineProjection,
     circular_phase_distance,
@@ -18,6 +34,36 @@ from .geometry import (
     resample_closed_polyline,
     tangent_error_deg,
 )
+from .group_lifecycle import (
+    GroupLifecycleResult,
+    GroupMembershipLifecycle,
+    StructuralGroupEvidence,
+)
+from .grouping import (
+    GroupCompatibility,
+    GroupObservation,
+    GroupingSnapshot,
+    RouteGroup,
+    StableGroupingEngine,
+    StructuralGroup,
+    base_period_seconds,
+    discover_structural_groups,
+    routes_compatible,
+)
+from .live_so_event_runtime import (
+    LiveSOEventRuntime,
+    LiveSOEventRuntimeResult,
+    TemplateComparisonDimension,
+    build_so_event_context_key,
+)
+from .live_so_scoring import (
+    LiveSOGroupScorer,
+    LiveSOGroupScoringResult,
+    LiveSOMemberInput,
+    LiveSOMetricResult,
+    LiveSOMetricsEngine,
+)
+from .semantic_session import CoreSession
 from .models import (
     ChangeKind,
     ClosedRoute,
@@ -25,6 +71,7 @@ from .models import (
     Direction,
     FieldQuality,
     PrimitiveMetrics,
+    RouteComponent,
     RouteFamily,
     RouteSubtype,
     StateChange,
@@ -34,7 +81,58 @@ from .models import (
 )
 from .route_detection import RouteDetection, detect_closed_route
 from .scoring import aggregate_group_scores, score_error, score_vehicle
-from .session import CheckpointCompatibilityError, CoreSession
+from .session import CheckpointCompatibilityError
+from .so_phase import (
+    AmbiguousSOPhaseProjection,
+    SOPhaseFrame,
+    SOSemanticProjection,
+    UnsupportedSOPhaseGeometry,
+    build_so_phase_frame,
+    normalize_so_phase,
+    project_so_semantic_phase_local,
+    project_so_semantic_phase_wgs84,
+)
+from .so_scoring import (
+    SOGroupScoringResult,
+    SOMemberScoringResult,
+    SOScoringObservation,
+    score_so_template,
+)
+from .so_template_bank import (
+    InvalidSOTemplateBank,
+    SOConstellationRoute,
+    SOConstellationSignature,
+    SOTemplateBank,
+    SOTemplateBankEntry,
+)
+from .so_template_fit import (
+    NoLegalSOTemplateAssignment,
+    SOMemberTemplateFit,
+    SOObservedMember,
+    SOTemplateFit,
+    fit_so_template,
+)
+from .so_template_selection import (
+    InvalidatedManualSelection,
+    InvalidSOTemplateSelection,
+    SOTemplateSelection,
+    SOTemplateSelectionRegistry,
+    SOTemplateSelectionSource,
+)
+from .so_templates import (
+    Quarter,
+    QuarterRelation,
+    SORouteInstance,
+    SORouteKind,
+    SOSlotRelation,
+    SOTemplate,
+    SOVehicleSlot,
+    UndefinedSOGeometryError,
+    quarter_relation,
+    slot_relation,
+    synchronization_route_kind,
+    template_relations,
+)
 from .templates import (
     MemberTemplateFit,
     NoLegalTemplateAssignment,
@@ -46,6 +144,8 @@ from .templates import (
 )
 
 __all__ = [
+    "AmbiguousDoubleLobeProjection",
+    "AmbiguousSOPhaseProjection",
     "ChangeKind",
     "CheckpointCompatibilityError",
     "ClosedRoute",
@@ -53,36 +153,105 @@ __all__ = [
     "CoreConfig",
     "CoreSession",
     "Direction",
+    "DoubleLobeSemanticProjection",
+    "EventAlertConfig",
+    "EventAlertEngine",
+    "EventAlertResult",
+    "EventAlertSnapshot",
+    "EventObservation",
     "FieldQuality",
+    "GroupCompatibility",
+    "GroupLifecycleResult",
+    "GroupMembershipLifecycle",
+    "GroupObservation",
+    "GroupingSnapshot",
+    "InvalidatedManualSelection",
+    "InvalidSOTemplateBank",
+    "InvalidSOTemplateSelection",
+    "LiveSOEventRuntime",
+    "LiveSOEventRuntimeResult",
+    "LiveSOGroupScorer",
+    "LiveSOGroupScoringResult",
+    "LiveSOMemberInput",
+    "LiveSOMetricResult",
+    "LiveSOMetricsEngine",
     "MemberTemplateFit",
+    "NoLegalSOTemplateAssignment",
     "NoLegalTemplateAssignment",
     "ObservedMember",
     "PrimitiveMetrics",
     "PolylineProjection",
+    "Quarter",
+    "QuarterRelation",
+    "RouteComponent",
     "RouteDetection",
     "RouteFamily",
+    "RouteGroup",
     "RouteSubtype",
+    "SOConstellationRoute",
+    "SOConstellationSignature",
+    "SOGroupScoringResult",
+    "SOMemberScoringResult",
+    "SOMemberTemplateFit",
+    "SOObservedMember",
+    "SOPhaseFrame",
+    "SORouteInstance",
+    "SORouteKind",
+    "SOScoringObservation",
+    "SOSemanticProjection",
+    "SOSlotRelation",
+    "SOTemplate",
+    "SOTemplateBank",
+    "SOTemplateBankEntry",
+    "SOTemplateFit",
+    "SOTemplateSelection",
+    "SOTemplateSelectionRegistry",
+    "SOTemplateSelectionSource",
+    "SOVehicleSlot",
+    "StableGroupingEngine",
     "StateChange",
+    "StructuralGroup",
+    "StructuralGroupEvidence",
     "SynchronizationTemplate",
+    "TemplateComparisonDimension",
     "TemplateFit",
     "TemplateSlot",
+    "UndefinedSOGeometryError",
+    "UnsupportedSOPhaseGeometry",
     "VehicleFrameResult",
     "VehicleSample",
     "VehicleScores",
     "aggregate_group_scores",
+    "base_period_seconds",
+    "build_so_event_context_key",
+    "build_so_phase_frame",
     "circular_phase_distance",
     "closed_polyline_length",
     "curvature_at_phase",
+    "derive_double_hippodrome_components",
+    "derive_double_hippodrome_components_from_route",
     "detect_closed_route",
+    "discover_structural_groups",
+    "fit_so_template",
     "fit_template",
+    "normalize_so_phase",
     "normalized_curvature_error",
     "point_at_phase",
+    "project_double_active_lobe_wgs84",
     "project_onto_closed_polyline",
+    "project_so_semantic_phase_local",
+    "project_so_semantic_phase_wgs84",
     "project_wgs84",
+    "quarter_relation",
     "resample_closed_polyline",
+    "routes_compatible",
     "score_error",
+    "score_so_template",
     "score_vehicle",
+    "slot_relation",
+    "synchronization_route_kind",
     "tangent_error_deg",
+    "template_relations",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.7.0"

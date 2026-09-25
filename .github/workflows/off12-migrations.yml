@@ -1,0 +1,29 @@
+name: Blue Wolf BW-OFF-012 SQLite Migrations
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: bluewolf-off12-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  sqlite-migrations:
+    name: BW-OFF-012 — backward-compatible SQLite migrations
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Upgrade legacy databases without data loss
+        run: node --test tests/sqlite-migrations.test.mjs
+      - name: TypeScript check
+        run: npx tsc --noEmit
+      - name: Offline build
+        run: npm run build:offline

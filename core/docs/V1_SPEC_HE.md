@@ -1,5 +1,7 @@
 # זאב כחול — מפרט V1 מקובע
 
+> **סטטוס תיעודי current-head:** מסמך זה נשמר כ-baseline מוצרי/היסטורי כפוף ל-Full Spec. ה-Full Spec הוא מקור האמת המחייב למצב הנוכחי. כאשר התנהגות V1 הוחלפה במחקר V2, הבלוק ההיסטורי נשמר ומסומן במפורש כ-`superseded` במקום להסתיר את הסתירה. ערכי הקוד הפעילים ורציונל הספים ננעלים ב-`ACTIVE_ALGORITHM_THRESHOLD_CATALOG.json` ונבדקים ב-CI מול `CoreConfig`, `LivePollConfig` ו-`EventAlertConfig`.
+
 מסמך זה מרכז את ההחלטות המחייבות שנקבעו לאבן הדרך הראשונה. הוא מפריד בין דרישות
 המוצר לבין פרטי מימוש, כדי לאפשר החלפה של הליבה בלי לשנות את המעטפת.
 
@@ -67,6 +69,20 @@
 
 ## 5. גילוי נתיב
 
+### 5.1 התנהגות פעילה ב-current-head
+
+ה-lifecycle הפעיל הוא evidence-driven ולא timer-driven:
+
+- אין המתנה קבועה של 5 דקות לאישור נתיב חדש. `new_route_observation_seconds=0` ו-`known_route_candidate_seconds=0` נשמרים כתאימות בלבד.
+- partial candidate נשאר topology-neutral ודורש כברירות מחדל absolute-turn≥30%, smooth-heading≥85%, turn-sign persistence≥75%, path-efficiency≤90% ו-contiguous observation≥35%.
+- candidate משתמש ב-fit≥0.68, coverage≥0.45 ו-travel≥0.40 cycle; confirmation דורש fit≥0.78, coverage≥0.82 ו-completed-cycle evidence≥0.90 יחד עם closure.
+- closure נשאר product rule: distance≤20% מ-short axis, direction error≤30° ו-phase≥80%.
+- BW-CORE-009 מקבע default של כ-10% לשינוי גאומטרי חומרי (`geometry_change_ratio=0.10`) ו-20% לשינוי period.
+- אין 120 שניות כ-gate לאישור change; `change_confirmation_seconds=120` הוא legacy compatibility בלבד. replacement דורש evidence purity, ו-onset מיוחס רטרואקטיבית בנפרד מזמן detection.
+
+הערכים, הסיווג (`product`/`calibration`/`implementation_guard`/`compatibility`) והרציונל המלאים נמצאים ב-`ACTIVE_ALGORITHM_THRESHOLD_CATALOG.json` ונבדקים מול הקוד.
+
+### 5.2 Baseline V1 היסטורי — superseded במקום שבו הוא סותר את 5.1
 - נתיב חדש דורש 5 דקות תצפית; התאמה לנתיב קיים לצורך שם בלבד אינה מקצרת את
   החישוב הגיאומטרי, אך מועמד מוכר יכול להיות מוצג אחרי דקה.
 - נדרש לפחות מחזור מלא אחד לאישור סופי של נתיב חדש.
@@ -200,6 +216,15 @@ Restart אינו סיבה לפתיחת אירוע. checkpoint נשמר כל חמ
 נשאר רציף גם אם המערכת הייתה כבויה זמן רב.
 
 ## 12. InfluxDB2
+
+### 12.1 Scheduler פעיל ב-current-head
+
+- `active_poll_seconds=3`, `idle_probe_seconds=300`, `join_tolerance_seconds=5`, `bootstrap_history_seconds=2400`.
+- poll אינו מעבד עד wall-clock now; ה-safe watermark הוא `now - 5s` כדי לאפשר interpolation bracket חוקי בלי לשנות בדיעבד נקודות שכבר פורסמו.
+- active cadence של 3 שניות יחד עם 5 שניות join envelope משאיר 2 שניות budget לעיבוד. BW-DATA-010 מודד ב-CI InfluxDB2 2.7 אמיתי → Flux query → temporal join → Core → RuntimeSnapshot → HTTP והוכיח upper bound מתחת ל-10 שניות.
+- awake/idle state מוזן במפורש על ידי coordinator; scheduler אינו מסיק אותו מציון/route.
+
+### 12.2 Baseline V1 היסטורי — superseded במספרי scheduler שבהם 12.1 שונה
 
 רוב השרתים רדומים:
 

@@ -1,0 +1,38 @@
+name: Blue Wolf SI Live Runtime
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: bluewolf-si-live-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  si-live-runtime:
+    name: SI/SO first-class runtime and truth-backed selected-template score
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python core/runtime
+        working-directory: core
+        run: python -m pip install -e '.[service,influx]'
+      - name: Run SI runtime, sibling-family and one-pass SO scoring/publication regressions
+        working-directory: core/tests
+        run: >-
+          python -m unittest -v
+          test_si_runtime_config_bridge
+          test_si_ring_roles
+          test_live_si_scoring
+          test_si_producer
+          test_composite_runtime_producer
+          test_mixed_environment_factory
+          test_family_runtime_symmetry
+          test_runtime_host
+          test_live_so_event_runtime
+          test_core_scored_so
+          test_core_scored_so_publication
+          test_core_scored_so_route_binding_guard

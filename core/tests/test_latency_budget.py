@@ -1,0 +1,275 @@
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC, datetime, timedelta
+import json
+import math
+from time import perf_counter
+import unittest
+
+from bluewolf_core import CoreSession, VehicleSample
+from bluewolf_core.geometry import closed_polyline_length, local_m_to_wgs84, point_at_phase
+from bluewolf_core.models import (
+    CanonicalPoint,
+    ClosedRoute,
+    Direction,
+    RouteFamily,
+    RouteSubtype,
+    RouteTopology,
+)
+from bluewolf_core.session import _RouteRuntimeState
+from bluewolf_core.templates import SynchronizationTemplate, TemplateSlot
+from bluewolf_ingest.polling import LivePollConfig, ServerPollCursor
+from bluewolf_runtime_adapter.ingest_coordinator import LiveCoreIngestCoordinator
+from bluewolf_runtime_adapter.operational_pipeline import OperationalServerPipeline
+from bluewolf_runtime_adapter.producer import DisplayedScoreValue
+from bluewolf_runtime_adapter.service import RuntimeSnapshotStore, create_app
+from bluewolf_runtime_adapter.si_producer import LiveSIRuntimeProducer
+from bluewolf_runtime_adapter.si_template_config import (
+    OperationalSITemplateEntry,
+    OperationalSIVehicleType,
+)
+
+
+START = datetime(2026, 9, 17, 18, 0, tzinfo=UTC)
+CENTER_LAT = 32.0853
+CENTER_LON = 34.7818
+RADIUS_M = 100.0
+PERIOD_S = 120.0
+VEHICLES = (101, 102)
+
+
+def _route() -> ClosedRoute:
+    points = tuple(
+        CanonicalPoint(
+            RADIUS_M * math.cos(2.0 * math.pi * index / 24.0),
+            RADIUS_M * math.sin(2.0 * math.pi * index / 24.0),
+        )
+        for index in range(24)
+    )
+    return ClosedRoute(
+        route_id="latency-si-route",
+        family=RouteFamily.SI,
+        subtype=RouteSubtype.COMPACT,
+        topology=RouteTopology.SIMPLE,
+        canonical_points=points,
+        center_latitude_deg=CENTER_LAT,
+        center_longitude_deg=CENTER_LON,
+        length_m=closed_polyline_length(points),
+        long_axis_a_m=RADIUS_M,
+        short_axis_b_m=RADIUS_M,
+        orientation_deg=0.0,
+        estimated_period_s=PERIOD_S,
+        direction=Direction.COUNTERCLOCKWISE,
+        detection_quality=1.0,
+    )
+
+
+def _sample(route: ClosedRoute, vehicle: int, phase: float, when: datetime) -> VehicleSample:
+    point = point_at_phase(route.canonical_points, phase)[0]
+    latitude, longitude = local_m_to_wgs84(point, CENTER_LAT, CENTER_LON)
+    tangent_phase = (phase + 0.001) % 1.0
+    tangent_point = point_at_phase(route.canonical_points, tangent_phase)[0]
+    scale = 1.0 / (0.001 * PERIOD_S)
+    return VehicleSample(
+        sample_time_utc=when,
+        server_id=1,
+        vehicle_number=vehicle,
+        vehicle_identifier=vehicle,
+        active=True,
+        latitude_deg=latitude,
+        longitude_deg=longitude,
+        velocity_east_mps=(tangent_point.x_m - point.x_m) * scale,
+        velocity_north_mps=(tangent_point.y_m - point.y_m) * scale,
+        reliability=1.0,
+    )
+
+
+def _samples(route: ClosedRoute, when: datetime) -> tuple[VehicleSample, ...]:
+    base_phase = ((when - START).total_seconds() / PERIOD_S) % 1.0
+    return (
+        _sample(route, VEHICLES[0], base_phase, when),
+        _sample(route, VEHICLES[1], (base_phase + 1.0 / 3.0) % 1.0, when),
+    )
+
+
+def _session(route: ClosedRoute) -> CoreSession:
+    session = CoreSession()
+    support_start = START - timedelta(minutes=5)
+    for vehicle in VEHICLES:
+        session._routes[(1, vehicle)] = _RouteRuntimeState(confirmed=route)
+        session._route_support_start[(1, vehicle)] = support_start
+    return session
+
+
+def _producer(session: CoreSession, route: ClosedRoute, store: RuntimeSnapshotStore) -> LiveSIRuntimeProducer:
+    template = OperationalSITemplateEntry(
+        SynchronizationTemplate(
+            template_id="latency-si-120",
+            name="Latency SI 120",
+            family=RouteFamily.SI,
+            slots=(
+                TemplateSlot("a", "TYPE_A", 0.0, route_role="outer"),
+                TemplateSlot("b", "TYPE_A", 1.0 / 3.0, route_role="outer"),
+            ),
+        ),
+        is_default=True,
+    )
+    profile = OperationalSIVehicleType(
+        type_id="TYPE_A",
+        min_id=100,
+        max_id=199,
+        work_speed_mps=route.length_m / PERIOD_S,
+        si_roles=frozenset({"outer"}),
+    )
+    return LiveSIRuntimeProducer(
+        server_id=1,
+        session=session,
+        templates=(template,),
+        vehicle_profiles=(profile,),
+        store=store,
+        displayed_score_resolver=lambda _group, _time: DisplayedScoreValue(100.0, True),
+    )
+
+
+class _StaticJoinedReader:
+    """Deterministic transport seam; production Influx/network latency is not fabricated."""
+
+    def __init__(self, route: ClosedRoute) -> None:
+        self.route = route
+        self.calls = 0
+
+    def read_samples(
+        self,
+        *,
+        server_id: int,
+        server_tag_value: str | None,
+        start_time_utc: datetime,
+        end_time_utc: datetime,
+    ) -> tuple[VehicleSample, ...]:
+        del server_tag_value, start_time_utc
+        if server_id != 1:
+            raise AssertionError("unexpected benchmark server")
+        self.calls += 1
+        return _samples(self.route, end_time_utc)
+
+
+async def _request_runtime(app, server_id: str = "1"):
+    messages: list[dict] = []
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/v1/live-runtime",
+        "raw_path": b"/v1/live-runtime",
+        "query_string": f"serverId={server_id}".encode("ascii"),
+        "headers": [(b"host", b"latency-test")],
+        "client": ("127.0.0.1", 12345),
+        "server": ("latency-test", 80),
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        messages.append(message)
+
+    await app(scope, receive, send)
+    start = next(message for message in messages if message["type"] == "http.response.start")
+    body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    return start["status"], json.loads(body.decode("utf-8"))
+
+
+class ActiveLatencyBudgetTests(unittest.TestCase):
+    def test_bw_data_010_active_update_fits_ten_second_runtime_budget(self) -> None:
+        """Measure the warmed software path; external Influx transport remains separate evidence.
+
+        The deterministic scheduling envelope is join tolerance (5 s) plus active
+        poll cadence (3 s). The measured portion uses the real poll cursor,
+        transactional coordinator, CoreSession, SI scoring/publication,
+        RuntimeSnapshotStore and ASGI live-runtime endpoint. The joined-sample
+        reader is deterministic so CI never pretends to measure a deployment's
+        external Influx/network latency.
+        """
+
+        poll_config = LivePollConfig()
+        self.assertEqual(poll_config.join_tolerance_seconds, 5)
+        self.assertEqual(poll_config.active_poll_seconds, 3)
+
+        route = _route()
+        session = _session(route)
+        store = RuntimeSnapshotStore()
+        reader = _StaticJoinedReader(route)
+        cursor = ServerPollCursor(poll_config)
+        coordinator = LiveCoreIngestCoordinator(
+            server_id=1,
+            server_tag_value="latency-test",
+            reader=reader,  # type: ignore[arg-type]
+            session=session,
+            cursor=cursor,
+            awake_resolver=lambda samples, _core, _window: bool(samples),
+        )
+        producer = _producer(session, route, store)
+        pipeline = OperationalServerPipeline(coordinator, producer)
+
+        # First active tick warms grouping and SI temporal metrics. With the
+        # approved 5 s safe watermark this publishes evidence observed at START.
+        warm_wall_time = START + timedelta(seconds=poll_config.join_tolerance_seconds)
+        warm = pipeline.poll_once(warm_wall_time)
+        self.assertIsNotNone(warm.publication)
+        self.assertIsNotNone(warm.publication.snapshot if warm.publication else None)
+        self.assertTrue(cursor.awake)
+
+        # The next active poll is due three seconds later. Its safe_end is START+3.
+        measured_wall_time = warm_wall_time + timedelta(seconds=poll_config.active_poll_seconds)
+        expected_observed_at = measured_wall_time - timedelta(seconds=poll_config.join_tolerance_seconds)
+
+        started = perf_counter()
+        result = pipeline.poll_once(measured_wall_time)
+        self.assertIsNotNone(result.publication)
+        self.assertIsNotNone(result.publication.snapshot if result.publication else None)
+
+        # Read through the real ASGI contract, not directly from the store.
+        app = create_app(store, clock=lambda: measured_wall_time)
+        status, payload = asyncio.run(_request_runtime(app))
+        measured_seconds = perf_counter() - started
+
+        self.assertEqual(reader.calls, 2)
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["observedAt"], expected_observed_at.isoformat().replace("+00:00", "Z"))
+        self.assertTrue(payload["groups"])
+        group = next(iter(payload["groups"].values()))
+        self.assertTrue(group["scoreValid"])
+
+        scheduling_seconds = poll_config.join_tolerance_seconds + poll_config.active_poll_seconds
+        end_to_end_upper_bound = scheduling_seconds + measured_seconds
+        print(
+            "BW-DATA-010 active software latency evidence: "
+            f"scheduling={scheduling_seconds:.3f}s "
+            f"processing={measured_seconds:.6f}s "
+            f"upper_bound={end_to_end_upper_bound:.6f}s"
+        )
+
+        # Leave a real two-second processing budget after the deterministic 8 s
+        # scheduling envelope. CI noise beyond this indicates the current runtime
+        # architecture no longer fits the product budget.
+        self.assertLess(
+            measured_seconds,
+            2.0,
+            f"Core->HTTP processing exceeded 2 s: {measured_seconds:.3f} s",
+        )
+        self.assertLess(
+            end_to_end_upper_bound,
+            10.0,
+            f"active update budget exceeded 10 s: {end_to_end_upper_bound:.3f} s",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -23,6 +23,21 @@ const eslintConfig = defineConfig([
       "react-hooks/set-state-in-effect": "off",
     },
   },
+  {
+    files: [
+      "components/bluewolf/visuals.tsx",
+      "components/bluewolf/so-governed-visuals.tsx",
+      "components/bluewolf/operator-view.tsx",
+      "components/bluewolf/operational-live-map.tsx",
+      "components/bluewolf/operational-timeline.tsx",
+    ],
+    rules: {
+      // These components mirror externally-owned navigation state (server/tick,
+      // Core event evidence, and the shared operator time cursor) into local UI
+      // state. Keep the exception scoped to those synchronization effects.
+      "react-hooks/set-state-in-effect": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;

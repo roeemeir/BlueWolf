@@ -42,6 +42,16 @@ def _primary_reason(
 ) -> str | None:
     sync_weights = config.sync_weights.normalized()
     route_weights = config.route_weights.normalized()
+    # The explanation must use the same available-component normalization as
+    # the score. At low speed distance can carry all of the route contribution.
+    available_route_weight = sum(
+        weight for value, weight in zip(
+            (components.route_distance, components.route_tangent, components.route_curvature),
+            route_weights, strict=True,
+        ) if value is not None
+    )
+    if available_route_weight > 0:
+        route_weights = tuple(weight / available_route_weight for weight in route_weights)
     total_weights = config.total_weights.normalized()
     losses: list[tuple[float, str]] = [
         (
@@ -154,4 +164,3 @@ def aggregate_group_scores(
         len(valid),
         reason,
     )
-

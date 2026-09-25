@@ -1,0 +1,31 @@
+name: Blue Wolf BW-OFF-010 Map Sources
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: bluewolf-off10-map-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  private-map-sources:
+    name: BW-OFF-010 — generic WMTS discovery, private proxy and offline cache
+    runs-on: ubuntu-latest
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Verify live Omniscale WMTS GetCapabilities + Tel Aviv GetTile
+        run: node scripts/verify-omniscale-wmts.mjs
+      - name: Validate GetCapabilities, named matrices, layer defaults, secret isolation, proxy and projection
+        run: node --test tests/wmts-capabilities.test.mjs tests/map-source-config.test.mjs tests/map-source-proxy.test.mjs tests/map-source-secret-store.test.mjs tests/operational-map-projection.test.mjs tests/map-source-ui.test.mjs tests/default-map-profile.test.mjs
+      - name: TypeScript check
+        run: npx tsc --noEmit
+      - name: Offline build
+        run: npm run build:offline

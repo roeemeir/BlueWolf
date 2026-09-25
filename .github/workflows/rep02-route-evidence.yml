@@ -1,0 +1,25 @@
+name: Blue Wolf REP-02 Route Evidence
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: bluewolf-rep02-route-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  route-evidence:
+    name: REP-02 — immutable detected-route evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python core
+        working-directory: core
+        run: python -m pip install -e .
+      - name: Verify route snapshot, live capture, SQLite roundtrip and recompute
+        working-directory: core/tests
+        run: python -m unittest -v test_event_route_evidence test_live_so_event_route_evidence

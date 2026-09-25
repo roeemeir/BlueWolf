@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "bluewolf.documentation-sync.v1",
+  "iterationId": "requirements-governance-2026-09-25",
+  "implementationFingerprint": {
+    "algorithm": "fnv1a64(path\\0gitBlobSha\\n)",
+    "digest": "c7e1c6a5ea4c2a2b",
+    "fileCount": 272,
+    "trackedPaths": [
+      "app/",
+      "components/",
+      "lib/",
+      "core/src/",
+      "deploy/",
+      "package.json",
+      "next.config.ts"
+    ]
+  },
+  "masterDocument": {
+    "title": "Blue_Wolf_Full_Specification_HE",
+    "version": "2.8",
+    "driveFileId": "1pcjq50LchceDYsCqek_jqxkkRYbnef4l",
+    "verifiedImplementationBaseline": "2ec209e01f9ec02ff78ca239f2d69d5bc235378c",
+    "verifiedCiRun": 2967,
+    "verifiedAt": "2026-09-25T11:55:56.761Z"
+  },
+  "coreResearchDocument": {
+    "title": "Blue_Wolf_Core_Research_Report_HE_v1_2.docx",
+    "version": "1.2",
+    "driveFileId": "1dc6M_--RWDiCmenvItJLmrOxhjMl0bal",
+    "scope": "Core algorithms, modeling, grouping and scoring; subordinate to the Master"
+  },
+  "archivedCoreResearchDocument": {
+    "title": "ARCHIVED_SUPERSEDED_Blue_Wolf_Core_Research_Report_HE_v2_1.docx",
+    "version": "2.1",
+    "driveFileId": "1OGjS5_xTQN_CGgv-laXOnFOay9J19BbS",
+    "status": "archived",
+    "archiveFolderId": "1ldLLCETpeK2Heg6FDtSZkqGTekKbsW33"
+  },
+  "researchDocuments": [
+    "core/docs/ALGORITHMIC_CORE_RESEARCH_LOG_HE.md",
+    "core/docs/IMPLEMENTATION_STATUS_HE.md",
+    "core/docs/ACTIVE_ALGORITHM_THRESHOLD_CATALOG.json",
+    "core/docs/V1_SPEC_HE.md"
+  ],
+  "policy": "Any change to the tracked implementation fingerprint requires an explicit substantive refresh and readback of both governing Drive documents before the manifest fingerprint changes. Core research v1.2 is the active subordinate Drive document; v2.1 is archived. User implementation approval remains a separate release gate."
+}
