@@ -128,3 +128,27 @@ test('pending recompute point cannot smuggle a score or member result', () => {
     }],
   }), /pending point/);
 });
+
+
+test('recompute history contract preserves bounded version metadata and rejects malformed history', () => {
+  const evidence = `evidence-${'b'.repeat(64)}`;
+  const history = contract.normalizeEventRecomputeHistory({
+    schemaVersion: 'bluewolf.event-recompute-history.v1',
+    eventId: 'event-1',
+    runs: [{
+      runId: 'run-new', scenarioId: 'scenario-new', family: 'SI',
+      templateId: 'si-a', templateVersion: 'tpl-v2', codeVersion: 'sha-2', configVersion: 'cfg-2',
+      evidenceVersion: evidence, createdAt: '2026-09-25T11:30:00Z',
+      frameCount: 4, scoredFrameCount: 3, missingFrameCount: 1,
+      summary: { sync: 91, route: 88, total: 90 },
+      source: { kind: 'python-core', navigationOrigin: 'simulation', syntheticNavigation: true },
+    }],
+  });
+  assert.equal(history.eventId, 'event-1');
+  assert.equal(history.runs[0].evidenceVersion, evidence);
+  assert.equal(history.runs[0].family, 'SI');
+  assert.equal(history.runs[0].summary.total, 90);
+  assert.equal(history.runs[0].source.syntheticNavigation, true);
+  assert.throws(() => contract.normalizeEventRecomputeHistory({ ...history, runs: [{ ...history.runs[0], evidenceVersion: 'bad' }] }), /evidenceVersion/);
+  assert.throws(() => contract.normalizeEventRecomputeHistory({ ...history, runs: [history.runs[0], history.runs[0]] }), /runIds must be unique/);
+});

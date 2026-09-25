@@ -23,6 +23,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import hashlib
 import json
+import math
+import re
 import os
 from pathlib import Path
 import sqlite3
@@ -634,6 +636,91 @@ class SOEventObservationArchive:
                     result_json,
                 ),
             )
+
+    def recomputation_history(self, event_id: str, *, limit: int = 50) -> tuple[dict[str, Any], ...]:
+        """Return bounded newest-first recomputation metadata without replay payloads."""
+
+        if not event_id:
+            raise ValueError("event_id is required")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise ValueError("recompute history limit must be an integer in [1,200]")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT created_at_utc,result_json
+                FROM so_event_recomputations
+                WHERE event_id=?
+                ORDER BY created_at_utc DESC, run_id DESC
+                LIMIT ?
+                """,
+                (event_id, limit),
+            ).fetchall()
+
+        output: list[dict[str, Any]] = []
+        for row in rows:
+            result = json.loads(str(row["result_json"]))
+            if not isinstance(result, Mapping):
+                raise ValueError("archived recomputation result must be an object")
+
+            def required_text(name: str) -> str:
+                value = result.get(name)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"archived recomputation {name} is missing")
+                return value.strip()
+
+            family = str(result.get("family") or "SO").upper()
+            if family not in {"SI", "SO"}:
+                raise ValueError("archived recomputation family is invalid")
+            frame_count = result.get("frameCount")
+            scored_count = result.get("scoredFrameCount")
+            missing_count = result.get("missingFrameCount")
+            for name, value in (
+                ("frameCount", frame_count),
+                ("scoredFrameCount", scored_count),
+                ("missingFrameCount", missing_count),
+            ):
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    raise ValueError(f"archived recomputation {name} is invalid")
+            if scored_count + missing_count != frame_count:
+                raise ValueError("archived recomputation frame counts are inconsistent")
+            summary = result.get("summary")
+            if not isinstance(summary, Mapping):
+                raise ValueError("archived recomputation summary is malformed")
+            normalized_summary: dict[str, float | None] = {}
+            for name in ("sync", "route", "total"):
+                value = summary.get(name)
+                if value is None:
+                    normalized_summary[name] = None
+                    continue
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not 0.0 <= float(value) <= 100.0:
+                    raise ValueError(f"archived recomputation summary {name} is invalid")
+                normalized_summary[name] = float(value)
+            evidence_version = result.get("evidenceVersion")
+            if evidence_version is not None:
+                if not isinstance(evidence_version, str) or not re.fullmatch(r"evidence-[0-9a-f]{64}", evidence_version):
+                    raise ValueError("archived recomputation evidenceVersion is invalid")
+            source = result.get("source")
+            if source is not None and not isinstance(source, Mapping):
+                raise ValueError("archived recomputation source is malformed")
+            item: dict[str, Any] = {
+                "runId": required_text("runId"),
+                "scenarioId": required_text("scenarioId"),
+                "family": family,
+                "templateId": required_text("templateId"),
+                "templateVersion": required_text("templateVersion"),
+                "codeVersion": required_text("codeVersion"),
+                "configVersion": required_text("configVersion"),
+                "evidenceVersion": evidence_version,
+                "createdAt": str(row["created_at_utc"]),
+                "frameCount": frame_count,
+                "scoredFrameCount": scored_count,
+                "missingFrameCount": missing_count,
+                "summary": normalized_summary,
+            }
+            if source is not None:
+                item["source"] = dict(source)
+            output.append(item)
+        return tuple(output)
 
     def recomputations(self, event_id: str) -> tuple[dict[str, Any], ...]:
         if not event_id:

@@ -1,6 +1,7 @@
 import { normalizeTestNavigationProvenance, type TestNavigationProvenance } from "./runtime-navigation-provenance";
 export const INVESTIGATION_EVENTS_SCHEMA = "bluewolf.investigation-events.v1" as const;
 export const EVENT_RECOMPUTE_SCHEMA = "bluewolf.event-recompute.v1" as const;
+export const EVENT_RECOMPUTE_HISTORY_SCHEMA = "bluewolf.event-recompute-history.v1" as const;
 
 export type InvestigationTemplate = { id: string; name: string; family: "SI" | "SO" };
 export type EventLifecycleStatus = "unknown" | "active" | "finalizing" | "closed";
@@ -117,6 +118,29 @@ export type EventRecomputeResult = {
   summary: { sync: number | null; route: number | null; total: number | null };
   rootCauses: { reason: string; occurrences: number }[];
   points: EventRecomputePoint[];
+};
+
+export type EventRecomputeHistoryItem = {
+  runId: string;
+  scenarioId: string;
+  family: "SI" | "SO";
+  templateId: string;
+  templateVersion: string;
+  codeVersion: string;
+  configVersion: string;
+  evidenceVersion?: string;
+  createdAt: string;
+  frameCount: number;
+  scoredFrameCount: number;
+  missingFrameCount: number;
+  summary: { sync: number | null; route: number | null; total: number | null };
+  source?: { kind: "python-core" } & TestNavigationProvenance;
+};
+
+export type EventRecomputeHistory = {
+  schemaVersion: typeof EVENT_RECOMPUTE_HISTORY_SCHEMA;
+  eventId: string;
+  runs: EventRecomputeHistoryItem[];
 };
 
 function object(value: unknown, name: string): Record<string, unknown> {
@@ -360,4 +384,46 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
     rootCauses,
     points,
   };
+}
+
+
+export function normalizeEventRecomputeHistory(value: unknown): EventRecomputeHistory {
+  const row = object(value, "event recompute history");
+  if (row.schemaVersion !== EVENT_RECOMPUTE_HISTORY_SCHEMA) throw new Error("unsupported event recompute history schema");
+  const eventId = text(row.eventId, "eventId");
+  if (!Array.isArray(row.runs)) throw new Error("recompute history runs must be an array");
+  const runs = row.runs.map((raw, index) => {
+    const item = object(raw, `recompute history run ${index + 1}`);
+    const family = text(item.family, "recompute history family") as "SI" | "SO";
+    if (family !== "SI" && family !== "SO") throw new Error("recompute history family must be SI or SO");
+    const frameCount = integer(item.frameCount, "recompute history frameCount");
+    const scoredFrameCount = integer(item.scoredFrameCount, "recompute history scoredFrameCount");
+    const missingFrameCount = integer(item.missingFrameCount, "recompute history missingFrameCount");
+    if (scoredFrameCount + missingFrameCount !== frameCount) throw new Error("recompute history frame counts are inconsistent");
+    const summary = object(item.summary, "recompute history summary");
+    const sourceProvenance = item.source === undefined ? undefined : normalizeTestNavigationProvenance(item.source);
+    if (item.source !== undefined && !sourceProvenance) throw new Error("recompute history source may be supplied only for explicit TEST navigation");
+    return {
+      runId: text(item.runId, "recompute history runId"),
+      scenarioId: text(item.scenarioId, "recompute history scenarioId"),
+      family,
+      templateId: text(item.templateId, "recompute history templateId"),
+      templateVersion: text(item.templateVersion, "recompute history templateVersion"),
+      codeVersion: text(item.codeVersion, "recompute history codeVersion"),
+      configVersion: text(item.configVersion, "recompute history configVersion"),
+      evidenceVersion: evidenceVersion(item.evidenceVersion),
+      createdAt: time(item.createdAt, "recompute history createdAt"),
+      frameCount,
+      scoredFrameCount,
+      missingFrameCount,
+      summary: {
+        sync: score(summary.sync, "recompute history summary sync"),
+        route: score(summary.route, "recompute history summary route"),
+        total: score(summary.total, "recompute history summary total"),
+      },
+      source: sourceProvenance ? { kind: "python-core" as const, ...sourceProvenance } : undefined,
+    };
+  });
+  if (new Set(runs.map((item) => item.runId)).size !== runs.length) throw new Error("recompute history runIds must be unique");
+  return { schemaVersion: EVENT_RECOMPUTE_HISTORY_SCHEMA, eventId, runs };
 }

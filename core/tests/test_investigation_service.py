@@ -245,6 +245,29 @@ class InvestigationServiceTests(unittest.TestCase):
                 self.assertEqual(saved[0]["missingFrameCount"], 1)
                 self.assertEqual(saved[0]["points"][0]["navigation"][1]["vehicleIdentifier"], 102)
 
+                self.assertRegex(result["evidenceVersion"], r"^evidence-[0-9a-f]{64}$")
+                status, history = asyncio.run(
+                    _request(
+                        app,
+                        "/v1/investigation/recomputations",
+                        method="GET",
+                        query=f"eventId={EVENT_ID}&limit=10",
+                        token="secret",
+                    )
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(history["schemaVersion"], "bluewolf.event-recompute-history.v1")
+                self.assertEqual(history["eventId"], EVENT_ID)
+                self.assertEqual(len(history["runs"]), 1)
+                self.assertEqual(history["runs"][0]["runId"], result["runId"])
+                self.assertEqual(history["runs"][0]["evidenceVersion"], result["evidenceVersion"])
+                self.assertEqual(history["runs"][0]["templateId"], template.template_id)
+                self.assertEqual(history["runs"][0]["codeVersion"], "sha-real")
+                self.assertEqual(history["runs"][0]["configVersion"], "cfg-real")
+                self.assertEqual(history["runs"][0]["frameCount"], 2)
+                self.assertEqual(history["runs"][0]["summary"], result["summary"])
+                self.assertTrue(history["runs"][0]["createdAt"].endswith("Z"))
+
     def test_event_list_range_is_applied_in_archive_and_does_not_clip_event(self) -> None:
         with TemporaryDirectory() as directory:
             archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
@@ -316,6 +339,29 @@ class InvestigationServiceTests(unittest.TestCase):
             )
         self.assertEqual(status, 503)
         self.assertEqual(payload["status"], "unavailable")
+
+    def test_recompute_history_is_bounded_and_requires_existing_event(self) -> None:
+        with TemporaryDirectory() as directory:
+            archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
+            archive.record_frame(_frame())
+            app = QaEnabledASGI(_base, token="secret")
+            with patch.object(qa_service, "event_archive", archive):
+                status, payload = asyncio.run(
+                    _request(app, "/v1/investigation/recomputations", method="GET", query=f"eventId={EVENT_ID}", token="secret")
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["runs"], [])
+                for query in (f"eventId={EVENT_ID}&limit=0", f"eventId={EVENT_ID}&limit=201", "limit=5"):
+                    status, invalid = asyncio.run(
+                        _request(app, "/v1/investigation/recomputations", method="GET", query=query, token="secret")
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertIn("error", invalid)
+                status, missing = asyncio.run(
+                    _request(app, "/v1/investigation/recomputations", method="GET", query="eventId=missing-event", token="secret")
+                )
+                self.assertEqual(status, 404)
+                self.assertIn("error", missing)
 
     def test_investigation_uses_same_auth_boundary_as_live_runtime(self) -> None:
         app = QaEnabledASGI(_base, token="secret")

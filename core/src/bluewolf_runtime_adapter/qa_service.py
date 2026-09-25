@@ -26,6 +26,7 @@ from .qa_runner import run_deterministic_qa
 
 _MAX_BODY_BYTES = 64 * 1024
 _PROVENANCE_SCHEMA_VERSION = "bluewolf.runtime-provenance.v1"
+_RECOMPUTE_HISTORY_SCHEMA_VERSION = "bluewolf.event-recompute-history.v1"
 
 event_archive: EventObservationArchive | None = None
 event_lifecycle_archive: EventLifecycleArchive | None = None
@@ -298,6 +299,40 @@ class QaEnabledASGI:
             surface=b"core-event-archive",
         )
 
+    async def _handle_recomputations(self, scope, send) -> None:
+        if str(scope.get("method", "GET")).upper() != "GET":
+            await self._send_json(send, 405, {"error": "method not allowed"})
+            return
+        archive = event_archive
+        if archive is None:
+            await self._send_json(send, 503, {"status": "unavailable", "error": "event evidence archive is not configured"}, surface=b"core-event-archive")
+            return
+        try:
+            query = self._query(scope)
+            raw_event = query.get("eventId", [])
+            if len(raw_event) != 1 or not raw_event[0].strip():
+                raise ValueError("one non-empty eventId is required")
+            event_id = raw_event[0].strip()
+            raw_limit = query.get("limit", [])
+            if len(raw_limit) > 1:
+                raise ValueError("limit must appear at most once")
+            limit = 50 if not raw_limit else int(raw_limit[0])
+            if not 1 <= limit <= 200:
+                raise ValueError("limit must be in [1,200]")
+        except (UnicodeDecodeError, ValueError) as error:
+            await self._send_json(send, 400, {"error": str(error)})
+            return
+        frames, _evidence_version = await asyncio.to_thread(archive.read_event_snapshot, event_id)
+        if not frames:
+            await self._send_json(send, 404, {"error": "event evidence was not found"})
+            return
+        try:
+            runs = await asyncio.to_thread(archive.recomputation_history, event_id, limit=limit)
+        except ValueError as error:
+            await self._send_json(send, 500, {"status": "error", "error": f"recompute history is invalid: {error}"}, surface=b"core-event-archive")
+            return
+        await self._send_json(send, 200, {"schemaVersion": _RECOMPUTE_HISTORY_SCHEMA_VERSION, "eventId": event_id, "runs": list(runs)}, surface=b"core-event-archive")
+
     async def _handle_recompute(self, scope, receive, send) -> None:
         if str(scope.get("method", "GET")).upper() != "POST":
             await self._send_json(send, 405, {"error": "method not allowed"})
@@ -397,6 +432,7 @@ class QaEnabledASGI:
             "/v1/provenance",
             "/v1/qa/run",
             "/v1/investigation/events",
+            "/v1/investigation/recomputations",
             "/v1/investigation/recompute",
         }
         if scope.get("type") != "http" or path not in handled:
@@ -412,6 +448,8 @@ class QaEnabledASGI:
             await self._handle_qa(scope, receive, send)
         elif path == "/v1/investigation/events":
             await self._handle_events(scope, send)
+        elif path == "/v1/investigation/recomputations":
+            await self._handle_recomputations(scope, send)
         else:
             await self._handle_recompute(scope, receive, send)
 
