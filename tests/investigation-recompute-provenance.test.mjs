@@ -63,7 +63,7 @@ test('Core response is rejected when an HTTP-200 body belongs to another event, 
     ['groupId', { groupId: 'another-group' }],
     ['family', { family: 'SO' }],
   ]) {
-    responsePayload = { ...source, ...change };
+    responsePayload = { ...source, evidenceVersion: `evidence-${'b'.repeat(64)}`, ...change };
     const response = await POST(request());
     assert.equal(response.status, 502, `${name} mismatch must not render as success`);
     assert.match((await response.json()).error, new RegExp(name));
