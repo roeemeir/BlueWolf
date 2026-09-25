@@ -47,6 +47,7 @@ test('recompute contract preserves pending frames, navigation and real version p
     schemaVersion: 'bluewolf.event-recompute.v1',
     runId: 'run-1', scenarioId: 'scenario-1', eventId: 'event-1', serverId: 7, groupId: 'g1',
     templateId: 'so-a', templateVersion: 'tpl-hash', codeVersion: 'sha-1', configVersion: 'cfg-1',
+    evidenceVersion: `evidence-${'a'.repeat(64)}`,
     startAt: '2026-09-15T06:00:00Z', endAt: '2026-09-15T06:00:01Z', frameCount: 2,
     scoredFrameCount: 1, missingFrameCount: 1,
     summary: { sync: 88, route: 91, total: 89 },
@@ -74,12 +75,14 @@ test('recompute contract preserves pending frames, navigation and real version p
   });
   assert.equal(result.codeVersion, 'sha-1');
   assert.equal(result.templateVersion, 'tpl-hash');
+  assert.equal(result.evidenceVersion, `evidence-${'a'.repeat(64)}`);
   assert.equal(result.rootCauses[0].occurrences, 2);
   assert.equal(result.points[0].pendingReason, 'core_observations_incomplete');
   assert.equal(result.points[0].navigation[0].vehicleIdentifier, 101);
   assert.equal(result.points[1].navigation[0].latitude, 32.0001);
   assert.equal(result.missingFrameCount, 1);
   assert.throws(() => contract.normalizeEventRecompute({ ...result, codeVersion: '' }), /codeVersion/);
+  assert.throws(() => contract.normalizeEventRecompute({ ...result, evidenceVersion: 'evidence-NOT-HEX' }), /evidenceVersion/);
   assert.throws(() => contract.normalizeEventRecompute({ ...result, summary: { ...result.summary, sync: 101 } }), /\[0,100\]/);
   assert.throws(() => contract.normalizeEventRecompute({ ...result, missingFrameCount: 0 }), /must equal frameCount/);
   const invalidNavigation = structuredClone(result);
@@ -101,6 +104,7 @@ test('older recompute payload without navigation remains readable as empty evide
     }],
   });
   assert.deepEqual(result.points[0].navigation, []);
+  assert.equal(result.evidenceVersion, undefined);
 });
 
 test('pending recompute point cannot smuggle a score or member result', () => {

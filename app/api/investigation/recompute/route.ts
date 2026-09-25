@@ -65,6 +65,12 @@ export async function POST(request: Request) {
     if (!response.ok) return Response.json({ status: "error", error: `Python Core recomputation returned ${response.status}` }, { status: 502 });
     try {
       const result = normalizeEventRecompute(payload);
+      if (!result.evidenceVersion) {
+        return Response.json(
+          { status: "error", error: "Python Core recomputation is missing evidenceVersion" },
+          { status: 502, headers: { "cache-control": "no-store" } },
+        );
+      }
       const identityError = verifyRecomputeResponseIdentity(row, result);
       if (identityError) return Response.json({ status: "error", error: identityError }, { status: 502, headers: { "cache-control": "no-store" } });
       return Response.json(result, { headers: { "cache-control": "no-store", "x-bluewolf-investigation": "python-core" } });

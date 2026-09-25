@@ -105,6 +105,7 @@ export type EventRecomputeResult = {
   templateVersion: string;
   codeVersion: string;
   configVersion: string;
+  evidenceVersion?: string;
   source?: { kind: "python-core" } & TestNavigationProvenance;
   startAt: string;
   endAt: string;
@@ -129,6 +130,12 @@ function text(value: unknown, name: string): string {
 function optionalText(value: unknown, name: string): string | null {
   if (value === null || value === undefined) return null;
   return text(value, name);
+}
+function evidenceVersion(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  const result = text(value, "evidenceVersion");
+  if (!/^evidence-[0-9a-f]{64}$/.test(result)) throw new Error("evidenceVersion must be evidence- followed by 64 lowercase hex characters");
+  return result;
 }
 function integer(value: unknown, name: string): number {
   if (!Number.isInteger(value) || Number(value) < 0) throw new Error(`${name} must be a non-negative integer`);
@@ -345,6 +352,7 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
     runId: text(row.runId, "runId"), scenarioId: text(row.scenarioId, "scenarioId"), eventId: text(row.eventId, "eventId"),
     serverId: integer(row.serverId, "serverId"), groupId: text(row.groupId, "groupId"), templateId: text(row.templateId, "templateId"),
     templateVersion: text(row.templateVersion, "templateVersion"), codeVersion: text(row.codeVersion, "codeVersion"), configVersion: text(row.configVersion, "configVersion"),
+    evidenceVersion: evidenceVersion(row.evidenceVersion),
     source: sourceProvenance ? { kind: "python-core", ...sourceProvenance } : undefined,
     startAt: time(row.startAt, "startAt"), endAt: time(row.endAt, "endAt"), frameCount, scoredFrameCount, missingFrameCount, routes,
     lifecycle: lifecycle(row.lifecycle, "event lifecycle"),

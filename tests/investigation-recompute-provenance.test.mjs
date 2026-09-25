@@ -19,7 +19,7 @@ let responsePayload;
 
 beforeEach(() => {
   originalFetch = globalThis.fetch;
-  responsePayload = source;
+  responsePayload = { ...source, evidenceVersion: `evidence-${'b'.repeat(64)}` };
   globalThis.fetch = async (input, init) => {
     assert.equal(String(input), 'http://core.test/v1/investigation/recompute');
     assert.equal(init.method, 'POST');
@@ -43,7 +43,16 @@ test('Core recompute response with the exact requested event, template and serve
   assert.equal(result.eventId, source.eventId);
   assert.equal(result.serverId, source.serverId);
   assert.equal(result.templateId, source.templateId);
+  assert.equal(result.evidenceVersion, `evidence-${'b'.repeat(64)}`);
   assert.equal(verifyRecomputeResponseIdentity(requestBody, result), null);
+});
+
+test('current Python Core recompute without evidenceVersion fails closed', async () => {
+  responsePayload = { ...source };
+  const response = await POST(request());
+  assert.equal(response.status, 502);
+  assert.match((await response.json()).error, /evidenceVersion/);
+  assert.equal(response.headers.get('x-bluewolf-investigation'), null);
 });
 
 test('Core response is rejected when an HTTP-200 body belongs to another event, template, server, group or family', async () => {
