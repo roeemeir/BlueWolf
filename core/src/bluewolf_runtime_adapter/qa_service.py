@@ -318,7 +318,7 @@ class QaEnabledASGI:
         if not event_id or not template_id:
             await self._send_json(send, 400, {"error": "eventId and templateId are required"})
             return
-        frames = await asyncio.to_thread(archive.read_event, event_id)
+        frames, evidence_version = await asyncio.to_thread(archive.read_event_snapshot, event_id)
         if not frames:
             await self._send_json(send, 404, {"error": "event evidence was not found"})
             return
@@ -375,8 +375,17 @@ class QaEnabledASGI:
                     config=runtime.scorer.scoring_config,
                     minimum_valid_vehicles=runtime.scorer.minimum_valid_vehicles,
                 )
-            result = {**result, "lifecycle": await asyncio.to_thread(lifecycle_archive.event_lifecycle, event_id)}
-            await asyncio.to_thread(archive.record_recompute, result, created_at_utc=datetime.now(UTC))
+            result = {
+                **result,
+                "evidenceVersion": evidence_version,
+                "lifecycle": await asyncio.to_thread(lifecycle_archive.event_lifecycle, event_id),
+            }
+            await asyncio.to_thread(
+                archive.record_recompute,
+                result,
+                created_at_utc=datetime.now(UTC),
+                expected_evidence_version=evidence_version,
+            )
         except (TypeError, ValueError) as error:
             await self._send_json(send, 422, {"status": "error", "error": f"event recomputation rejected: {error}"}, surface=b"core-event-archive")
             return

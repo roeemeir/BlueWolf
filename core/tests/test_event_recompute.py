@@ -360,6 +360,60 @@ class EventObservationArchiveTests(unittest.TestCase):
             self.assertEqual(saved[0]["missingFrameCount"], 1)
             self.assertEqual(saved[0]["points"][0]["navigation"][1]["vehicleIdentifier"], 102)
 
+
+    def test_late_frame_invalidates_inflight_recompute_snapshot(self) -> None:
+        start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
+        template = _template("opposite", Quarter.Q2)
+        with TemporaryDirectory() as directory:
+            archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
+            archive.record_frame(_pending_frame(start))
+            archive.record_frame(_frame(start + timedelta(seconds=5)))
+
+            frames, evidence_version = archive.read_event_snapshot("g-1@2026-09-15T06:00:00Z")
+            result = recompute_so_event(
+                event_id=frames[0].event_id,
+                template=template,
+                frames=frames,
+                code_version="sha-late",
+                config_version="cfg-late",
+                run_id="stale-run",
+            )
+            result = {**result, "evidenceVersion": evidence_version}
+
+            # A genuinely late Core frame extends the immutable event after the
+            # recomputation snapshot was read. The stale result must not persist.
+            archive.record_frame(_frame(start + timedelta(seconds=10), 0.04, 0.54))
+            with self.assertRaisesRegex(ValueError, "event evidence changed during recomputation"):
+                archive.record_recompute(
+                    result,
+                    created_at_utc=start + timedelta(minutes=1),
+                    expected_evidence_version=evidence_version,
+                )
+            self.assertEqual(archive.recomputations(frames[0].event_id), ())
+
+            fresh_frames, fresh_version = archive.read_event_snapshot(frames[0].event_id)
+            self.assertNotEqual(fresh_version, evidence_version)
+            self.assertEqual(len(fresh_frames), 3)
+            fresh = recompute_so_event(
+                event_id=fresh_frames[0].event_id,
+                template=template,
+                frames=fresh_frames,
+                code_version="sha-late",
+                config_version="cfg-late",
+                run_id="fresh-run",
+            )
+            fresh = {**fresh, "evidenceVersion": fresh_version}
+            archive.record_recompute(
+                fresh,
+                created_at_utc=start + timedelta(minutes=2),
+                expected_evidence_version=fresh_version,
+            )
+            saved = archive.recomputations(fresh_frames[0].event_id)
+            self.assertEqual(len(saved), 1)
+            self.assertEqual(saved[0]["runId"], "fresh-run")
+            self.assertEqual(saved[0]["evidenceVersion"], fresh_version)
+            self.assertEqual(saved[0]["frameCount"], 3)
+
     def test_time_range_selects_intersecting_events_without_clipping_event_bounds(self) -> None:
         start = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
         with TemporaryDirectory() as directory:

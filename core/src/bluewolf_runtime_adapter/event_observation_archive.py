@@ -287,6 +287,16 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _event_evidence_version(event_id: str, rows: list[sqlite3.Row] | tuple[sqlite3.Row, ...]) -> str:
+    """Hash the exact immutable frame set used by one recomputation snapshot."""
+
+    payload = event_id + "\n" + "".join(
+        f"{row['sample_time_utc']}\\0{row['payload_hash']}\n"
+        for row in rows
+    )
+    return "evidence-" + _hash(payload)
+
+
 class SOEventObservationArchive:
     """SQLite-backed immutable SI/SO event evidence and recomputation archive.
 
@@ -390,13 +400,18 @@ class SOEventObservationArchive:
             )
         return True
 
-    def read_event(self, event_id: str) -> tuple[SOEventObservationFrame | SIEventObservationFrame, ...]:
+    def read_event_snapshot(
+        self,
+        event_id: str,
+    ) -> tuple[tuple[SOEventObservationFrame | SIEventObservationFrame, ...], str]:
+        """Read one immutable evidence snapshot and its deterministic version."""
+
         if not event_id:
             raise ValueError("event_id is required")
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT server_id,group_id,sample_time_utc,payload_json
+                SELECT server_id,group_id,sample_time_utc,payload_hash,payload_json
                 FROM so_event_observation_frames
                 WHERE event_id=? ORDER BY sample_time_utc ASC
                 """,
@@ -470,7 +485,13 @@ class SOEventObservationArchive:
                     synthetic_navigation=synthetic_navigation,
                 )
             )
-        return tuple(frames)
+        return tuple(frames), _event_evidence_version(event_id, rows)
+
+    def read_event(self, event_id: str) -> tuple[SOEventObservationFrame | SIEventObservationFrame, ...]:
+        """Backward-compatible frame-only view of the current event snapshot."""
+
+        frames, _version = self.read_event_snapshot(event_id)
+        return frames
 
     def list_events(
         self,
@@ -544,7 +565,13 @@ class SOEventObservationArchive:
             )
         return tuple(results)
 
-    def record_recompute(self, result: Mapping[str, Any], *, created_at_utc: datetime) -> None:
+    def record_recompute(
+        self,
+        result: Mapping[str, Any],
+        *,
+        created_at_utc: datetime,
+        expected_evidence_version: str | None = None,
+    ) -> None:
         required = (
             "runId",
             "eventId",
@@ -558,6 +585,13 @@ class SOEventObservationArchive:
         missing = [key for key, value in values.items() if not value]
         if missing:
             raise ValueError(f"recompute result is missing provenance: {', '.join(missing)}")
+        expected_version = None
+        if expected_evidence_version is not None:
+            expected_version = str(expected_evidence_version).strip()
+            if not expected_version:
+                raise ValueError("expected evidence version must be non-empty")
+            if str(result.get("evidenceVersion") or "").strip() != expected_version:
+                raise ValueError("recompute result evidenceVersion mismatch")
         result_json = json.dumps(
             dict(result),
             ensure_ascii=False,
@@ -566,6 +600,21 @@ class SOEventObservationArchive:
             allow_nan=False,
         )
         with self._connect() as connection:
+            if expected_version is not None:
+                # Lock writers between the evidence-version check and result
+                # insertion so a late frame cannot race into the same event.
+                connection.execute("BEGIN IMMEDIATE")
+                rows = connection.execute(
+                    """
+                    SELECT sample_time_utc,payload_hash
+                    FROM so_event_observation_frames
+                    WHERE event_id=? ORDER BY sample_time_utc ASC
+                    """,
+                    (values["eventId"],),
+                ).fetchall()
+                current_version = _event_evidence_version(values["eventId"], rows)
+                if current_version != expected_version:
+                    raise ValueError("event evidence changed during recomputation")
             connection.execute(
                 """
                 INSERT INTO so_event_recomputations(

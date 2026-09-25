@@ -307,6 +307,7 @@ class MixedNavigationArchiveRecomputeTests(unittest.TestCase):
                         self.assertEqual(result["family"], family)
                         self.assertEqual(result["codeVersion"], "mixed-http-sha")
                         self.assertEqual(result["configVersion"], "mixed-http-config")
+                        self.assertRegex(result["evidenceVersion"], r"^evidence-[0-9a-f]{64}$")
                         self.assertEqual(result["source"], {
                             "kind": "python-core",
                             "navigationOrigin": "simulation",
