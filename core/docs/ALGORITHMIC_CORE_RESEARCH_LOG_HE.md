@@ -432,7 +432,7 @@ At that milestone the validated head was `3c76d8bda4526ec7e36d7cbb3d3d4737ec6628
 
 ב־current head חוזה הציון מפריד בין `rawTotal` של אותו selected-template Core scoring pass לבין `total` החי שעובר חלון Core של 10 שניות ומשמש Event/Alert. החלקת Web היא display-only ופועלת על `rawTotal` בלבד; archive/recompute שומר provenance מפורש, וב־recompute תקף `group.total == group.rawTotal` משום שאין שם EventAlert display window. TEST navigation נשאר מסומן `simulation/syntheticNavigation=true` עד Web/PDF ואינו נהפך לראיית Influx תפעולית.
 
-ראיות scoped עד הסנכרון: `BW-SYNC-013 Raw Score Contract #17` מכסה Core+Web raw/provenance; `Navigation Input Integration #146` עבר בשלושה שרתים דרך raw TEST navigation → temporal join → Python Core SI+SO → runtime/archive → recompute HTTP. `Blue Wolf CI #2945` אימת את implementation עם 29/30 jobs ירוקים; הכשל היחיד היה Web בגלל manifest התיעוד הישן. סגירת הסעיף מחייבת run post-sync חדש ואינה מהווה אישור production/customer E2E.
+ראיות scoped עד הסנכרון: `BW-SYNC-013 Raw Score Contract #17` מכסה Core+Web raw/provenance; `Navigation Input Integration #146` עבר בשלושה שרתים דרך raw TEST navigation → temporal join → Python Core SI+SO → runtime/archive → recompute HTTP. `Blue Wolf CI #2949` עבר SUCCESS על ה־post-sync head `ebb1265e179f301372e945cb1aec138bf90a71c1`, לאחר readback של שני מסמכי ה־Drive וסגירת `BW-GOV-010`. באותו head גם `Navigation Input Integration #150` ו־`BW-SYNC-013 Raw Score Contract #18` עברו SUCCESS. זה מאמת את חוזי הקוד/תיעוד וה־TEST E2E המתועדים, אך אינו מהווה אישור production או customer Influx E2E.
 
 ## כלל עדכון מעכשיו
 

@@ -219,7 +219,7 @@ checkpoint חדש שומר compact points. Restore תומך גם ב־V1 ישן �
 
 כל כשל משמעותי שנמצא במהלך פיתוח הופך ל־regression קבוע לפני קידום baseline.
 
-ה־implementation baseline המתועד הנוכחי הוא `11b0caa84d67def74dee4dfe0bbcc9d670cc247c`; ה־BW-GOV-010 fingerprint שלו הוא `3c86673cc730f6ba` עבור 271 קבצי implementation. `Blue Wolf CI #2945` הורץ על head מאוחר יותר ששינה רק tests/workflows: 29 מתוך 30 jobs עברו וה־Web job נכשל רק בגלל manifest ה־BW-GOV-010 הישן לפני סנכרון המסמכים. `Navigation Input Integration #146` עבר לאחר תיקון fixture ה־provenance ומאמת שלושה שרתים עם SI+SO, archive, recompute ו־HTTP. נדרש CI post-sync ירוק לפני כל קבלה או release.
+ה־implementation baseline המתועד הנוכחי הוא `11b0caa84d67def74dee4dfe0bbcc9d670cc247c`; ה־BW-GOV-010 fingerprint שלו הוא `3c86673cc730f6ba` עבור 271 קבצי implementation. `Blue Wolf CI #2949` עבר SUCCESS על post-sync head `ebb1265e179f301372e945cb1aec138bf90a71c1`. באותו head `Navigation Input Integration #150` עבר בשלושה שרתים עם SI+SO, archive, recompute ו־HTTP, ו־`BW-SYNC-013 Raw Score Contract #18` עבר Core+Web. Release עדיין חסום עד implementationApproval מפורש וללא טענה ל־customer Influx E2E.
 
 ## מה עדיין פתוח
 

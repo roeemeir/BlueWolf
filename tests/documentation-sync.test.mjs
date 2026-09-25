@@ -27,7 +27,7 @@ test('BW-GOV-010 manifest binds the governed Master and research documents to th
   assert.equal(manifest.implementationFingerprint.digest, '3c86673cc730f6ba');
   assert.equal(manifest.implementationFingerprint.fileCount, 271);
   assert.equal(manifest.masterDocument.verifiedImplementationBaseline, '11b0caa84d67def74dee4dfe0bbcc9d670cc247c');
-  assert.equal(manifest.masterDocument.verifiedCiRun, 2945);
+  assert.equal(manifest.masterDocument.verifiedCiRun, 2949);
   assert.deepEqual(
     { version: manifest.coreResearchDocument.version, title: manifest.coreResearchDocument.title, driveFileId: manifest.coreResearchDocument.driveFileId },
     ACTIVE_CORE_RESEARCH,
