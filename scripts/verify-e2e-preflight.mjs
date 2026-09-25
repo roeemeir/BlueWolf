@@ -108,7 +108,8 @@ export async function runE2EPreflight(env = process.env) {
     'E2E Core boot requires a committed SQLite Workspace revision');
   const profile = workspace.state.settings?.defaultMap;
   assert.ok(typeof profile === 'string' && profile.length, 'SQLite map profile is not initialized');
-  const scopeId = `e2e-${env.GITHUB_RUN_ID || process.pid}`;
+  const scopeSuffix = env.BLUEWOLF_E2E_SCOPE_SUFFIX?.trim();
+  const scopeId = `e2e-${env.GITHUB_RUN_ID || process.pid}${scopeSuffix ? `-${scopeSuffix}` : ''}`;
   const scopeUrl = `/api/workspace/scope?type=server&id=${scopeId}`;
   const previous = await getJson(webUrl, scopeUrl);
   assert.equal(previous.state, null, 'E2E scoped probe must use a new isolation key');

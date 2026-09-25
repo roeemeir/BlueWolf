@@ -1,10 +1,16 @@
-name: Blue Wolf E2E Integration — Public Preview Disabled
+name: Blue Wolf Full E2E QA — Authenticated Preview
 
-# Runs only by explicit owner dispatch on the trusted integration branch.
-# Never inject real Influx tokens or operational configuration into a PR job.
-# This PRIVATE preflight does not publish a QA URL or certify full E2E.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - work/requirements-governance-2026-09-15
+    paths:
+      - .github/workflows/qa-quick-tunnel.yml
+      - scripts/verify-e2e-preflight.mjs
+      - scripts/verify-full-environment-e2e.mjs
+      - scripts/verify_full_environment_browser.py
+      - scripts/qa-basic-auth-proxy.mjs
 
 permissions:
   contents: read
@@ -15,25 +21,28 @@ concurrency:
 
 jobs:
   integration:
-    if: github.event_name == 'workflow_dispatch' && github.actor == 'roeemeir' && github.ref == 'refs/heads/work/requirements-governance-2026-09-15'
-    name: Private SQLite → Core → Influx → Web preflight
+    if: github.actor == 'roeemeir' && github.ref == 'refs/heads/work/requirements-governance-2026-09-15' && (github.event_name == 'workflow_dispatch' || github.event_name == 'push')
+    name: Full SQLite → Core → Influx → Web → archive/PDF → browser → authenticated preview
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 350
     env:
       NEXT_TELEMETRY_DISABLED: "1"
       BLUEWOLF_STORAGE: sqlite
-      BLUEWOLF_SQLITE_PATH: ${{ github.workspace }}/data/qa-e2e.sqlite
-      BLUEWOLF_WORKSPACE_DB: ${{ github.workspace }}/data/qa-e2e.sqlite
-      BLUEWOLF_OPERATIONAL_CONFIG: ${{ github.workspace }}/data/qa-e2e-operational.json
+      BLUEWOLF_SQLITE_PATH: \${{ github.workspace }}/data/qa-e2e.sqlite
+      BLUEWOLF_WORKSPACE_DB: \${{ github.workspace }}/data/qa-e2e.sqlite
+      BLUEWOLF_OPERATIONAL_CONFIG: \${{ github.workspace }}/data/qa-e2e-operational.json
+      BLUEWOLF_SAMPLE_ARCHIVE_PATH: \${{ github.workspace }}/data/qa-e2e-archive.sqlite
+      BLUEWOLF_OPERATIONAL_STATE_PATH: \${{ github.workspace }}/data/qa-e2e-runtime-state.json
+      BLUEWOLF_E2E_STATE_FILE: \${{ github.workspace }}/data/qa-e2e-expected.json
       BLUEWOLF_CORE_API_URL: http://127.0.0.1:8090
       BLUEWOLF_E2E_WEB_URL: http://127.0.0.1:3000
       BLUEWOLF_RUNTIME_HOST: 127.0.0.1
       BLUEWOLF_RUNTIME_PORT: "8090"
       BLUEWOLF_HOST: 127.0.0.1
       PORT: "3000"
-      BLUEWOLF_CODE_SHA: ${{ github.sha }}
-      BLUEWOLF_INFLUX_TOKEN: ${{ secrets.BLUEWOLF_E2E_INFLUX_TOKEN }}
-      BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON: ${{ secrets.BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON }}
+      BLUEWOLF_CODE_SHA: \${{ github.sha }}
+      BLUEWOLF_INFLUX_TOKEN: \${{ secrets.BLUEWOLF_E2E_INFLUX_TOKEN }}
+      BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON: \${{ secrets.BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,53 +54,61 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Fail closed without a real operational Influx configuration
+
+      - name: Fail closed without real three-server Influx and pin QA persistence paths
         run: |
-          if [ -z "${BLUEWOLF_INFLUX_TOKEN:-}" ] || [ -z "${BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON:-}" ]; then
-            echo 'BLOCKED: three-server E2E config and Influx token are required. No public QA URL will be created.'
+          if [ -z "\${BLUEWOLF_INFLUX_TOKEN:-}" ] || [ -z "\${BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON:-}" ]; then
+            echo 'BLOCKED: three-server E2E config and Influx token are required. No QA URL will be created.'
             exit 1
           fi
           mkdir -p data
           umask 077
           printf '%s\n' "$BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON" > "$BLUEWOLF_OPERATIONAL_CONFIG"
-          # Never log secret config contents or Influx credentials.
-          node --input-type=module -e 'import {readFileSync} from "node:fs"; const c=JSON.parse(readFileSync(process.env.BLUEWOLF_OPERATIONAL_CONFIG,"utf8")); if(!Array.isArray(c.servers)||c.servers.length<3) throw new Error("three servers are mandatory"); if(!c.influx?.url || c.influx.url.includes("influxdb2.internal")) throw new Error("real Influx endpoint is mandatory"); if(!c.influx.stream?.vehicleNumberColumn || !c.influx.stream?.timeColumn || !c.influx.stream?.serverColumn) throw new Error("E2E requires an explicit three-column Influx join schema");'
-      - name: Install application and Core dependencies
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const path = process.env.BLUEWOLF_OPERATIONAL_CONFIG;
+          const c = JSON.parse(readFileSync(path, 'utf8'));
+          if (!Array.isArray(c.servers) || c.servers.length < 3) throw new Error('three servers are mandatory');
+          if (!c.influx?.url || c.influx.url.includes('influxdb2.internal')) throw new Error('real Influx endpoint is mandatory');
+          if (!c.influx.stream?.vehicleNumberColumn || !c.influx.stream?.timeColumn || !c.influx.stream?.serverColumn) throw new Error('E2E requires explicit server/time/vehicle join columns');
+          if (c.navigationSource?.mode === 'simulation') throw new Error('full environment must use the InfluxDB2 navigation source');
+          c.displayedScore = { mode: 'core' };
+          c.archive = { ...(c.archive || {}), path: process.env.BLUEWOLF_SAMPLE_ARCHIVE_PATH };
+          c.persistence = { path: process.env.BLUEWOLF_OPERATIONAL_STATE_PATH };
+          writeFileSync(path, JSON.stringify(c, null, 2) + '\n', { mode: 0o600 });
+          NODE
+
+      - name: Install application, Core and Chromium
         run: |
           npm ci
-          python -m pip install --disable-pip-version-check -e './core[service]'
+          python -m pip install --disable-pip-version-check -e './core[service]' 'playwright==1.55.0'
+          python -m playwright install --with-deps chromium
+
       - name: Build offline Web application with SQLite storage
         run: npm run build:offline
+
       - name: Start SQLite-backed Web server before Core reads its database
         run: |
           nohup npm run start:offline > /tmp/bluewolf-web-e2e.log 2>&1 &
           echo $! > /tmp/bluewolf-web-e2e.pid
-          ready=0
-          for attempt in $(seq 1 45); do
-            if curl --fail --silent --show-error --max-time 3 http://127.0.0.1:3000/api/workspace > /dev/null 2>/dev/null; then
-              ready=1
-              break
-            fi
-            if ! kill -0 "$(cat /tmp/bluewolf-web-e2e.pid)" 2>/dev/null; then break; fi
+          for attempt in $(seq 1 60); do
+            curl --fail --silent --max-time 3 http://127.0.0.1:3000/api/workspace >/dev/null 2>&1 && exit 0
+            kill -0 "$(cat /tmp/bluewolf-web-e2e.pid)" 2>/dev/null || break
             sleep 2
           done
-          if [ "$ready" != "1" ]; then
-            echo 'BLOCKED: SQLite Web API did not become available.'
-            exit 1
-          fi
-      - name: Commit the exact E2E Influx join schema to SQLite before Core boot
+          cat /tmp/bluewolf-web-e2e.log || true
+          exit 1
+
+      - name: Commit exact E2E Influx join schema to SQLite before Core boot
         run: |
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
           import { readFile } from 'node:fs/promises';
           const cfg = JSON.parse(await readFile(process.env.BLUEWOLF_OPERATIONAL_CONFIG, 'utf8'));
           const origin = process.env.BLUEWOLF_E2E_WEB_URL;
-          const initialResponse = await fetch(`${origin}/api/workspace`, { cache: 'no-store' });
-          assert.equal(initialResponse.status, 200);
-          const initial = await initialResponse.json();
+          const initial = await (await fetch(origin + '/api/workspace', { cache: 'no-store' })).json();
           assert.equal(initial.storage, 'sqlite');
-          assert.equal(initial.revision, 0, 'E2E SQLite DB must be fresh for this run');
-          assert.ok(initial.state?.influx?.stream, 'workspace Influx schema is missing');
+          assert.equal(initial.revision, 0, 'E2E SQLite DB must be fresh');
           const state = initial.state;
           state.influx.stream = {
             serverColumn: cfg.influx.stream.serverColumn,
@@ -99,41 +116,125 @@ jobs:
             vehicleNumberColumn: cfg.influx.stream.vehicleNumberColumn,
           };
           state.influx.token = '';
-          const commit = await fetch(`${origin}/api/workspace`, {
+          const commit = await fetch(origin + '/api/workspace', {
             method: 'PUT', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ state, category: 'configuration', action: 'e2e-schema-bootstrap', expectedRevision: 0 }),
           });
-          assert.equal(commit.status, 200, 'SQLite join schema was not persisted');
+          assert.equal(commit.status, 200);
           const saved = await commit.json();
           assert.equal(saved.revision, 1);
-          const verify = await (await fetch(`${origin}/api/workspace`, { cache: 'no-store' })).json();
-          assert.equal(verify.revision, 1);
-          assert.deepEqual(verify.state.influx.stream, state.influx.stream);
-          console.log('PASS: E2E SQLite schema committed before operational Core startup; no credential printed.');
           NODE
-      - name: Start actual operational Python Core connected to the saved SQLite schema
+
+      - name: Start actual operational Python Core
         run: |
-          test -s "$BLUEWOLF_WORKSPACE_DB" || { echo 'BLOCKED: operational Core cannot read SQLite'; exit 1; }
+          test -s "$BLUEWOLF_WORKSPACE_DB"
           nohup bluewolf-runtime > /tmp/bluewolf-core-e2e.log 2>&1 &
           echo $! > /tmp/bluewolf-core-e2e.pid
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --max-time 3 http://127.0.0.1:8090/readyz > /tmp/bluewolf-core-ready.json 2>/dev/null && \
+              node --input-type=module -e 'import {readFileSync} from "node:fs"; const p=JSON.parse(readFileSync("/tmp/bluewolf-core-ready.json","utf8")); if(p.ok!==true||p.mode!=="operational"||p.running!==true||p.tickCount<2||!Array.isArray(p.serverErrors)||p.serverErrors.length) process.exit(1);'; then
+              exit 0
+            fi
+            kill -0 "$(cat /tmp/bluewolf-core-e2e.pid)" 2>/dev/null || break
+            sleep 2
+          done
+          cat /tmp/bluewolf-core-e2e.log || true
+          exit 1
+
+      - name: Verify real Influx → Core → three servers → Web parity and SQLite
+        run: node scripts/verify-e2e-preflight.mjs
+
+      - name: Verify event archive → recompute history → report data/PDF on all servers
+        run: node scripts/verify-full-environment-e2e.mjs
+
+      - name: Verify same full environment in desktop and iPhone Chromium
+        env:
+          BLUEWOLF_BROWSER_ORIGIN: http://127.0.0.1:3000
+        run: python scripts/verify_full_environment_browser.py
+
+      - name: Restart Web and Core and prove persistence plus fresh source
+        run: |
+          kill "$(cat /tmp/bluewolf-core-e2e.pid)" "$(cat /tmp/bluewolf-web-e2e.pid)"
+          wait "$(cat /tmp/bluewolf-core-e2e.pid)" 2>/dev/null || true
+          wait "$(cat /tmp/bluewolf-web-e2e.pid)" 2>/dev/null || true
+          nohup npm run start:offline > /tmp/bluewolf-web-e2e-restart.log 2>&1 &
+          echo $! > /tmp/bluewolf-web-e2e.pid
+          for attempt in $(seq 1 60); do
+            curl --fail --silent --max-time 3 http://127.0.0.1:3000/api/workspace >/dev/null 2>&1 && break
+            sleep 2
+          done
+          nohup bluewolf-runtime > /tmp/bluewolf-core-e2e-restart.log 2>&1 &
+          echo $! > /tmp/bluewolf-core-e2e.pid
           ready=0
-          for attempt in $(seq 1 45); do
-            if curl --fail --silent --show-error --max-time 3 http://127.0.0.1:8090/readyz > /tmp/bluewolf-core-ready.json 2>/dev/null && \
-              node --input-type=module -e 'import {readFileSync} from "node:fs"; const p=JSON.parse(readFileSync("/tmp/bluewolf-core-ready.json","utf8")); if(p.ok!==true || p.mode!=="operational" || p.running!==true || p.tickCount<2 || !Array.isArray(p.serverErrors) || p.serverErrors.length) process.exit(1);'; then
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --max-time 3 http://127.0.0.1:8090/readyz > /tmp/bluewolf-core-ready-restart.json 2>/dev/null && \
+              node --input-type=module -e 'import {readFileSync} from "node:fs"; const p=JSON.parse(readFileSync("/tmp/bluewolf-core-ready-restart.json","utf8")); if(p.ok===true&&p.mode==="operational"&&p.running===true&&p.tickCount>=2&&Array.isArray(p.serverErrors)&&p.serverErrors.length===0) process.exit(0); process.exit(1);'; then
               ready=1
               break
             fi
-            if ! kill -0 "$(cat /tmp/bluewolf-core-e2e.pid)" 2>/dev/null; then break; fi
             sleep 2
           done
-          if [ "$ready" != "1" ]; then
-            echo 'BLOCKED: SQLite-connected operational Core has not produced two error-free polling ticks.'
+          test "$ready" = "1"
+          BLUEWOLF_E2E_SCOPE_SUFFIX=restart node scripts/verify-e2e-preflight.mjs
+          BLUEWOLF_E2E_VERIFY_PERSISTED=1 node scripts/verify-full-environment-e2e.mjs
+
+      - name: Prepare authenticated QA credentials
+        run: |
+          echo "BLUEWOLF_QA_USER=bluewolf" >> "$GITHUB_ENV"
+          echo "BLUEWOLF_QA_PASS=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+
+      - name: Launch proxy and Cloudflare Quick Tunnel
+        run: |
+          nohup node scripts/qa-basic-auth-proxy.mjs > /tmp/bluewolf-qa-proxy.log 2>&1 &
+          echo $! > /tmp/bluewolf-qa-proxy.pid
+          for attempt in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8787/ || true)
+            [ "$code" = "401" ] && break
+            sleep 1
+          done
+          curl -fsSL --retry 3 -o /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x /tmp/cloudflared
+          nohup /tmp/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8787 > /tmp/cloudflared.log 2>&1 &
+          echo $! > /tmp/cloudflared.pid
+          url=''
+          for attempt in $(seq 1 60); do
+            url=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cloudflared.log | tail -1 || true)
+            [ -n "$url" ] && break
+            kill -0 "$(cat /tmp/cloudflared.pid)" 2>/dev/null || break
+            sleep 2
+          done
+          if [ -z "$url" ]; then
+            cat /tmp/cloudflared.log
             exit 1
           fi
-      - name: Check operational Core feed and three servers through Web plus SQLite round trip
-        run: node scripts/verify-e2e-preflight.mjs
-      - name: Full E2E acceptance is not yet granted
+          printf '%s\n' "$url" > /tmp/bluewolf-qa-url
+          curl --fail --silent --show-error -u "$BLUEWOLF_QA_USER:$BLUEWOLF_QA_PASS" "$url/api/workspace" >/tmp/public-workspace.json
+          node --input-type=module -e 'import {readFileSync} from "node:fs"; const p=JSON.parse(readFileSync("/tmp/public-workspace.json","utf8")); if(p.storage!=="sqlite") process.exit(1);'
+          echo "BLUEWOLF_QA_URL=$url" >> "$GITHUB_ENV"
+
+      - name: Verify public authenticated path in Chromium
+        env:
+          BLUEWOLF_BROWSER_ORIGIN: \${{ env.BLUEWOLF_QA_URL }}
+        run: python scripts/verify_full_environment_browser.py
+
+      - name: Publish READY coordinates and keep verified QA environment alive
         run: |
-          echo 'Private Core/SQLite/Influx/Web preflight completed. This does NOT authorize a public QA URL.'
-          echo 'BLOCKED until event-start recompute, archive/PDF, persistence/restart, browser/iPhone E2E and BW-GOV-010 verification pass together.'
-          echo 'No tunnel, preview artifact or public link is created by this workflow.'
+          echo "READY_URL=$BLUEWOLF_QA_URL"
+          echo "QA_USERNAME=$BLUEWOLF_QA_USER"
+          echo "QA_PASSWORD=$BLUEWOLF_QA_PASS"
+          {
+            echo '## Blue Wolf Full E2E QA — READY'
+            echo "- Commit: $GITHUB_SHA"
+            echo "- URL: $BLUEWOLF_QA_URL"
+            echo "- Username: $BLUEWOLF_QA_USER"
+            echo "- Password: $BLUEWOLF_QA_PASS"
+            echo '- Evidence: real InfluxDB2 → Python Core → 3 servers → SQLite/Web → archive/recompute/history → PDF → restart → desktop/iPhone Chromium.'
+            echo '- Target: authenticated temporary QA preview; not production and not a main-branch release.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          for minute in $(seq 1 315); do
+            curl --fail --silent --max-time 10 -u "$BLUEWOLF_QA_USER:$BLUEWOLF_QA_PASS" "$BLUEWOLF_QA_URL/api/workspace" >/dev/null || {
+              echo "QA tunnel health failed at minute $minute"
+              exit 1
+            }
+            sleep 60
+          done
