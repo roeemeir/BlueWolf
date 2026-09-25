@@ -253,28 +253,29 @@ def _route_from_payload(value: Mapping[str, Any]) -> SOEventRouteEvidence:
 
 def _frame_payload(frame: SOEventObservationFrame | SIEventObservationFrame) -> str:
     is_si = isinstance(frame, SIEventObservationFrame)
+    payload: dict[str, Any] = {
+        "family": "SI" if is_si else "SO",
+        "server_id": frame.server_id,
+        "group_id": frame.group_id,
+        "active_template_id": frame.active_template_id,
+        "pending_reason": frame.pending_reason,
+        "observations": [
+            _si_observation_payload(item) if is_si else _observation_payload(item)
+            for item in frame.observations
+        ],
+        "navigation": [_navigation_payload(item) for item in frame.navigation],
+        "routes": [_route_payload(item) for item in frame.routes],
+    }
+    # Preserve the exact legacy operational payload shape and therefore its
+    # immutable hash. Provenance is additive only for explicit TEST navigation.
+    if frame.navigation_origin is not None:
+        payload["source"] = {
+            "kind": "python-core",
+            "navigationOrigin": frame.navigation_origin,
+            "syntheticNavigation": frame.synthetic_navigation,
+        }
     return json.dumps(
-        {
-            "family": "SI" if is_si else "SO",
-            "server_id": frame.server_id,
-            "group_id": frame.group_id,
-            "active_template_id": frame.active_template_id,
-            "pending_reason": frame.pending_reason,
-            "source": (
-                {
-                    "kind": "python-core",
-                    "navigationOrigin": frame.navigation_origin,
-                    "syntheticNavigation": frame.synthetic_navigation,
-                }
-                if frame.navigation_origin is not None else None
-            ),
-            "observations": [
-                _si_observation_payload(item) if is_si else _observation_payload(item)
-                for item in frame.observations
-            ],
-            "navigation": [_navigation_payload(item) for item in frame.navigation],
-            "routes": [_route_payload(item) for item in frame.routes],
-        },
+        payload,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),

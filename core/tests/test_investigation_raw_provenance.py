@@ -11,7 +11,7 @@ from bluewolf_core.event_recompute import SOEventObservationFrame, recompute_so_
 from bluewolf_core.so_scoring import SOScoringObservation
 from bluewolf_core.so_templates import Quarter, SORouteInstance, SORouteKind, SOTemplate, SOVehicleSlot
 from bluewolf_runtime_adapter.event_archive_binding import attach_event_observation_archive
-from bluewolf_runtime_adapter.event_observation_archive import SOEventObservationArchive
+from bluewolf_runtime_adapter.event_observation_archive import SOEventObservationArchive, _frame_payload
 
 
 def _template() -> SOTemplate:
@@ -64,6 +64,11 @@ def _frame(at: datetime, *, test_navigation: bool = False) -> SOEventObservation
 
 
 class InvestigationRawProvenanceTests(unittest.TestCase):
+    def test_unmarked_operational_frame_keeps_legacy_payload_shape_for_hash_compatibility(self) -> None:
+        frame = _frame(datetime(2026, 9, 25, 4, 0, tzinfo=UTC))
+        payload = json.loads(_frame_payload(frame))
+        self.assertNotIn("source", payload)
+
     def test_archive_roundtrip_and_recompute_keep_test_source_and_same_pass_raw_total(self) -> None:
         with TemporaryDirectory() as directory:
             archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
