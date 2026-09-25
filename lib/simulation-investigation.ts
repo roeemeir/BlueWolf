@@ -288,7 +288,6 @@ export function recomputeSimulationEvent(input: {
     eventId: input.eventId, serverId, groupId, templateId: input.templateId,
     templateVersion: `sim-tpl-${hash(templateSignature).toString(16)}`,
     codeVersion: SIMULATION_CODE_VERSION, configVersion: SIMULATION_CONFIG_VERSION,
-    source: { kind: "python-core", navigationOrigin: "simulation", syntheticNavigation: true },
     startAt, endAt, frameCount: points.length, scoredFrameCount: scored.length,
     missingFrameCount: points.length - scored.length, routes, lifecycle,
     summary: { sync: average("sync"), route: average("route"), total: average("total") },

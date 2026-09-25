@@ -74,3 +74,19 @@ test('investigation PDF visibly labels TEST navigation and uses raw recompute ti
   assert.match(text, /TEST NAVIGATION/);
   assert.match(text, /synthetic raw navigation scored by Python Core/);
 });
+
+test('simulator PDF is labeled as synthetic QA evidence and never as a Python Core archive', () => {
+  const raw = payload();
+  delete raw.source;
+  const result = contract.normalizeEventRecompute(raw);
+  const bytes = pdf.buildInvestigationPdf({
+    source: 'simulator-archive',
+    serverId: 7,
+    generatedAt: '2026-09-25T05:00:00Z',
+    events: [{ result, arena: null, note: null }],
+  });
+  const text = Buffer.from(bytes).toString('latin1');
+  assert.match(text, /SIMULATOR ARCHIVE/);
+  assert.match(text, /synthetic QA evidence/);
+  assert.doesNotMatch(text, /synthetic raw navigation scored by Python Core/);
+});

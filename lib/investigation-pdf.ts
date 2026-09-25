@@ -7,6 +7,7 @@ export type InvestigationPdfEvent = {
 };
 
 export type InvestigationPdfReport = {
+  source?: "core-event-archive" | "simulator-archive";
   serverId: number;
   from?: string | null;
   to?: string | null;
@@ -43,7 +44,10 @@ function score(value: number | null) {
   return value === null ? "missing" : value.toFixed(1);
 }
 
-function navigationSourceLabel(result: EventRecomputeResult) {
+function navigationSourceLabel(result: EventRecomputeResult, reportSource?: InvestigationPdfReport["source"]) {
+  if (reportSource === "simulator-archive") {
+    return "SIMULATOR ARCHIVE (synthetic QA evidence; no Python Core claim)";
+  }
   return result.source?.syntheticNavigation === true
     ? "TEST NAVIGATION (synthetic raw navigation scored by Python Core)"
     : "Core event archive (no TEST navigation marker)";
@@ -76,9 +80,11 @@ function coverPage(report: InvestigationPdfReport): PdfPage {
   }
   if (report.events.length > 20) lines.push(text(48, y, 9, `... ${report.events.length - 20} more events; every event has its own report page.`));
   const testNavigationPresent = report.events.some((item) => item.result.source?.syntheticNavigation === true);
-  lines.push(text(48, 58, 8, testNavigationPresent
-    ? "Source: immutable Core event archive + Core recomputation; TEST NAVIGATION is present and labeled per event."
-    : "Source: immutable Core event archive + real template recomputation; no TEST navigation marker is present."));
+  lines.push(text(48, 58, 8, report.source === "simulator-archive"
+    ? "Source: SIMULATOR ARCHIVE; synthetic QA evidence only. No Python Core operational claim."
+    : testNavigationPresent
+      ? "Source: immutable Core event archive + Core recomputation; TEST NAVIGATION is present and labeled per event."
+      : "Source: immutable Core event archive + real template recomputation; no TEST navigation marker is present."));
   return { content: pageContent(lines) };
 }
 
@@ -160,7 +166,7 @@ function mapCommands(result: EventRecomputeResult, x: number, y: number, width: 
   return commands;
 }
 
-function eventMainPage(item: InvestigationPdfEvent, index: number): PdfPage {
+function eventMainPage(item: InvestigationPdfEvent, index: number, reportSource?: InvestigationPdfReport["source"]): PdfPage {
   const result = item.result;
   const lines = [
     text(42, 800, 18, `Event ${index + 1}: ${result.eventId}`, true),
@@ -179,18 +185,18 @@ function eventMainPage(item: InvestigationPdfEvent, index: number): PdfPage {
   lines.push(...timelineCommands(result, 318, 390, 235, 215));
   lines.push(text(42, 362, 8, "All vehicle series are rendered; missing frames break the line instead of connecting across gaps."));
   lines.push(text(42, 342, 8, "Full root-cause and vehicle score tables continue on the following detail page(s)."));
-  lines.push(text(42, 68, 7, `Navigation provenance: ${navigationSourceLabel(result)}`));
+  lines.push(text(42, 68, 7, `Navigation provenance: ${navigationSourceLabel(result, reportSource)}`));
   lines.push(text(42, 52, 7, "Truth source: Blue Wolf Core event archive. Map uses captured WGS84 samples; gaps are not interpolated for display."));
   return { content: pageContent(lines) };
 }
 
-function eventDetailLines(item: InvestigationPdfEvent) {
+function eventDetailLines(item: InvestigationPdfEvent, reportSource?: InvestigationPdfReport["source"]) {
   const result = item.result;
   const rows: string[] = [];
   rows.push(`EVENT ${result.eventId}`);
   rows.push(`TEMPLATE ${result.templateId} | VERSION ${result.templateVersion}`);
   rows.push(`CODE ${result.codeVersion} | CONFIG ${result.configVersion} | RUN ${result.runId}`);
-  rows.push(`NAVIGATION SOURCE ${navigationSourceLabel(result)}`);
+  rows.push(`NAVIGATION SOURCE ${navigationSourceLabel(result, reportSource)}`);
   rows.push("ROOT CAUSES");
   if (!result.rootCauses.length) rows.push("  none");
   for (const cause of result.rootCauses) rows.push(`  ${cause.reason}: ${cause.occurrences}`);
@@ -211,8 +217,8 @@ function eventDetailLines(item: InvestigationPdfEvent) {
   return rows;
 }
 
-function eventDetailPages(item: InvestigationPdfEvent, index: number): PdfPage[] {
-  const rows = eventDetailLines(item);
+function eventDetailPages(item: InvestigationPdfEvent, index: number, reportSource?: InvestigationPdfReport["source"]): PdfPage[] {
+  const rows = eventDetailLines(item, reportSource);
   const rowsPerPage = 45;
   const pages: PdfPage[] = [];
   for (let offset = 0; offset < rows.length; offset += rowsPerPage) {
@@ -234,8 +240,8 @@ function eventDetailPages(item: InvestigationPdfEvent, index: number): PdfPage[]
   return pages;
 }
 
-function eventPages(item: InvestigationPdfEvent, index: number): PdfPage[] {
-  return [eventMainPage(item, index), ...eventDetailPages(item, index)];
+function eventPages(item: InvestigationPdfEvent, index: number, reportSource?: InvestigationPdfReport["source"]): PdfPage[] {
+  return [eventMainPage(item, index, reportSource), ...eventDetailPages(item, index, reportSource)];
 }
 
 function buildPdfObjects(pages: PdfPage[]) {
@@ -258,7 +264,7 @@ function buildPdfObjects(pages: PdfPage[]) {
 export function buildInvestigationPdf(report: InvestigationPdfReport): Uint8Array {
   if (!Number.isInteger(report.serverId) || report.serverId < 0) throw new Error("serverId must be a non-negative integer");
   if (!report.events.length) throw new Error("report requires at least one event");
-  const pages = [coverPage(report), ...report.events.flatMap(eventPages)];
+  const pages = [coverPage(report), ...report.events.flatMap((item, index) => eventPages(item, index, report.source))];
   const objects = buildPdfObjects(pages);
   let output = "%PDF-1.4\n%BlueWolf\n";
   const offsets = [0];

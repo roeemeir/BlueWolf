@@ -74,11 +74,12 @@ export function normalizeInvestigationReportData(value: unknown): InvestigationR
       note: nullableText(event.note, "event note"),
     };
   });
+  const source = row.source as InvestigationReportSource;
   return {
     schemaVersion: INVESTIGATION_REPORT_DATA_SCHEMA,
-    source: row.source as InvestigationReportSource,
+    source,
     codeVersion,
     configVersion,
-    report: { serverId, from, to, generatedAt, events },
+    report: { source, serverId, from, to, generatedAt, events },
   };
 }

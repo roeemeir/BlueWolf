@@ -107,12 +107,12 @@ export async function POST(request: Request) {
         return Response.json({
           schemaVersion: "bluewolf.investigation-report-data.v1",
           source: SIMULATION_ARCHIVE_SOURCE,
-          report: built.report,
+          report: { ...built.report, source: SIMULATION_ARCHIVE_SOURCE },
           codeVersion,
           configVersion,
         }, { headers: { "cache-control": "no-store", "x-bluewolf-report-source": SIMULATION_ARCHIVE_SOURCE, "x-bluewolf-code-version": codeVersion, "x-bluewolf-config-version": configVersion } });
       }
-      const pdf = buildInvestigationPdf(built.report);
+      const pdf = buildInvestigationPdf({ ...built.report, source: SIMULATION_ARCHIVE_SOURCE });
       const generatedAt = built.report.generatedAt;
       const day = generatedAt.slice(0, 10).replaceAll("-", "");
       const pdfBody = new ArrayBuffer(pdf.byteLength);
@@ -146,7 +146,7 @@ export async function POST(request: Request) {
     });
     const codeVersions = new Set(reportEvents.map((item) => item.result.codeVersion)); const configVersions = new Set(reportEvents.map((item) => item.result.configVersion));
     if (codeVersions.size !== 1 || configVersions.size !== 1) return Response.json({ status: "error", error: "report recomputations do not share one code/config version" }, { status: 409 });
-    const reportData: InvestigationPdfReport = { serverId: parsed.serverId, from: parsed.from ?? null, to: parsed.to ?? null, generatedAt, events: reportEvents };
+    const reportData: InvestigationPdfReport = { source: "core-event-archive", serverId: parsed.serverId, from: parsed.from ?? null, to: parsed.to ?? null, generatedAt, events: reportEvents };
     const codeVersion = reportEvents[0].result.codeVersion; const configVersion = reportEvents[0].result.configVersion;
     if (parsed.format === "data") return Response.json({ schemaVersion: "bluewolf.investigation-report-data.v1", source: "core-event-archive", report: reportData, codeVersion, configVersion }, { status: 200, headers: { "cache-control": "no-store", "x-bluewolf-report-source": "core-event-archive", "x-bluewolf-code-version": codeVersion, "x-bluewolf-config-version": configVersion } });
     const pdf = buildInvestigationPdf(reportData); const day = generatedAt.slice(0, 10).replaceAll("-", ""); const pdfBody = new ArrayBuffer(pdf.byteLength); new Uint8Array(pdfBody).set(pdf);
