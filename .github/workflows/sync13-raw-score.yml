@@ -48,3 +48,17 @@ jobs:
       - name: Verify compact score history and real selected-template SO publisher
         working-directory: core/tests
         run: python -m unittest -v test_runtime_raw_score_history test_core_scored_so_publication test_investigation_raw_provenance
+
+  web-raw-score:
+    name: web-raw-score-and-investigation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install Web dependencies
+        run: npm ci
+      - name: Verify raw score, archive provenance and release PDF contracts
+        run: node --test tests/runtime-core-raw-total.test.mjs tests/investigation-raw-provenance.test.mjs tests/investigation-release-provenance.test.mjs
