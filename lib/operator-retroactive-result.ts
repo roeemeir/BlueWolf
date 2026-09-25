@@ -51,13 +51,21 @@ export function historyWithEventRecompute(
       serverId: String(result.serverId),
       observedAt: point.observedAt,
       groups: [],
+      source: result.source,
     };
+    const existingSynthetic = existing.source?.syntheticNavigation === true;
+    const recomputeSynthetic = result.source?.syntheticNavigation === true;
+    if ((existing.source !== undefined || result.source !== undefined) && existingSynthetic !== recomputeSynthetic) {
+      throw new Error("recompute history source provenance does not match existing point");
+    }
+    if (result.source) existing.source = { ...result.source };
     existing.groups = existing.groups.filter((row) => !(row.id === result.groupId && row.event?.id === result.eventId));
     existing.groups.push({
       id: result.groupId,
       name: group.name,
       color: group.color,
       total: point.group.total ?? 0,
+      rawTotal: point.group.valid && point.group.rawTotal !== null ? point.group.rawTotal : undefined,
       sync: point.group.sync ?? 0,
       route: point.group.route ?? 0,
       scoreValid: point.group.valid,

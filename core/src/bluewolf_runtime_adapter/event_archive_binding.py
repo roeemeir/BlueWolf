@@ -8,6 +8,7 @@ retention.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
 import os
@@ -51,6 +52,18 @@ def operational_config_fingerprint(path: str | os.PathLike[str]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _navigation_source_mode(path: str | os.PathLike[str]) -> str:
+    config = _read_config(path)
+    raw = config.get("navigationSource")
+    if raw is None:
+        return "influxdb2"
+    source = _mapping(raw, "navigationSource")
+    mode = source.get("mode", "influxdb2")
+    if mode not in {"influxdb2", "simulation"}:
+        raise ValueError("navigationSource.mode must be influxdb2 or simulation")
+    return str(mode)
+
+
 def event_archive_path_from_config(path: str | os.PathLike[str]) -> Path | None:
     config = _read_config(path)
     archive_raw = config.get("archive")
@@ -92,11 +105,20 @@ def attach_event_archives(
         return None
     observation_archive = SOEventObservationArchive(archive_path)
     lifecycle_archive = SOEventLifecycleArchive(archive_path)
+    synthetic_navigation = _navigation_source_mode(config_path) == "simulation"
+    observation_sink = observation_archive.record_frame
+    if synthetic_navigation:
+        def observation_sink(frame):
+            return observation_archive.record_frame(replace(
+                frame,
+                navigation_origin="simulation",
+                synthetic_navigation=True,
+            ))
     attached_runtime_count = 0
     for pipeline in loop.pipelines:
         for runtime in _family_runtimes(pipeline.producer):
             if hasattr(runtime, "observation_sink"):
-                runtime.observation_sink = observation_archive.record_frame
+                runtime.observation_sink = observation_sink
             if hasattr(runtime, "lifecycle_sink"):
                 runtime.lifecycle_sink = lifecycle_archive.record_change
             if hasattr(runtime, "observation_sink") or hasattr(runtime, "lifecycle_sink"):

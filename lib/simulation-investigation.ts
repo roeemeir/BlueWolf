@@ -247,7 +247,7 @@ export function recomputeSimulationEvent(input: {
     const observedAt = new Date(startMs + elapsedS * 1000).toISOString();
     const missing = (seed % 3 === 1 && (frameIndex === 14 || frameIndex === 15)) || (seed % 5 === 0 && frameIndex === 29)
       || (scenarioKind === "turn-dropout" && frameIndex % 13 === 0);
-    if (missing) return { observedAt, pendingReason: "simulated_observability_gap", group: { valid: false, sync: null, route: null, total: null }, members: [], navigation: [] };
+    if (missing) return { observedAt, pendingReason: "simulated_observability_gap", group: { valid: false, sync: null, route: null, total: null, rawTotal: null }, members: [], navigation: [] };
     const samples = memberRows.map((vehicle, memberIndex) => {
       const route = family === "SI" ? routes[0] : routes[Math.min(routes.length - 1, memberIndex % routes.length)];
       return simulatedNavigation({ eventId: input.eventId, kind: scenarioKind, seed, serverId, route, vehicleId: vehicle.id, memberIndex, frameIndex, elapsedS, durationS });
@@ -270,9 +270,10 @@ export function recomputeSimulationEvent(input: {
         primaryReason: memberSync < memberRoute ? (family === "SI" ? "si_relative_angle" : "so_template_phase") : "route_adherence",
       };
     });
+    const groupTotal = clamp(groupSync * .75 + groupRoute * .25);
     return {
       observedAt, pendingReason: null,
-      group: { valid: true, sync: groupSync, route: groupRoute, total: clamp(groupSync * .75 + groupRoute * .25) },
+      group: { valid: true, sync: groupSync, route: groupRoute, total: groupTotal, rawTotal: groupTotal },
       members, navigation: samples.map((sample) => sample.nav),
     };
   });
@@ -287,6 +288,7 @@ export function recomputeSimulationEvent(input: {
     eventId: input.eventId, serverId, groupId, templateId: input.templateId,
     templateVersion: `sim-tpl-${hash(templateSignature).toString(16)}`,
     codeVersion: SIMULATION_CODE_VERSION, configVersion: SIMULATION_CONFIG_VERSION,
+    source: { kind: "python-core", navigationOrigin: "simulation", syntheticNavigation: true },
     startAt, endAt, frameCount: points.length, scoredFrameCount: scored.length,
     missingFrameCount: points.length - scored.length, routes, lifecycle,
     summary: { sync: average("sync"), route: average("route"), total: average("total") },

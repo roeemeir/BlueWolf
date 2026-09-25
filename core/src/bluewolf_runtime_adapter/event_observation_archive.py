@@ -260,6 +260,14 @@ def _frame_payload(frame: SOEventObservationFrame | SIEventObservationFrame) -> 
             "group_id": frame.group_id,
             "active_template_id": frame.active_template_id,
             "pending_reason": frame.pending_reason,
+            "source": (
+                {
+                    "kind": "python-core",
+                    "navigationOrigin": frame.navigation_origin,
+                    "syntheticNavigation": frame.synthetic_navigation,
+                }
+                if frame.navigation_origin is not None else None
+            ),
             "observations": [
                 _si_observation_payload(item) if is_si else _observation_payload(item)
                 for item in frame.observations
@@ -433,6 +441,18 @@ class SOEventObservationArchive:
             pending_reason = None if pending_raw is None else str(pending_raw)
             active_template_raw = payload.get("active_template_id")
             active_template_id = None if active_template_raw is None else str(active_template_raw)
+            source_raw = payload.get("source")
+            navigation_origin: str | None = None
+            synthetic_navigation: bool | None = None
+            if source_raw is not None:
+                if not isinstance(source_raw, Mapping):
+                    raise ValueError("archived event source provenance is malformed")
+                if source_raw.get("kind") != "python-core":
+                    raise ValueError("archived TEST navigation must come from python-core")
+                navigation_origin = None if source_raw.get("navigationOrigin") is None else str(source_raw.get("navigationOrigin"))
+                synthetic_navigation = source_raw.get("syntheticNavigation")
+                if synthetic_navigation is not None and not isinstance(synthetic_navigation, bool):
+                    raise ValueError("archived syntheticNavigation must be boolean")
             frame_type = SIEventObservationFrame if family == "SI" else SOEventObservationFrame
             frames.append(
                 frame_type(
@@ -445,6 +465,8 @@ class SOEventObservationArchive:
                     pending_reason=pending_reason,
                     navigation=navigation,
                     routes=routes,
+                    navigation_origin=navigation_origin,
+                    synthetic_navigation=synthetic_navigation,
                 )
             )
         return tuple(frames)

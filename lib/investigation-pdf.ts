@@ -43,6 +43,12 @@ function score(value: number | null) {
   return value === null ? "missing" : value.toFixed(1);
 }
 
+function navigationSourceLabel(result: EventRecomputeResult) {
+  return result.source?.syntheticNavigation === true
+    ? "TEST NAVIGATION (synthetic raw navigation scored by Python Core)"
+    : "Core event archive (no TEST navigation marker)";
+}
+
 function pageContent(lines: string[]) {
   return ["0 G 0 g 1 J 1 j", ...lines].join("\n");
 }
@@ -69,7 +75,10 @@ function coverPage(report: InvestigationPdfReport): PdfPage {
     y -= 18;
   }
   if (report.events.length > 20) lines.push(text(48, y, 9, `... ${report.events.length - 20} more events; every event has its own report page.`));
-  lines.push(text(48, 58, 8, "Source: immutable Core event archive + real template recomputation. No demo values."));
+  const testNavigationPresent = report.events.some((item) => item.result.source?.syntheticNavigation === true);
+  lines.push(text(48, 58, 8, testNavigationPresent
+    ? "Source: immutable Core event archive + Core recomputation; TEST NAVIGATION is present and labeled per event."
+    : "Source: immutable Core event archive + real template recomputation; no TEST navigation marker is present."));
   return { content: pageContent(lines) };
 }
 
@@ -98,7 +107,7 @@ function timelineCommands(result: EventRecomputeResult, x: number, y: number, wi
     });
     flush();
   };
-  drawSeries(result.points.map((point) => point.group.total), 2.4);
+  drawSeries(result.points.map((point) => point.group.rawTotal ?? point.group.total), 2.4);
   const memberIds = Array.from(new Set(result.points.flatMap((point) => point.members.map((member) => member.memberId))));
   const dashes = ["4 3", "8 3", "2 2", "10 3 2 3", "6 2 1 2", "1 2"];
   memberIds.forEach((memberId, index) => {
@@ -170,6 +179,7 @@ function eventMainPage(item: InvestigationPdfEvent, index: number): PdfPage {
   lines.push(...timelineCommands(result, 318, 390, 235, 215));
   lines.push(text(42, 362, 8, "All vehicle series are rendered; missing frames break the line instead of connecting across gaps."));
   lines.push(text(42, 342, 8, "Full root-cause and vehicle score tables continue on the following detail page(s)."));
+  lines.push(text(42, 68, 7, `Navigation provenance: ${navigationSourceLabel(result)}`));
   lines.push(text(42, 52, 7, "Truth source: Blue Wolf Core event archive. Map uses captured WGS84 samples; gaps are not interpolated for display."));
   return { content: pageContent(lines) };
 }
@@ -180,6 +190,7 @@ function eventDetailLines(item: InvestigationPdfEvent) {
   rows.push(`EVENT ${result.eventId}`);
   rows.push(`TEMPLATE ${result.templateId} | VERSION ${result.templateVersion}`);
   rows.push(`CODE ${result.codeVersion} | CONFIG ${result.configVersion} | RUN ${result.runId}`);
+  rows.push(`NAVIGATION SOURCE ${navigationSourceLabel(result)}`);
   rows.push("ROOT CAUSES");
   if (!result.rootCauses.length) rows.push("  none");
   for (const cause of result.rootCauses) rows.push(`  ${cause.reason}: ${cause.occurrences}`);

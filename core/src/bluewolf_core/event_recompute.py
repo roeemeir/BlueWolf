@@ -55,6 +55,13 @@ def _optional_finite(name: str, value: float | None) -> None:
         raise ValueError(f"{name} must be finite when supplied")
 
 
+def _validate_navigation_provenance(navigation_origin: str | None, synthetic_navigation: bool | None) -> None:
+    if navigation_origin is None and synthetic_navigation is None:
+        return
+    if navigation_origin != "simulation" or synthetic_navigation is not True:
+        raise ValueError("event navigation provenance must be absent or explicit TEST simulation")
+
+
 def template_fingerprint(template: SOTemplate) -> str:
     """Return a deterministic version id for the exact template structure."""
 
@@ -138,6 +145,8 @@ class SOEventObservationFrame:
     pending_reason: str | None = None
     navigation: tuple[SOEventNavigationPoint, ...] = ()
     routes: tuple[SOEventRouteEvidence, ...] = ()
+    navigation_origin: str | None = None
+    synthetic_navigation: bool | None = None
 
     def __post_init__(self) -> None:
         if not self.event_id:
@@ -151,6 +160,7 @@ class SOEventObservationFrame:
             raise ValueError("active_template_id must be non-empty when supplied")
         if self.pending_reason == "":
             raise ValueError("pending_reason must be non-empty when supplied")
+        _validate_navigation_provenance(self.navigation_origin, self.synthetic_navigation)
         if len(self.observations) < 2 and self.pending_reason is None:
             raise ValueError("fewer than two SO observations require a pending_reason")
         member_ids = [item.member_id for item in self.observations]
@@ -180,6 +190,8 @@ class SIEventObservationFrame:
     pending_reason: str | None = None
     navigation: tuple[SOEventNavigationPoint, ...] = ()
     routes: tuple[SOEventRouteEvidence, ...] = ()
+    navigation_origin: str | None = None
+    synthetic_navigation: bool | None = None
 
     def __post_init__(self) -> None:
         if not self.event_id:
@@ -193,6 +205,7 @@ class SIEventObservationFrame:
             raise ValueError("active_template_id must be non-empty when supplied")
         if self.pending_reason == "":
             raise ValueError("pending_reason must be non-empty when supplied")
+        _validate_navigation_provenance(self.navigation_origin, self.synthetic_navigation)
         if len(self.observations) < 2 and self.pending_reason is None:
             raise ValueError("fewer than two SI observations require a pending_reason")
         member_ids = [item.member.member_id for item in self.observations]
@@ -273,6 +286,15 @@ def _route_payload(item: SOEventRouteEvidence) -> dict[str, Any]:
     }
 
 
+def _event_source_payload(frames: tuple[SOEventObservationFrame | SIEventObservationFrame, ...]) -> dict[str, Any] | None:
+    markers = {(frame.navigation_origin, frame.synthetic_navigation) for frame in frames}
+    if markers == {(None, None)}:
+        return None
+    if markers == {("simulation", True)}:
+        return {"kind": "python-core", "navigationOrigin": "simulation", "syntheticNavigation": True}
+    raise ValueError("archived event mixes TEST and unmarked navigation provenance")
+
+
 def recompute_so_event(
     *,
     event_id: str,
@@ -314,6 +336,7 @@ def recompute_so_event(
     timestamps = [frame.sample_time_utc for frame in ordered]
     if len(timestamps) != len(set(timestamps)):
         raise ValueError("recompute frames must have unique timestamps")
+    source = _event_source_payload(ordered)
 
     known_route_sets = [frame.routes for frame in ordered if frame.routes]
     route_evidence: tuple[SOEventRouteEvidence, ...] = ()
@@ -338,7 +361,7 @@ def recompute_so_event(
                 {
                     "observedAt": _iso(frame.sample_time_utc),
                     "pendingReason": frame.pending_reason,
-                    "group": {"valid": False, "sync": None, "route": None, "total": None},
+                    "group": {"valid": False, "sync": None, "route": None, "total": None, "rawTotal": None},
                     "members": [],
                     "navigation": navigation,
                 }
@@ -386,7 +409,7 @@ def recompute_so_event(
             {
                 "observedAt": _iso(frame.sample_time_utc),
                 "pendingReason": None,
-                "group": {"valid": group.valid, "sync": sync, "route": route, "total": total},
+                "group": {"valid": group.valid, "sync": sync, "route": route, "total": total, "rawTotal": total},
                 "members": members,
                 "navigation": navigation,
             }
@@ -411,6 +434,7 @@ def recompute_so_event(
         "templateVersion": resolved_template_version,
         "codeVersion": code_version,
         "configVersion": config_version,
+        **({"source": source} if source is not None else {}),
         "startAt": _iso(ordered[0].sample_time_utc),
         "endAt": _iso(ordered[-1].sample_time_utc),
         "frameCount": len(ordered),
@@ -462,6 +486,7 @@ def recompute_si_event(
     timestamps = [frame.sample_time_utc for frame in ordered]
     if len(timestamps) != len(set(timestamps)):
         raise ValueError("recompute frames must have unique timestamps")
+    source = _event_source_payload(ordered)
 
     known_route_sets = [frame.routes for frame in ordered if frame.routes]
     route_evidence: tuple[SOEventRouteEvidence, ...] = ()
@@ -485,7 +510,7 @@ def recompute_si_event(
             points.append({
                 "observedAt": _iso(frame.sample_time_utc),
                 "pendingReason": frame.pending_reason,
-                "group": {"valid": False, "sync": None, "route": None, "total": None},
+                "group": {"valid": False, "sync": None, "route": None, "total": None, "rawTotal": None},
                 "members": [],
                 "navigation": navigation,
             })
@@ -529,7 +554,7 @@ def recompute_si_event(
         points.append({
             "observedAt": _iso(frame.sample_time_utc),
             "pendingReason": None,
-            "group": {"valid": group.valid, "sync": sync, "route": route, "total": total},
+            "group": {"valid": group.valid, "sync": sync, "route": route, "total": total, "rawTotal": total},
             "members": members,
             "navigation": navigation,
         })
@@ -549,6 +574,7 @@ def recompute_si_event(
         "templateVersion": resolved_template_version,
         "codeVersion": code_version,
         "configVersion": config_version,
+        **({"source": source} if source is not None else {}),
         "startAt": _iso(ordered[0].sample_time_utc),
         "endAt": _iso(ordered[-1].sample_time_utc),
         "frameCount": len(ordered),

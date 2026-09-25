@@ -1,3 +1,4 @@
+import { normalizeTestNavigationProvenance, type TestNavigationProvenance } from "./runtime-navigation-provenance";
 export const INVESTIGATION_EVENTS_SCHEMA = "bluewolf.investigation-events.v1" as const;
 export const EVENT_RECOMPUTE_SCHEMA = "bluewolf.event-recompute.v1" as const;
 
@@ -87,7 +88,7 @@ export type RecomputedRoute = {
 export type EventRecomputePoint = {
   observedAt: string;
   pendingReason: string | null;
-  group: { valid: boolean; sync: number | null; route: number | null; total: number | null };
+  group: { valid: boolean; sync: number | null; route: number | null; total: number | null; rawTotal?: number | null };
   members: RecomputedMember[];
   navigation: RecomputedNavigation[];
 };
@@ -104,6 +105,7 @@ export type EventRecomputeResult = {
   templateVersion: string;
   codeVersion: string;
   configVersion: string;
+  source?: { kind: "python-core" } & TestNavigationProvenance;
   startAt: string;
   endAt: string;
   frameCount: number;
@@ -317,9 +319,16 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
     });
     if (new Set(navigation.map((item) => item.memberId)).size !== navigation.length) throw new Error("navigation member ids must be unique per frame");
     if (new Set(navigation.map((item) => item.vehicleIdentifier)).size !== navigation.length) throw new Error("navigation vehicle identifiers must be unique per frame");
-    const normalizedGroup = { valid: group.valid, sync: score(group.sync, "group sync"), route: score(group.route, "group route"), total: score(group.total, "group total") };
+    const normalizedGroup = {
+      valid: group.valid,
+      sync: score(group.sync, "group sync"),
+      route: score(group.route, "group route"),
+      total: score(group.total, "group total"),
+      rawTotal: group.rawTotal === undefined ? undefined : score(group.rawTotal, "group rawTotal"),
+    };
+    if (normalizedGroup.rawTotal !== undefined && normalizedGroup.rawTotal !== normalizedGroup.total) throw new Error("recompute rawTotal must equal the same-pass group total");
     if (pendingReason !== null) {
-      if (normalizedGroup.valid || normalizedGroup.sync !== null || normalizedGroup.route !== null || normalizedGroup.total !== null) throw new Error("pending point must not contain a valid group score");
+      if (normalizedGroup.valid || normalizedGroup.sync !== null || normalizedGroup.route !== null || normalizedGroup.total !== null || (normalizedGroup.rawTotal !== null && normalizedGroup.rawTotal !== undefined)) throw new Error("pending point must not contain a valid group score");
       if (members.length !== 0) throw new Error("pending point must not contain recomputed members");
     }
     return { observedAt: time(point.observedAt, "observedAt"), pendingReason, group: normalizedGroup, members, navigation };
@@ -328,12 +337,15 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
   if (observedMissing !== missingFrameCount) throw new Error("missingFrameCount does not match pending points");
   const family = (row.family === undefined ? "SO" : text(row.family, "recompute family")) as "SI" | "SO";
   if (family !== "SI" && family !== "SO") throw new Error("recompute family must be SI or SO");
+  const sourceProvenance = row.source === undefined ? undefined : normalizeTestNavigationProvenance(row.source);
+  if (row.source !== undefined && !sourceProvenance) throw new Error("recompute source may be supplied only for explicit TEST navigation");
   return {
     schemaVersion: EVENT_RECOMPUTE_SCHEMA,
     family,
     runId: text(row.runId, "runId"), scenarioId: text(row.scenarioId, "scenarioId"), eventId: text(row.eventId, "eventId"),
     serverId: integer(row.serverId, "serverId"), groupId: text(row.groupId, "groupId"), templateId: text(row.templateId, "templateId"),
     templateVersion: text(row.templateVersion, "templateVersion"), codeVersion: text(row.codeVersion, "codeVersion"), configVersion: text(row.configVersion, "configVersion"),
+    source: sourceProvenance ? { kind: "python-core", ...sourceProvenance } : undefined,
     startAt: time(row.startAt, "startAt"), endAt: time(row.endAt, "endAt"), frameCount, scoredFrameCount, missingFrameCount, routes,
     lifecycle: lifecycle(row.lifecycle, "event lifecycle"),
     summary: { sync: score(summary.sync, "summary sync"), route: score(summary.route, "summary route"), total: score(summary.total, "summary total") },
