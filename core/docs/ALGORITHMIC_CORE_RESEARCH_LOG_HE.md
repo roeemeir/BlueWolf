@@ -426,6 +426,14 @@ At that milestone the validated head was `3c76d8bda4526ec7e36d7cbb3d3d4737ec6628
 
 `docs/documentation-sync.json` מקשר בין fingerprint המימוש, Master Specification ב-Google Drive ודוחות המחקר. Release gate מחשב מחדש את fingerprint ולכן שינוי משמעותי ב-`app/`, `components/`, `lib/`, `core/src/`, `deploy/`, `package.json` או `next.config.ts` מחייב refresh מפורש של תיעוד לפני פרסום.
 
+## Current implementation validation refresh — 25/09/2026
+
+ה־baseline התיעודי הפעיל הוא `11b0caa84d67def74dee4dfe0bbcc9d670cc247c`, עם fingerprint `3c86673cc730f6ba` על 271 קבצי implementation לפי אותם tracked paths של `BW-GOV-010`. ה־Master v2.8 וה־Core Research v1.2 המקוריים ב־Drive עודכנו באופן תוכני ונקראו חזרה לפני שינוי ה־manifest; אין כאן עדכון fingerprint לצורך העברת CI בלבד.
+
+ב־current head חוזה הציון מפריד בין `rawTotal` של אותו selected-template Core scoring pass לבין `total` החי שעובר חלון Core של 10 שניות ומשמש Event/Alert. החלקת Web היא display-only ופועלת על `rawTotal` בלבד; archive/recompute שומר provenance מפורש, וב־recompute תקף `group.total == group.rawTotal` משום שאין שם EventAlert display window. TEST navigation נשאר מסומן `simulation/syntheticNavigation=true` עד Web/PDF ואינו נהפך לראיית Influx תפעולית.
+
+ראיות scoped עד הסנכרון: `BW-SYNC-013 Raw Score Contract #17` מכסה Core+Web raw/provenance; `Navigation Input Integration #146` עבר בשלושה שרתים דרך raw TEST navigation → temporal join → Python Core SI+SO → runtime/archive → recompute HTTP. `Blue Wolf CI #2945` אימת את implementation עם 29/30 jobs ירוקים; הכשל היחיד היה Web בגלל manifest התיעוד הישן. סגירת הסעיף מחייבת run post-sync חדש ואינה מהווה אישור production/customer E2E.
+
 ## כלל עדכון מעכשיו
 
 כל שינוי אלגוריתמי חדש חייב להוסיף/לעדכן כאן entry באותו commit או ב־documentation commit הצמוד ל־milestone המאומת. דוח ה־Word יישאר גרסה קריאה ומעוצבת של אותו בסיס מחקרי ויעודכן לאחר milestone משמעותי.
