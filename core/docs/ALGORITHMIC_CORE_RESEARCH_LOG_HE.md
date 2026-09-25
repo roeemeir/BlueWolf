@@ -445,3 +445,13 @@ At that milestone the validated head was `3c76d8bda4526ec7e36d7cbb3d3d4737ec6628
 `record_recompute(..., expected_evidence_version=...)` פותח `BEGIN IMMEDIATE`, מחשב מחדש את גרסת הראיות מתוך SQLite ומשווה לגרסה שעליה חושב ה־recompute. אם frame מאוחר נוסף בין הקריאה לשמירה, התוצאה נדחית ב־fail-closed ואינה נשמרת. regression ב־`test_event_recompute.py` מוכיח stale rejection ולאחר מכן recompute חדש עם `frameCount` מעודכן; `Navigation Input Integration #154` מוכיח שה־HTTP מחזיר evidenceVersion תקין במסלול שלושה שרתים.
 
 ה־implementation fingerprint לאחר השינוי הוא `e38d6e14a2b9ae28` עבור 271 קבצים. `BW-SYNC-013 #21` ו־`Navigation #154` עברו SUCCESS. `Blue Wolf CI #2953` סיים 29/30 jobs ירוקים; הכשל היחיד היה Web בגלל fingerprint התיעוד הישן, ולכן נדרש post-sync CI חדש.
+
+## Current implementation validation refresh — recompute history, 25/09/2026
+
+ה־implementation baseline המתועד הנוכחי הוא `2ec209e01f9ec02ff78ca239f2d69d5bc235378c`, עם fingerprint `c7e1c6a5ea4c2a2b` על 272 קבצי implementation. זהו אותו baseline שמופיע ב־Master v2.8 וב־Core Research v1.2 לאחר עדכון LATE-015 / ה.10 ו־readback של שני קובצי ה־Drive.
+
+השינוי מוסיף audit trail מתוחם ל־recompute בלי לשנות estimator/scorer: `recomputation_history` קורא metadata מה־archive הקיים, `GET /v1/investigation/recomputations` חושף אותו ב־Core, וה־Next proxy מאמת event identity, bounds של limit, frame counts, `evidenceVersion` ו־provenance. history הוא read-only ואינו מקור ראיה חדש; הוא אינו מעדכן score, route, group, event או alert.
+
+ה־late-data invariant נשאר זה של `evidenceVersion`: ה־run נשמר רק אם ה־snapshot שעליו חושב עדיין זהה בזמן ה־SQLite write lock. לאחר late frame, recompute חדש מקבל evidenceVersion חדש ויכול להישמר לצד הגרסאות הקודמות. simulation אינו מקבל durable Core recompute history.
+
+ב־`Blue Wolf CI #2963` בדיקות ההיסטוריה וה־Core עברו, והכשל היחיד ב־Web היה fingerprint drift של BW-GOV-010 לפני סנכרון מסמכי ה־Drive. commit `eb707a2b5c98957177530aa9cb5f631c79a1a82a` עדכן את manifest ל־baseline הזה אחרי readback; post-sync CI חדש הוא ראיית הסגירה הנדרשת לפני עדכון verified CI evidence.

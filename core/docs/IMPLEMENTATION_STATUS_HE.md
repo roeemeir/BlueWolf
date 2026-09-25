@@ -241,3 +241,14 @@ checkpoint חדש שומר compact points. Restore תומך גם ב־V1 ישן �
 ### Documentation synchronization gate
 
 `docs/documentation-sync.json` שומר fingerprint דטרמיניסטי של קבצי implementation וקישור ל-Master Specification ולמסמכי המחקר. `scripts/verify-documentation-sync.mjs` מחשב את fingerprint מחדש מתוך Git index. Release נחסם אם App/Core/Runtime/Deploy השתנו בלי refresh של תיעוד, כך ש-`BW-GOV-010` אינו תלוי עוד בזיכרון ידני בלבד.
+
+
+## Recompute history governance refresh — 25/09/2026
+
+ה־implementation baseline המחייב כעת הוא `2ec209e01f9ec02ff78ca239f2d69d5bc235378c`; ה־BW-GOV-010 fingerprint הוא `c7e1c6a5ea4c2a2b` עבור 272 קבצי implementation. ה־Master v2.8 וה־Core Research v1.2 ב־Drive כוללים את LATE-015 / סעיף ה.10 ונקראו חזרה עם אותו HEAD ו־fingerprint לפני עדכון המניפסט.
+
+נוסף audit surface read-only לתוצאות recompute: Core חושף `GET /v1/investigation/recomputations` ו־Web חושף `/api/investigation/recomputations`. ההיסטוריה מחזירה metadata newest-first בלבד, עם limit בין 1 ל־200, כולל run/template/code/config/evidence versions, זמן יצירה, ספירות frames, summary ו־source מפורש כאשר קיים. היא אינה מחזירה points/navigation/routes מלאים ואינה משתתפת ב־scoring, grouping, template selection, alerts או route detection.
+
+`evidenceVersion` נשאר guard אטומי ל־late data: recompute מיושן אינו נשמר אם קבוצת ה־frames השתנתה בין snapshot לבין persistence. run חדש לאחר late frame נשמר כגרסה חדשה ואינו דורס run קודם. simulation history אינו מוצג כ־durable Core archive ונכשל במפורש.
+
+`Blue Wolf CI #2963` עבר את בדיקות ה־history החדשות ואת כל shards של ה־Python Core; כשל ה־Web היחיד היה BW-GOV-010 לפני סנכרון ה־fingerprint. לאחר readback של מסמכי ה־Drive עודכן manifest ב־commit `eb707a2b5c98957177530aa9cb5f631c79a1a82a`; post-sync CI חדש נדרש לפני קידום ה־verified CI evidence. Release נשאר חסום עד implementationApproval מפורש וללא טענה ל־customer Influx E2E.
