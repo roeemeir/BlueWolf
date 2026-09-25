@@ -455,3 +455,8 @@ At that milestone the validated head was `3c76d8bda4526ec7e36d7cbb3d3d4737ec6628
 ה־late-data invariant נשאר זה של `evidenceVersion`: ה־run נשמר רק אם ה־snapshot שעליו חושב עדיין זהה בזמן ה־SQLite write lock. לאחר late frame, recompute חדש מקבל evidenceVersion חדש ויכול להישמר לצד הגרסאות הקודמות. simulation אינו מקבל durable Core recompute history.
 
 ב־`Blue Wolf CI #2963` בדיקות ההיסטוריה וה־Core עברו, והכשל היחיד ב־Web היה fingerprint drift של BW-GOV-010 לפני סנכרון מסמכי ה־Drive. commit `eb707a2b5c98957177530aa9cb5f631c79a1a82a` עדכן את manifest ל־baseline הזה אחרי readback; post-sync CI חדש הוא ראיית הסגירה הנדרשת לפני עדכון verified CI evidence.
+
+
+### Post-sync CI evidence — 25/09/2026
+
+לאחר readback של ה־Master v2.8 ושל Core Research v1.2, `Blue Wolf CI #2967` עבר SUCCESS מלא (30/30 jobs) על commit `e1f874756d1862be3c0677b1f6f2d7604f028fc1`. ה־baseline המחייב נשאר `2ec209e01f9ec02ff78ca239f2d69d5bc235378c` וה־fingerprint `c7e1c6a5ea4c2a2b` על 272 קבצים. Scoped evidence באותו commit: `BW-SYNC-013 #31`, `Navigation #168`, `UI/PDF #1733`, `Operator #1486`, `Public Civilian InfluxDB2 #95` — כולם SUCCESS. אין בכך claim ל־customer Influx E2E או production approval.

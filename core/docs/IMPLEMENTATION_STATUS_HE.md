@@ -252,3 +252,8 @@ checkpoint חדש שומר compact points. Restore תומך גם ב־V1 ישן �
 `evidenceVersion` נשאר guard אטומי ל־late data: recompute מיושן אינו נשמר אם קבוצת ה־frames השתנתה בין snapshot לבין persistence. run חדש לאחר late frame נשמר כגרסה חדשה ואינו דורס run קודם. simulation history אינו מוצג כ־durable Core archive ונכשל במפורש.
 
 `Blue Wolf CI #2963` עבר את בדיקות ה־history החדשות ואת כל shards של ה־Python Core; כשל ה־Web היחיד היה BW-GOV-010 לפני סנכרון ה־fingerprint. לאחר readback של מסמכי ה־Drive עודכן manifest ב־commit `eb707a2b5c98957177530aa9cb5f631c79a1a82a`; post-sync CI חדש נדרש לפני קידום ה־verified CI evidence. Release נשאר חסום עד implementationApproval מפורש וללא טענה ל־customer Influx E2E.
+
+
+### Post-sync validation result — 25/09/2026
+
+`Blue Wolf CI #2967` עבר SUCCESS מלא (30/30 jobs) על commit `e1f874756d1862be3c0677b1f6f2d7604f028fc1`. זהו post-sync run לאחר עדכון ה־Drive, manifest ו־Core docs. ה־verified implementation baseline נשאר `2ec209e01f9ec02ff78ca239f2d69d5bc235378c`, וה־fingerprint נשאר `c7e1c6a5ea4c2a2b` על 272 קבצי implementation. `BW-SYNC-013 #31`, `Navigation Input Integration #168`, `UI/PDF Browser E2E #1733`, `Operator Acceptance #1486` ו־`Public Civilian InfluxDB2 Adapter #95` עברו גם הם SUCCESS. Release/production נשארים חסומים עד implementationApproval מפורש ו־customer Influx E2E.
