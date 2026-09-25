@@ -1,4 +1,4 @@
-import type { InvestigationPdfEvent, InvestigationPdfReport } from "@/lib/investigation-pdf";
+import { investigationEventSourceLabel, investigationReportSourceLabel, type InvestigationPdfEvent, type InvestigationPdfReport } from "@/lib/investigation-pdf";
 
 const PAGE_WIDTH_PT = 595;
 const PAGE_HEIGHT_PT = 842;
@@ -119,10 +119,13 @@ function drawHeader(ctx: CanvasRenderingContext2D, title: string, subtitle?: str
   rule(ctx, 158);
 }
 
-function drawFooter(ctx: CanvasRenderingContext2D, pageLabel: string) {
+function drawFooter(ctx: CanvasRenderingContext2D, pageLabel: string, report: InvestigationPdfReport, event?: InvestigationPdfEvent) {
   rule(ctx, PAGE_HEIGHT_PX - 82);
   drawText(ctx, pageLabel, PAGE_WIDTH_PX - MARGIN, PAGE_HEIGHT_PX - 45, { size: 16, color: MUTED });
-  drawText(ctx, "Blue Wolf · מקור אמת: Core event archive", MARGIN, PAGE_HEIGHT_PX - 45, { size: 16, color: MUTED, dir: "ltr", align: "left" });
+  const source = event
+    ? investigationEventSourceLabel(event.result, report.source)
+    : investigationReportSourceLabel(report);
+  drawText(ctx, `Blue Wolf · ${source}`, MARGIN, PAGE_HEIGHT_PX - 45, { size: 15, color: MUTED, dir: "ltr", align: "left" });
 }
 
 function drawKeyValue(ctx: CanvasRenderingContext2D, label: string, value: string, x: number, y: number, width: number) {
@@ -168,7 +171,7 @@ function drawTimeline(ctx: CanvasRenderingContext2D, event: InvestigationPdfEven
     });
     if (drawing) ctx.stroke();
   };
-  drawSeries(result.points.map((point) => point.group.total), SERIES[0], 5);
+  drawSeries(result.points.map((point) => point.group.rawTotal ?? point.group.total), SERIES[0], 5);
   const memberIds = Array.from(new Set(result.points.flatMap((point) => point.members.map((member) => member.memberId))));
   memberIds.forEach((memberId, index) => drawSeries(
     result.points.map((point) => point.members.find((member) => member.memberId === memberId)?.total ?? null),
@@ -333,7 +336,7 @@ function coverPage(report: InvestigationPdfReport) {
     y += 43;
   }
   if (report.events.length > 18) drawText(ctx, `ועוד ${report.events.length - 18} אירועים — לכל אירוע מוקדש פרק נפרד`, PAGE_WIDTH_PX - MARGIN, y + 12, { size: 18, color: MUTED });
-  drawFooter(ctx, "שער");
+  drawFooter(ctx, "שער", report);
   return canvas;
 }
 
@@ -378,7 +381,7 @@ function summaryMapPage(report: InvestigationPdfReport) {
   }
   if (report.events.length > 8) drawText(ctx, `המקרא המלא לכל ${report.events.length} האירועים ממשיך בעמודי המקרא הבאים`, PAGE_WIDTH_PX - MARGIN, legendY, { size: 16, color: MUTED });
   drawText(ctx, "העקבות נחתכות לטווח שנבחר ונשברות בחורי ניווט ובין אירועים; אין קו מלאכותי המחבר evidence חסר.", PAGE_WIDTH_PX - MARGIN, 1590, { size: 16, color: MUTED });
-  drawFooter(ctx, "מפה מסכמת · REP-02");
+  drawFooter(ctx, "מפה מסכמת · REP-02", report);
   return canvas;
 }
 
@@ -409,13 +412,13 @@ function summaryLegendPages(report: InvestigationPdfReport) {
       y += 48;
     });
     drawText(ctx, "כל צבע בעמודי המפה והאירוע מתייחס לאותו מספר אירוע ולשייכות הקבוצה המופיעה כאן.", PAGE_WIDTH_PX - MARGIN, 1575, { size: 16, color: MUTED });
-    drawFooter(ctx, `מקרא REP-02 · ${pageNumber}`);
+    drawFooter(ctx, `מקרא REP-02 · ${pageNumber}`, report);
     pages.push(canvas);
   }
   return pages;
 }
 
-function eventMainPage(event: InvestigationPdfEvent, index: number, total: number) {
+function eventMainPage(event: InvestigationPdfEvent, index: number, total: number, report: InvestigationPdfReport) {
   const { canvas, ctx } = makeCanvas();
   const result = event.result;
   drawHeader(ctx, `אירוע ${index + 1} מתוך ${total}`, `${result.eventId} · קבוצה ${result.groupId}`);
@@ -438,13 +441,14 @@ function eventMainPage(event: InvestigationPdfEvent, index: number, total: numbe
   drawText(ctx, `code ${result.codeVersion}`, PAGE_WIDTH_PX - MARGIN, Math.max(noteY + 56, 1160), { size: 16, color: MUTED, dir: "ltr", align: "right" });
   drawText(ctx, `config ${result.configVersion}`, PAGE_WIDTH_PX - MARGIN, Math.max(noteY + 84, 1188), { size: 16, color: MUTED, dir: "ltr", align: "right" });
   drawText(ctx, `run ${result.runId}`, PAGE_WIDTH_PX - MARGIN, Math.max(noteY + 112, 1216), { size: 16, color: MUTED, dir: "ltr", align: "right" });
-  drawFooter(ctx, `אירוע ${index + 1} · עמוד ראשי`);
+  drawFooter(ctx, `אירוע ${index + 1} · עמוד ראשי`, report, event);
   return canvas;
 }
 
-function detailRows(event: InvestigationPdfEvent) {
+function detailRows(event: InvestigationPdfEvent, report: InvestigationPdfReport) {
   const result = event.result;
   const rows: { label: string; value: string; tone?: string }[] = [];
+  rows.push({ label: "מקור ניווט", value: investigationEventSourceLabel(result, report.source) });
   rows.push({ label: "תבנית", value: `${result.templateId} · ${result.templateVersion}` });
   rows.push({ label: "גרסת חישוב", value: `code ${result.codeVersion} · config ${result.configVersion}` });
   rows.push({ label: "נתיבים מזוהים", value: result.routes.length ? result.routes.map((route) => `${route.routeInstanceId}: ${route.subtype} · ${route.routeId} · ${route.direction} · quality ${route.detectionQuality.toFixed(3)}`).join(" · ") : "אין route geometry evidence בארכיון" });
@@ -471,8 +475,8 @@ function detailRows(event: InvestigationPdfEvent) {
   return rows;
 }
 
-function eventDetailPages(event: InvestigationPdfEvent, index: number, total: number) {
-  const rows = detailRows(event);
+function eventDetailPages(event: InvestigationPdfEvent, index: number, total: number, report: InvestigationPdfReport) {
+  const rows = detailRows(event, report);
   const pages: HTMLCanvasElement[] = [];
   let rowIndex = 0;
   let pageNumber = 1;
@@ -494,7 +498,7 @@ function eventDetailPages(event: InvestigationPdfEvent, index: number, total: nu
       consumed = true;
     }
     if (!rows.length) drawText(ctx, "אין שורות פירוט נוספות לאירוע", PAGE_WIDTH_PX - MARGIN, 270, { size: 20, color: MUTED });
-    drawFooter(ctx, `אירוע ${index + 1}/${total} · פרטים ${pageNumber}`);
+    drawFooter(ctx, `אירוע ${index + 1}/${total} · פרטים ${pageNumber}`, report, event);
     pages.push(canvas);
     pageNumber += 1;
     if (!rows.length) break;
@@ -571,8 +575,8 @@ export async function buildInvestigationPdfBrowser(report: InvestigationPdfRepor
   const pages: BrowserPdfPage[] = [canvasJpeg(coverPage(report)), canvasJpeg(summaryMapPage(report))];
   for (const canvas of summaryLegendPages(report)) pages.push(canvasJpeg(canvas));
   report.events.forEach((event, index) => {
-    pages.push(canvasJpeg(eventMainPage(event, index, report.events.length)));
-    for (const canvas of eventDetailPages(event, index, report.events.length)) pages.push(canvasJpeg(canvas));
+    pages.push(canvasJpeg(eventMainPage(event, index, report.events.length, report)));
+    for (const canvas of eventDetailPages(event, index, report.events.length, report)) pages.push(canvasJpeg(canvas));
   });
   return jpegPagesToPdf(pages);
 }

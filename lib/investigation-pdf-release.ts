@@ -40,7 +40,7 @@ export async function buildInvestigationReleasePdf(report: InvestigationPdfRepor
     }
     pages.push(
       ...engineeringPages.slice(cursor, cursor + eventPageCount),
-      ...buildInvestigationEventSynopsisPages(event, index, report.events.length),
+      ...buildInvestigationEventSynopsisPages(event, index, report.events.length, report.source),
       mapPages[index + 1],
     );
     cursor += eventPageCount;

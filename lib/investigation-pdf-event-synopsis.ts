@@ -1,4 +1,4 @@
-import type { InvestigationPdfEvent } from "@/lib/investigation-pdf";
+import { investigationEventSourceLabel, type InvestigationPdfEvent, type InvestigationPdfReport } from "@/lib/investigation-pdf";
 import { investigationEventFacts } from "@/lib/investigation-event-evidence-he";
 
 const WIDTH = 1190;
@@ -93,9 +93,19 @@ function score(value: number | null): string {
 
 /** Pages share the same EventRecomputeResult used by the operator and WMTS maps.
  * Source-reported codes are not converted into guessed causal explanations. */
-export function buildInvestigationEventSynopsisPages(event: InvestigationPdfEvent, eventIndex: number, eventCount: number): Page[] {
+export function buildInvestigationEventSynopsisPages(
+  event: InvestigationPdfEvent,
+  eventIndex: number,
+  eventCount: number,
+  reportSource?: InvestigationPdfReport["source"],
+): Page[] {
   const facts = investigationEventFacts(event);
   const rows: EvidenceRow[] = [
+    {
+      heading: "מקור הניווט והחישוב",
+      description: investigationEventSourceLabel(event.result, reportSource),
+      operatorMeaning: "סימון TEST או SIMULATOR נשמר גם בתחקור ואינו הופך לראיה מבצעית רק מפני שהופק PDF.",
+    },
     {
       heading: "סיבת תחילת האירוע — לפי רשומת המקור",
       description: `${facts.startAt} · ${facts.opening.label}`,

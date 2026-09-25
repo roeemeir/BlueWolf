@@ -1,4 +1,4 @@
-import type { InvestigationPdfReport } from "@/lib/investigation-pdf";
+import { investigationReportSourceLabel, type InvestigationPdfReport } from "@/lib/investigation-pdf";
 import { OFFLINE_FAVICON_SVG } from "@/lib/investigation-pdf-logo-offline";
 
 const WIDTH = 1190;
@@ -146,7 +146,8 @@ export async function buildInvestigationBrandedCover(report: InvestigationPdfRep
   roundedPanel(ctx, 62, 1210, WIDTH - 124, 237, "#e4f1fb", "#c7e1f3");
   label(ctx, "מבנה הדוח", WIDTH - 98, 1272, 27, BLUE, 700);
   label(ctx, "מפת אירועים מסכמת, פרקי תחקור, מפות וציונים", WIDTH - 98, 1327, 25, NAVY, 600);
-  label(ctx, "פרטי גרסאות ומקור הנתונים מוצגים בפרקי התחקור", WIDTH - 98, 1382, 21, MUTED);
+  label(ctx, investigationReportSourceLabel(report), WIDTH - 98, 1382, 19, MUTED, 600);
+  label(ctx, "פרטי גרסאות ומקור הנתונים מוצגים בפרקי התחקור", WIDTH - 98, 1420, 19, MUTED);
   ctx.save();
   ctx.strokeStyle = "#d1dfe9";
   ctx.beginPath(); ctx.moveTo(62, 1551); ctx.lineTo(WIDTH - 62, 1551); ctx.stroke();

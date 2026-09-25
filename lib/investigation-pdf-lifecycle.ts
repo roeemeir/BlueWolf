@@ -1,4 +1,4 @@
-import type { InvestigationPdfReport } from "@/lib/investigation-pdf";
+import { investigationEventSourceLabel, type InvestigationPdfReport } from "@/lib/investigation-pdf";
 import { buildInvestigationPdfBrowser, jpegPagesToPdf } from "@/lib/investigation-pdf-browser";
 
 const WIDTH = 1190;
@@ -173,6 +173,7 @@ function lifecyclePages(report: InvestigationPdfReport) {
       }
       ctx.strokeStyle = LINE;
       ctx.beginPath(); ctx.moveTo(MARGIN, HEIGHT - 82); ctx.lineTo(WIDTH - MARGIN, HEIGHT - 82); ctx.stroke();
+      text(ctx, investigationEventSourceLabel(event.result, report.source), MARGIN, HEIGHT - 45, 13, 400, MUTED);
       text(ctx, `REP-03/REP-04 · lifecycle ${pageNumber}`, WIDTH - MARGIN, HEIGHT - 45, 15, 400, MUTED);
       pages.push(jpeg(canvas));
       pageNumber += 1;

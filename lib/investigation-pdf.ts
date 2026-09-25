@@ -44,13 +44,22 @@ function score(value: number | null) {
   return value === null ? "missing" : value.toFixed(1);
 }
 
-function navigationSourceLabel(result: EventRecomputeResult, reportSource?: InvestigationPdfReport["source"]) {
+export function investigationEventSourceLabel(result: EventRecomputeResult, reportSource?: InvestigationPdfReport["source"]) {
   if (reportSource === "simulator-archive") {
-    return "SIMULATOR ARCHIVE (synthetic QA evidence; no Python Core claim)";
+    return "SIMULATOR ARCHIVE · synthetic QA evidence · no Python Core claim";
   }
   return result.source?.syntheticNavigation === true
-    ? "TEST NAVIGATION (synthetic raw navigation scored by Python Core)"
-    : "Core event archive (no TEST navigation marker)";
+    ? "TEST NAVIGATION · synthetic raw navigation scored by Python Core"
+    : "Core event archive · no TEST navigation marker";
+}
+
+export function investigationReportSourceLabel(report: InvestigationPdfReport) {
+  if (report.source === "simulator-archive") {
+    return "SIMULATOR ARCHIVE · synthetic QA evidence · no Python Core claim";
+  }
+  return report.events.some((item) => item.result.source?.syntheticNavigation === true)
+    ? "Core event archive · includes TEST NAVIGATION"
+    : "Core event archive · no TEST navigation marker";
 }
 
 function pageContent(lines: string[]) {
@@ -185,7 +194,7 @@ function eventMainPage(item: InvestigationPdfEvent, index: number, reportSource?
   lines.push(...timelineCommands(result, 318, 390, 235, 215));
   lines.push(text(42, 362, 8, "All vehicle series are rendered; missing frames break the line instead of connecting across gaps."));
   lines.push(text(42, 342, 8, "Full root-cause and vehicle score tables continue on the following detail page(s)."));
-  lines.push(text(42, 68, 7, `Navigation provenance: ${navigationSourceLabel(result, reportSource)}`));
+  lines.push(text(42, 68, 7, `Navigation provenance: ${investigationEventSourceLabel(result, reportSource)}`));
   lines.push(text(42, 52, 7, "Truth source: Blue Wolf Core event archive. Map uses captured WGS84 samples; gaps are not interpolated for display."));
   return { content: pageContent(lines) };
 }
@@ -196,7 +205,7 @@ function eventDetailLines(item: InvestigationPdfEvent, reportSource?: Investigat
   rows.push(`EVENT ${result.eventId}`);
   rows.push(`TEMPLATE ${result.templateId} | VERSION ${result.templateVersion}`);
   rows.push(`CODE ${result.codeVersion} | CONFIG ${result.configVersion} | RUN ${result.runId}`);
-  rows.push(`NAVIGATION SOURCE ${navigationSourceLabel(result, reportSource)}`);
+  rows.push(`NAVIGATION SOURCE ${investigationEventSourceLabel(result, reportSource)}`);
   rows.push("ROOT CAUSES");
   if (!result.rootCauses.length) rows.push("  none");
   for (const cause of result.rootCauses) rows.push(`  ${cause.reason}: ${cause.occurrences}`);

@@ -1,4 +1,4 @@
-import type { InvestigationPdfEvent, InvestigationPdfReport } from "@/lib/investigation-pdf";
+import { investigationEventSourceLabel, investigationReportSourceLabel, type InvestigationPdfEvent, type InvestigationPdfReport } from "@/lib/investigation-pdf";
 import { investigationEventColor } from "@/lib/investigation-pdf-browser";
 import { investigationEventNavigationEvidence } from "@/lib/investigation-pdf-navigation-evidence";
 import { normalizeMapSources, type OperationalMapSource } from "@/lib/map-source-config";
@@ -242,6 +242,7 @@ async function mapPage(
   title: string, subtitle: string, events: readonly InvestigationPdfEvent[],
   points: GeoPoint[], profile: WmtsRenderProfile | null,
   fromMs: number, toMs: number, firstEventIndex: number,
+  provenanceLabel: string,
 ) {
   const { canvas, ctx } = makeCanvas();
   text(ctx, title, WIDTH - MARGIN, 88, 36, 700);
@@ -264,6 +265,7 @@ async function mapPage(
     : "ללא WMTS זמין";
   text(ctx, "תחילה וסוף = מדידת הניווט הראשונה והאחרונה שנצפו בטווח; אין השלמת מיקום חסר", WIDTH - MARGIN, HEIGHT - 109, 14, 400, MUTED);
   text(ctx, `רקע: ${profile?.source.name ?? "Engineering grid"} · ${layerLabel}`, WIDTH - MARGIN, HEIGHT - 86, 15, 400, MUTED);
+  text(ctx, provenanceLabel, MARGIN, HEIGHT - 86, 13, 600, MUTED, "left");
   text(ctx, rendered > 0 ? `WMTS tiles בדוח: ${rendered} · דרך proxy/cache מקומי` : "לא התקבל tile רקע; הדוח ממשיך עם engineering grid ללא תלות באינטרנט", WIDTH - MARGIN, HEIGHT - 54, 14, 400, MUTED);
   return jpeg(canvas);
 }
@@ -274,13 +276,13 @@ export async function buildInvestigationWmtsMapPages(report: InvestigationPdfRep
   const toMs = report.to ? Date.parse(report.to) : Number.POSITIVE_INFINITY;
   const pages: InvestigationWmtsJpegPage[] = [];
   const summaryPoints = report.events.flatMap((event) => eventPoints(event, fromMs, toMs));
-  pages.push(await mapPage("מפת רקע מבצעית — טווח התחקור", `${report.from ?? "תחילת הארכיון"} ← ${report.to ?? "סוף הארכיון"}`, report.events, summaryPoints, profile, fromMs, toMs, 0));
+  pages.push(await mapPage("מפת רקע מבצעית — טווח התחקור", `${report.from ?? "תחילת הארכיון"} ← ${report.to ?? "סוף הארכיון"}`, report.events, summaryPoints, profile, fromMs, toMs, 0, investigationReportSourceLabel(report)));
   for (const [index, event] of report.events.entries()) {
     const eventFrom = Date.parse(event.result.startAt);
     const eventTo = Date.parse(event.result.endAt);
     const eventFromMs = Math.max(fromMs, eventFrom);
     const eventToMs = Math.min(toMs, eventTo);
-    pages.push(await mapPage(`מפת WMTS · אירוע ${index + 1}`, `${event.result.eventId} · קבוצה ${event.result.groupId}`, [event], eventPoints(event, eventFromMs, eventToMs), profile, eventFromMs, eventToMs, index));
+    pages.push(await mapPage(`מפת WMTS · אירוע ${index + 1}`, `${event.result.eventId} · קבוצה ${event.result.groupId}`, [event], eventPoints(event, eventFromMs, eventToMs), profile, eventFromMs, eventToMs, index, investigationEventSourceLabel(event.result, report.source)));
   }
   return pages;
 }
