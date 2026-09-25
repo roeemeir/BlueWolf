@@ -437,3 +437,11 @@ At that milestone the validated head was `3c76d8bda4526ec7e36d7cbb3d3d4737ec6628
 ## כלל עדכון מעכשיו
 
 כל שינוי אלגוריתמי חדש חייב להוסיף/לעדכן כאן entry באותו commit או ב־documentation commit הצמוד ל־milestone המאומת. דוח ה־Word יישאר גרסה קריאה ומעוצבת של אותו בסיס מחקרי ויעודכן לאחר milestone משמעותי.
+
+## Late-data evidence snapshot guard — 25/09/2026
+
+ב־commit `907c4af7a9ecad94a724f3059d0afa13af395239` נוסף versioning אטומי לראיות event-recompute. `read_event_snapshot` מחזיר את ה־frames ואת `evidenceVersion`, שהוא SHA-256 דטרמיניסטי של `event_id` ושל הרצף המסודר `(sample_time_utc, payload_hash)`. מסלול ה־HTTP מחזיר ושומר את הגרסה הזו.
+
+`record_recompute(..., expected_evidence_version=...)` פותח `BEGIN IMMEDIATE`, מחשב מחדש את גרסת הראיות מתוך SQLite ומשווה לגרסה שעליה חושב ה־recompute. אם frame מאוחר נוסף בין הקריאה לשמירה, התוצאה נדחית ב־fail-closed ואינה נשמרת. regression ב־`test_event_recompute.py` מוכיח stale rejection ולאחר מכן recompute חדש עם `frameCount` מעודכן; `Navigation Input Integration #154` מוכיח שה־HTTP מחזיר evidenceVersion תקין במסלול שלושה שרתים.
+
+ה־implementation fingerprint לאחר השינוי הוא `e38d6e14a2b9ae28` עבור 271 קבצים. `BW-SYNC-013 #21` ו־`Navigation #154` עברו SUCCESS. `Blue Wolf CI #2953` סיים 29/30 jobs ירוקים; הכשל היחיד היה Web בגלל fingerprint התיעוד הישן, ולכן נדרש post-sync CI חדש.

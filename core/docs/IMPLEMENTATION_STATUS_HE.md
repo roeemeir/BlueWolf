@@ -219,12 +219,12 @@ checkpoint חדש שומר compact points. Restore תומך גם ב־V1 ישן �
 
 כל כשל משמעותי שנמצא במהלך פיתוח הופך ל־regression קבוע לפני קידום baseline.
 
-ה־implementation baseline המתועד הנוכחי הוא `11b0caa84d67def74dee4dfe0bbcc9d670cc247c`; ה־BW-GOV-010 fingerprint שלו הוא `3c86673cc730f6ba` עבור 271 קבצי implementation. `Blue Wolf CI #2949` עבר SUCCESS על post-sync head `ebb1265e179f301372e945cb1aec138bf90a71c1`. באותו head `Navigation Input Integration #150` עבר בשלושה שרתים עם SI+SO, archive, recompute ו־HTTP, ו־`BW-SYNC-013 Raw Score Contract #18` עבר Core+Web. Release עדיין חסום עד implementationApproval מפורש וללא טענה ל־customer Influx E2E.
+ה־implementation baseline המתועד הנוכחי הוא `907c4af7a9ecad94a724f3059d0afa13af395239`; ה־BW-GOV-010 fingerprint שלו הוא `e38d6e14a2b9ae28` עבור 271 קבצי implementation. השינוי מוסיף `evidenceVersion` ו־fail-closed אטומי כאשר late frame נכנס בין קריאת event evidence לשמירת recompute. `Navigation Input Integration #154` ו־`BW-SYNC-013 Raw Score Contract #21` עברו SUCCESS. `Blue Wolf CI #2953` סיים 29/30 jobs ירוקים וה־Web נכשל רק בגלל manifest הישן לפני סנכרון זה; נדרש post-sync CI חדש. Release עדיין חסום עד implementationApproval מפורש וללא טענה ל־customer Influx E2E.
 
 ## מה עדיין פתוח
 
 1. **BW-SYNC-013 user re-verification** — מנגנון display-only smoothing ממומש ב-Web עם RAW/5/10/20/30 שניות (default 10s) ומשותף לגרף ולכרטיסי הקבוצה לאחר recompute. הוא אינו משנה raw Core score, alerts, events או grouping; הסעיף נשאר partial רק עד QA ויזואלי מפורש של המשתמש.
-2. **Late-data recomputation / archive** — live history של 30 דקות אינו תחליף לכל After Action persistence ארוך הטווח. נדרש להשלים את כל חוזי storage/versioned recomputation שנותרו פתוחים במפרט.
+2. **Late-data recomputation / archive** — מרוץ של late frame מול recompute נסגר ב־`evidenceVersion` אטומי ו־fail-closed לפני persistence. עדיין פתוחים retention/version-history ארוך טווח, מדיניות correction מאוחרת מעבר לאירוע הפעיל, וכל חוזי After Action שאינם מכוסים בארכיון האירועים הנוכחי.
 3. **Full load/robustness campaign** — BW-DATA-010 כבר מודד InfluxDB2 2.7 אמיתי → Flux → temporal join → Core → RuntimeSnapshot → HTTP מתחת ל-10s, ו-footprint serialization מכוסה; עדיין נדרש מסע עומס מלא בקנה מידה 10 servers / 150 vehicles לכל ממדי CPU/memory/late-data/restart.
 4. **Operational deployment** — packaging קיים ונבדק ב-CI; נדרש deployment בפועל ברשת Windows/OpenShift הארגונית עם Influx, secrets ו-persistent volume אמיתיים.
 5. **Sites demo** — הפריסה הציבורית נשארת demo ואינה מחליפה Python runtime ברשת הסגורה. אין להציג URL שלא פורסם ואומת בפועל.
