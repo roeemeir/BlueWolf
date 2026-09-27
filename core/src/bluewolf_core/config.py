@@ -78,17 +78,116 @@ class ScoringConfig:
 class DetectionConfig:
     si_axis_ratio_max: float = 1.5
     canonical_point_limit: int = 64
-    new_route_observation_seconds: int = 300
-    known_route_candidate_seconds: int = 60
-    required_fit_fraction: float = 0.70
-    required_completed_cycles: int = 1
+
+    # Retained only for old configuration compatibility. Route acquisition is
+    # evidence-driven and these values are not used as confirmation timers.
+    new_route_observation_seconds: int = 0
+    known_route_candidate_seconds: int = 0
+
+    # Forty minutes is a hard memory/lookback ceiling, never a required wait.
+    max_history_seconds: int = 2400
+    adaptive_min_window_seconds: int = 30
+    adaptive_window_growth_factor: float = 1.5
+    adaptive_window_refine_seconds: int = 10
+
+    # Topology-neutral partial-cycle candidate gates. These do not claim a
+    # family, topology, route id or period; they only indicate that enough
+    # coherent route-like curvature has been observed to justify the more
+    # expensive closed-route search. Calibrated against all approved V2 route
+    # families plus straight, random-walk and noisy-drift negative banks.
+    partial_candidate_min_turn_fraction: float = 0.30
+    partial_candidate_min_smooth_heading_fraction: float = 0.85
+    partial_candidate_min_turn_sign_persistence: float = 0.75
+    partial_candidate_max_path_efficiency: float = 0.90
+    partial_candidate_min_contiguous_observation_fraction: float = 0.35
+
+    # Closed-route evidence thresholds. They are configuration values so
+    # deterministic simulation and later real-data calibration can tune them.
+    candidate_fit_fraction: float = 0.68
+    candidate_coverage_fraction: float = 0.45
+    candidate_travel_fraction: float = 0.40
+    required_fit_fraction: float = 0.78
+    confirmation_coverage_fraction: float = 0.82
+    required_completed_cycles: float = 0.90
+    phase_coverage_bins: int = 32
+    coverage_interpolation_max_phase_gap: float = 0.20
+
     closure_distance_short_axis_ratio: float = 0.20
     closure_direction_error_deg: float = 30
     closure_minimum_phase: float = 0.80
-    geometry_change_ratio: float = 0.20
+
+    # Existing-route change lifecycle. BW-CORE-009 freezes approximately 10%
+    # as the product default for material geometry change. Period remains an
+    # independently configurable 20% default. Period-only replacements also
+    # require that the candidate evidence window is dominated by the new speed
+    # regime, preventing a 50/50 old/new window from becoming an intermediate
+    # period and causing replacement chatter.
+    geometry_change_ratio: float = 0.10
     period_change_ratio: float = 0.20
+    replacement_min_new_speed_support_fraction: float = 0.75
+    replacement_speed_decision_margin: float = 0.04
+    replacement_min_decisive_speed_samples: int = 6
+
+    # Retained only for configuration compatibility; no longer a behavior gate.
     change_confirmation_seconds: int = 120
     smoothing_seconds: int = 3
+
+    def __post_init__(self) -> None:
+        if self.max_history_seconds <= 0:
+            raise ValueError("max_history_seconds must be positive")
+        if self.adaptive_min_window_seconds <= 0:
+            raise ValueError("adaptive_min_window_seconds must be positive")
+        if self.adaptive_window_growth_factor <= 1.0:
+            raise ValueError("adaptive_window_growth_factor must be greater than 1")
+        if self.adaptive_window_refine_seconds <= 0:
+            raise ValueError("adaptive_window_refine_seconds must be positive")
+        if self.phase_coverage_bins < 8:
+            raise ValueError("phase_coverage_bins must be at least 8")
+        if not 0.0 < self.coverage_interpolation_max_phase_gap <= 0.5:
+            raise ValueError("coverage_interpolation_max_phase_gap must be in (0, 0.5]")
+        for name in (
+            "partial_candidate_min_turn_fraction",
+            "partial_candidate_min_smooth_heading_fraction",
+            "partial_candidate_min_turn_sign_persistence",
+            "partial_candidate_max_path_efficiency",
+            "partial_candidate_min_contiguous_observation_fraction",
+        ):
+            value = float(getattr(self, name))
+            if not 0.0 <= value <= 1.5:
+                raise ValueError(f"{name} is outside the supported range")
+        for name in (
+            "partial_candidate_min_smooth_heading_fraction",
+            "partial_candidate_min_turn_sign_persistence",
+            "partial_candidate_min_contiguous_observation_fraction",
+        ):
+            value = float(getattr(self, name))
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be in [0,1]")
+        if not 0.0 < self.partial_candidate_max_path_efficiency <= 1.5:
+            raise ValueError("partial_candidate_max_path_efficiency must be in (0,1.5]")
+        for name in (
+            "candidate_fit_fraction",
+            "candidate_coverage_fraction",
+            "candidate_travel_fraction",
+            "required_fit_fraction",
+            "confirmation_coverage_fraction",
+            "required_completed_cycles",
+        ):
+            value = float(getattr(self, name))
+            if not 0.0 <= value <= 1.5:
+                raise ValueError(f"{name} is outside the supported range")
+        if self.candidate_fit_fraction > self.required_fit_fraction:
+            raise ValueError("candidate fit gate cannot exceed confirmation fit gate")
+        if self.candidate_coverage_fraction > self.confirmation_coverage_fraction:
+            raise ValueError("candidate coverage gate cannot exceed confirmation coverage gate")
+        if not 0.5 <= self.replacement_min_new_speed_support_fraction <= 1.0:
+            raise ValueError(
+                "replacement_min_new_speed_support_fraction must be in [0.5, 1]"
+            )
+        if not 0.0 <= self.replacement_speed_decision_margin < 1.0:
+            raise ValueError("replacement_speed_decision_margin must be in [0, 1)")
+        if self.replacement_min_decisive_speed_samples < 3:
+            raise ValueError("replacement_min_decisive_speed_samples must be at least 3")
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,7 +222,7 @@ class TimingConfig:
 @dataclass(frozen=True, slots=True)
 class CoreConfig:
     schema_version: int = 1
-    detection_version: str = "1"
+    detection_version: str = "2-adaptive"
     scoring_version: str = "1"
     template_version: str = "1"
     scoring: ScoringConfig = field(default_factory=ScoringConfig)
@@ -138,7 +237,7 @@ class CoreConfig:
     def from_dict(cls, raw: Mapping[str, Any]) -> CoreConfig:
         return cls(
             schema_version=int(raw.get("schema_version", 1)),
-            detection_version=str(raw.get("detection_version", "1")),
+            detection_version=str(raw.get("detection_version", "2-adaptive")),
             scoring_version=str(raw.get("scoring_version", "1")),
             template_version=str(raw.get("template_version", "1")),
             scoring=_scoring_from_dict(raw.get("scoring", {})),
@@ -194,4 +293,3 @@ def _scoring_from_dict(value: object) -> ScoringConfig:
         curvature_ratio=_band(raw, "curvature_ratio", defaults.curvature_ratio),
         **scalars,
     )
-

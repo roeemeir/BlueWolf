@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "bluewolf.documentation-sync.v1",
+  "iterationId": "requirements-governance-2026-09-27",
+  "implementationFingerprint": {
+    "algorithm": "fnv1a64(path\\0gitBlobSha\\n)",
+    "digest": "e26f60f930fc5d73",
+    "fileCount": 272,
+    "trackedPaths": [
+      "app/",
+      "components/",
+      "lib/",
+      "core/src/",
+      "deploy/",
+      "package.json",
+      "next.config.ts"
+    ]
+  },
+  "masterDocument": {
+    "title": "Blue_Wolf_Full_Specification_HE",
+    "version": "2.8",
+    "driveFileId": "1pcjq50LchceDYsCqek_jqxkkRYbnef4l",
+    "verifiedImplementationBaseline": "a7518ff851b8b5bff3c2a848c95767d46141ee70",
+    "verifiedCiRun": 2975,
+    "verifiedAt": "2026-09-27T05:34:21.858Z",
+    "verificationStatus": "pending-post-sync"
+  },
+  "coreResearchDocument": {
+    "title": "Blue_Wolf_Core_Research_Report_HE_v1_2.docx",
+    "version": "1.2",
+    "driveFileId": "1dc6M_--RWDiCmenvItJLmrOxhjMl0bal",
+    "scope": "Core algorithms, modeling, grouping and scoring; subordinate to the Master"
+  },
+  "archivedCoreResearchDocument": {
+    "title": "ARCHIVED_SUPERSEDED_Blue_Wolf_Core_Research_Report_HE_v2_1.docx",
+    "version": "2.1",
+    "driveFileId": "1OGjS5_xTQN_CGgv-laXOnFOay9J19BbS",
+    "status": "archived",
+    "archiveFolderId": "1ldLLCETpeK2Heg6FDtSZkqGTekKbsW33"
+  },
+  "researchDocuments": [
+    "core/docs/ALGORITHMIC_CORE_RESEARCH_LOG_HE.md",
+    "core/docs/IMPLEMENTATION_STATUS_HE.md",
+    "core/docs/ACTIVE_ALGORITHM_THRESHOLD_CATALOG.json",
+    "core/docs/V1_SPEC_HE.md"
+  ],
+  "policy": "Any change to the tracked implementation fingerprint requires an explicit substantive refresh and readback of both governing Drive documents before the manifest fingerprint changes. SI recompute/live-map members may preserve routeInstanceId=null; SO members must retain a non-empty routeInstanceId and fail closed otherwise. Authenticated QA preview may be published only after the full TEST Influx/Core/SQLite/archive/PDF/browser/restart chain and governance check pass. Core research v1.2 is the active subordinate Drive document; v2.1 is archived. User implementation approval remains a separate production release gate."
+}

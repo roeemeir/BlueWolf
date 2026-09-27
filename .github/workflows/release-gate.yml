@@ -1,0 +1,38 @@
+name: Blue Wolf Release Gate
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  frozen-requirements:
+    name: BW-QA-007 / PROC-01 — frozen requirements and full current-head audit gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Verify Master and research documentation sync
+        run: node scripts/verify-documentation-sync.mjs docs/documentation-sync.json
+      - name: Verify full development iteration review
+        run: node scripts/verify-development-iteration.mjs docs/development-iteration-review.json docs/full-requirements-registry.json
+      - name: Build conservative current-head audit
+        run: |
+          mkdir -p build
+          node scripts/build-current-head-audit.mjs \
+            docs/full-requirements-registry.json \
+            build/current-head-requirements-audit.json \
+            --head "$GITHUB_SHA"
+      - name: Verify full current-head requirements audit
+        run: |
+          node scripts/verify-full-requirements-registry.mjs \
+            docs/full-requirements-registry.json \
+            docs/release-scope-2026-09-15.json \
+            --release \
+            --audit build/current-head-requirements-audit.json \
+            --head "$GITHUB_SHA"
+      - name: Verify frozen release scope and explicit user implementation approval
+        run: node scripts/verify-release-scope.mjs docs/release-scope-2026-09-15.json

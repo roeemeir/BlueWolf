@@ -1,83 +1,302 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { CalendarRange, Download, FileDown, Filter, LoaderCircle, Save, Search, TrendingDown, UsersRound } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, CheckCircle2, FileChartColumn, History, MapPin, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { getServerScenario } from "@/lib/bluewolf";
+import {
+  normalizeEventRecompute,
+  normalizeInvestigationEvents,
+  type EventRecomputeResult,
+  type InvestigationEventIndex,
+  type InvestigationTemplate,
+  type RecomputedNavigation,
+} from "@/lib/investigation-contract";
 import { useWorkspace } from "./app-context";
-import { EventMiniMap, EventOverviewMap, LiveMap, MapLoadingOverlay, ScoreRing, TimelineChart, groupLineColor, type GroupKey, type ScoreLayer } from "./visuals";
-import { WolfLogo } from "./wolf-logo";
 
-type RootCause = { label: string; sharePct: number; impactPoints: number; contribution: number };
-type InvestigationEvent = { id: string; start: string; end: string; durationMin: number; family: GroupKey; group: string; members: number[]; templateId: string; score: number; sync: number; route: number; rootCauses: RootCause[] };
-type InvestigationEdit = { note: string; templateId: string };
-
-const quality = (score: number) => score >= 80 ? "טוב" : score < 50 ? "נמוך" : "בינוני";
-
-function buildEvents(server: string): InvestigationEvent[] {
-  const scenario = getServerScenario(server); const si = scenario.groups.si; const so = scenario.groups.so;
-  return [
-    { id: `${server}-group-event-01`, start: "17:08", end: "17:42", durationMin: 34, family: "si", group: si.id, members: si.members.map((m) => m.id), templateId: si.templateId, score: Math.max(72, si.total - 4), sync: Math.max(70, si.sync - 5), route: Math.max(70, si.route - 2), rootCauses: [{ label: "סטיית זווית בין זוג רכבים", sharePct: 18, impactPoints: 7.4, contribution: 1.3 }, { label: "סטייה קלה מהמשיק", sharePct: 9, impactPoints: 3.2, contribution: .3 }] },
-    { id: `${server}-group-event-02`, start: "17:48", end: "18:39", durationMin: 51, family: "so", group: so.id, members: so.members.map((m) => m.id), templateId: so.templateId, score: so.total, sync: so.sync, route: so.route, rootCauses: [{ label: "איחור בתזמון פנייה", sharePct: 31, impactPoints: 17.6, contribution: 5.5 }, { label: "פער פאזה באזור פנייה", sharePct: 22, impactPoints: 10.4, contribution: 2.3 }, { label: "סטיית מרחק מהנתיב", sharePct: 8, impactPoints: 4.1, contribution: .3 }] },
-    { id: `${server}-group-event-03`, start: "18:44", end: "19:26", durationMin: 42, family: "si", group: si.id, members: si.members.map((m) => m.id), templateId: si.templateId, score: Math.min(95, si.total + 5), sync: Math.min(97, si.sync + 4), route: Math.min(94, si.route + 6), rootCauses: [{ label: "סטיית משיק קלה", sharePct: 6, impactPoints: 2.1, contribution: .1 }] },
-  ];
+function formatTime(value: string) {
+  try {
+    return new Intl.DateTimeFormat("he-IL", { dateStyle: "short", timeStyle: "medium", hour12: false }).format(new Date(value));
+  } catch {
+    return value;
+  }
 }
 
-function downloadJson(filename: string, payload: unknown) { const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url); }
+function scoreLabel(value: number | null) {
+  return value === null ? "missing" : value.toFixed(1);
+}
 
-export function InvestigationView({ server, onServerChange }: { server: string; onServerChange: (server: string) => void }) {
+function inputTimeToIso(value: string, name: string) {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) throw new Error(`${name} אינו זמן תקין`);
+  return date.toISOString();
+}
+
+async function requestEvents(server: string, from?: string, to?: string) {
+  const query = new URLSearchParams({ serverId: server });
+  if (from) query.set("from", from);
+  if (to) query.set("to", to);
+  const response = await fetch(`/api/investigation/events?${query.toString()}`, { cache: "no-store" });
+  const payload = await response.json() as unknown;
+  if (!response.ok) {
+    const detail = payload && typeof payload === "object" && "error" in payload ? String((payload as { error: unknown }).error) : `Investigation archive returned ${response.status}`;
+    throw new Error(detail);
+  }
+  return normalizeInvestigationEvents(payload);
+}
+
+type ScoreSeries = {
+  id: string;
+  label: string;
+  values: (number | null)[];
+  strokeWidth: number;
+  dash?: string;
+};
+
+type InvestigationEdit = { note: string; templateId: string; arena?: string };
+
+function pathSegments(values: (number | null)[], width: number, height: number) {
+  const denominator = Math.max(1, values.length - 1);
+  const segments: string[] = [];
+  let current = "";
+  values.forEach((value, index) => {
+    if (value === null) {
+      if (current) segments.push(current);
+      current = "";
+      return;
+    }
+    const x = index / denominator * width;
+    const y = height - value / 100 * height;
+    current += `${current ? " L" : "M"}${x.toFixed(2)},${y.toFixed(2)}`;
+  });
+  if (current) segments.push(current);
+  return segments;
+}
+
+function ScoreTimeline({ result, cursor, onCursor }: { result: EventRecomputeResult; cursor: number; onCursor: (value: number) => void }) {
+  const width = 900;
+  const height = 240;
+  const memberIds = Array.from(new Set(result.points.flatMap((point) => point.members.map((member) => member.memberId))));
+  const dashPatterns = ["10 5", "4 4", "14 4 3 4", "2 5", "18 6"];
+  const series: ScoreSeries[] = [
+    { id: "group", label: "קבוצה · Total", values: result.points.map((point) => point.group.total), strokeWidth: 5 },
+    ...memberIds.map((memberId, index) => ({
+      id: memberId,
+      label: `רכב ${memberId} · Total`,
+      values: result.points.map((point) => point.members.find((member) => member.memberId === memberId)?.total ?? null),
+      strokeWidth: 2.5,
+      dash: dashPatterns[index % dashPatterns.length],
+    })),
+  ];
+  const denominator = Math.max(1, result.points.length - 1);
+  const cursorX = cursor / denominator * width;
+  const cursorPoint = result.points[cursor];
+  return <div style={{ marginTop: 14 }} data-requirements="BW-REP-004"><div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 6, flexWrap: "wrap" }}><strong>Group + vehicle scores לאורך האירוע</strong><span>{result.scoredFrameCount} scored · {result.missingFrameCount} missing · {result.frameCount} total</span></div><div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>{series.map((item) => <span key={item.id} style={{ display: "inline-flex", gap: 5, alignItems: "center" }}><svg width="34" height="8" aria-hidden="true"><line x1="0" x2="34" y1="4" y2="4" stroke="currentColor" strokeWidth={item.strokeWidth} strokeDasharray={item.dash} /></svg>{item.label}</span>)}</div><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Recomputed group and vehicle score timelines with one synchronized cursor" style={{ width: "100%", minHeight: 190 }}>{[0, 25, 50, 75, 100].map((score) => { const y = height - score / 100 * height; return <g key={score}><line x1="0" x2={width} y1={y} y2={y} stroke="currentColor" opacity=".12" /><text x="4" y={Math.max(12, y - 4)} fontSize="18" fill="currentColor" opacity=".6">{score}</text></g>; })}{series.map((item) => pathSegments(item.values, width, height).map((path, index) => <path key={`${item.id}-${index}`} d={path} fill="none" stroke="currentColor" strokeWidth={item.strokeWidth} strokeDasharray={item.dash} opacity={item.id === "group" ? 1 : .65} vectorEffect="non-scaling-stroke" />))}<line x1={cursorX} x2={cursorX} y1="0" y2={height} stroke="currentColor" strokeWidth="2" opacity=".45" /></svg><input aria-label="סליידר זמן אחיד לתחקור" type="range" min={0} max={Math.max(0, result.points.length - 1)} step={1} value={cursor} onChange={(event) => onCursor(Number(event.target.value))} style={{ width: "100%" }} /><div className="glass-panel" style={{ marginTop: 8, padding: 12 }}><strong>{cursorPoint ? formatTime(cursorPoint.observedAt) : "ללא frame"}</strong>{cursorPoint?.pendingReason ? <p>missing · {cursorPoint.pendingReason}</p> : cursorPoint ? <><p>Group: S {scoreLabel(cursorPoint.group.sync)} · R {scoreLabel(cursorPoint.group.route)} · T {scoreLabel(cursorPoint.group.total)}</p><div style={{ display: "grid", gap: 5 }}>{cursorPoint.members.map((member) => <span key={member.memberId}>{member.memberId} · {member.slotId} · S {scoreLabel(member.sync)} · R {scoreLabel(member.route)} · T {scoreLabel(member.total)}</span>)}</div></> : null}</div>{result.missingFrameCount > 0 && <p className="card-hint">פער בגרף פירושו evidence חסר בזמן אמת. ציר הזמן אינו נדחס והנקודות משני צדי הפער אינן מחוברות.</p>}</div>;
+}
+
+type ProjectedPoint = { x: number; y: number };
+
+function NavigationEvidenceMap({ result, cursor, arena }: { result: EventRecomputeResult; cursor: number; arena: string }) {
+  const width = 900;
+  const height = 360;
+  const allNavigation = result.points.flatMap((point) => point.navigation).filter((item) => item.latitude !== null && item.longitude !== null);
+  if (!allNavigation.length) return <div className="empty-state" style={{ marginTop: 16 }} data-requirements="BW-REP-003 BW-REP-010"><MapPin /><strong>אין navigation evidence באירוע</strong><span>{arena ? `Arena: ${arena}. ` : "Arena לא נבחר. "}המפה לא משחזרת מיקום מפאזה או מגאומטריית המסלול. אירועים ישנים ללא lat/lon נשארים ללא מיקום.</span></div>;
+
+  const latitudes = allNavigation.map((item) => item.latitude as number);
+  const longitudes = allNavigation.map((item) => item.longitude as number);
+  const rawMinLat = Math.min(...latitudes);
+  const rawMaxLat = Math.max(...latitudes);
+  const rawMinLon = Math.min(...longitudes);
+  const rawMaxLon = Math.max(...longitudes);
+  const latSpan = Math.max(rawMaxLat - rawMinLat, 0.0002);
+  const lonSpan = Math.max(rawMaxLon - rawMinLon, 0.0002);
+  const latPad = latSpan * 0.08;
+  const lonPad = lonSpan * 0.08;
+  const minLat = rawMinLat - latPad;
+  const maxLat = rawMaxLat + latPad;
+  const minLon = rawMinLon - lonPad;
+  const maxLon = rawMaxLon + lonPad;
+  const project = (item: RecomputedNavigation): ProjectedPoint | null => {
+    if (item.latitude === null || item.longitude === null) return null;
+    return {
+      x: (item.longitude - minLon) / (maxLon - minLon) * width,
+      y: height - (item.latitude - minLat) / (maxLat - minLat) * height,
+    };
+  };
+  const memberIds = Array.from(new Set(allNavigation.map((item) => item.memberId)));
+  const dashPatterns = [undefined, "10 5", "4 4", "14 4 3 4", "2 5", "18 6"];
+  const trailSegments = (memberId: string) => {
+    const segments: string[] = [];
+    let current = "";
+    for (let index = 0; index <= cursor; index += 1) {
+      const item = result.points[index]?.navigation.find((nav) => nav.memberId === memberId);
+      const projected = item ? project(item) : null;
+      if (!projected) {
+        if (current) segments.push(current);
+        current = "";
+        continue;
+      }
+      current += `${current ? " L" : "M"}${projected.x.toFixed(2)},${projected.y.toFixed(2)}`;
+    }
+    if (current) segments.push(current);
+    return segments;
+  };
+  const current = result.points[cursor]?.navigation ?? [];
+  return <section className="glass-panel" style={{ marginTop: 16, padding: 14 }} data-requirements="BW-REP-003 BW-REP-010"><div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 8 }}><div><strong>מפת event · navigation overlay</strong><p className="card-hint">WGS84 אמיתי מה־VehicleSample של אותו frame. ה־arena הוא שיוך תחקור פר־אירוע שנשמר ב־Workspace ואינו משנה את נתוני הניווט.</p></div><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Badge variant="outline"><MapPin />{arena || "Arena לא נבחר"}</Badge><Badge variant="outline">{formatTime(result.points[cursor]?.observedAt ?? result.startAt)}</Badge></div></div><svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Truth-backed WGS84 vehicle positions and trails synchronized to investigation slider" style={{ width: "100%", minHeight: 260, border: "1px solid currentColor", borderRadius: 12 }}><rect x="0" y="0" width={width} height={height} fill="none" /><text x="12" y="24" fill="currentColor" opacity=".55" fontSize="16">N ↑ · {minLat.toFixed(6)}..{maxLat.toFixed(6)} / {minLon.toFixed(6)}..{maxLon.toFixed(6)}</text>{memberIds.map((memberId, memberIndex) => trailSegments(memberId).map((path, index) => <path key={`${memberId}-${index}`} d={path} fill="none" stroke="currentColor" strokeWidth="3" strokeDasharray={dashPatterns[memberIndex % dashPatterns.length]} opacity=".55" vectorEffect="non-scaling-stroke" />))}{current.map((item) => { const point = project(item); if (!point) return null; const heading = item.headingDeg === null ? null : item.headingDeg * Math.PI / 180; const dx = heading === null ? 0 : Math.sin(heading) * 22; const dy = heading === null ? 0 : -Math.cos(heading) * 22; return <g key={item.memberId}><circle cx={point.x} cy={point.y} r="8" fill="currentColor" opacity={item.active === false ? .35 : .9} />{heading !== null && <line x1={point.x} y1={point.y} x2={point.x + dx} y2={point.y + dy} stroke="currentColor" strokeWidth="3" />}<text x={point.x + 11} y={point.y - 9} fill="currentColor" fontSize="18">{item.memberId}</text></g>; })}</svg><div style={{ display: "grid", gap: 6, marginTop: 10 }}>{current.length ? current.map((item) => <div key={item.memberId} style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 10 }}><span>{item.memberId} · vehicle {item.vehicleIdentifier}</span><span>{item.latitude === null ? "lat missing" : item.latitude.toFixed(6)}</span><span>{item.longitude === null ? "lon missing" : item.longitude.toFixed(6)}</span><span>{item.headingDeg === null ? "heading missing" : `${item.headingDeg.toFixed(1)}°`}</span></div>) : <span>אין navigation sample ב־frame הנבחר.</span>}</div></section>;
+}
+
+type EventsState =
+  | { kind: "loading"; server: string }
+  | { kind: "unavailable"; server: string; detail: string }
+  | { kind: "ready"; server: string; events: InvestigationEventIndex[]; templates: InvestigationTemplate[] };
+
+type RecomputeState =
+  | { kind: "idle" }
+  | { kind: "running" }
+  | { kind: "error"; detail: string }
+  | { kind: "complete"; result: EventRecomputeResult; persisted: boolean };
+
+export function InvestigationView({ server, onServerChange }: { server: string; onServerChange: (value: string) => void }) {
   const { state, save } = useWorkspace();
-  const [arena, setArena] = useState(state.arenas[0] ?? "זירה א׳");
-  const [from, setFrom] = useState("2026-09-02T17:00");
-  const [to, setTo] = useState("2026-09-02T19:30");
-  const [loading, setLoading] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [familyFilter, setFamilyFilter] = useState<"all" | GroupKey>("all");
-  const [cursor, setCursor] = useState(72);
-  const [draftEdits, setDraftEdits] = useState<Record<string, InvestigationEdit>>(() => structuredClone(state.investigationEdits));
-  const layers: ScoreLayer[] = ["total", "sync", "route"];
-  const allEvents = useMemo(() => buildEvents(server), [server]);
-  const [selectedId, setSelectedId] = useState(`${server}-group-event-02`);
-  const selected = allEvents.find((event) => event.id === selectedId) ?? allEvents[0];
-  const events = allEvents.filter((event) => familyFilter === "all" || event.family === familyFilter);
-  const totalMinutes = allEvents.reduce((sum, event) => sum + event.durationMin, 0);
-  const weightedScore = Math.round(allEvents.reduce((sum, event) => sum + event.score * event.durationMin, 0) / totalMinutes);
-  const best = [...allEvents].sort((a, b) => b.score - a.score)[0];
-  const draft = draftEdits[selected.id] ?? state.investigationEdits[selected.id] ?? { note: "", templateId: selected.templateId };
-  const updateDraft = (patch: Partial<InvestigationEdit>) => setDraftEdits((current) => ({ ...current, [selected.id]: { ...draft, ...patch } }));
+  const investigationEdits = state.investigationEdits as Record<string, InvestigationEdit>;
+  const [eventsState, setEventsState] = useState<EventsState>({ kind: "loading", server });
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  const [templateId, setTemplateId] = useState("");
+  const [note, setNote] = useState("");
+  const [arena, setArena] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [recompute, setRecompute] = useState<RecomputeState>({ kind: "idle" });
+  const visibleState: EventsState = eventsState.server === server ? eventsState : { kind: "loading", server };
+  const events = visibleState.kind === "ready" ? visibleState.events : [];
+  const coreTemplates = visibleState.kind === "ready" ? visibleState.templates : [];
+  const selectedEvent = events.find((event) => event.eventId === selectedEventId) ?? null;
 
-  const loadRange = () => {
-    if (new Date(from) >= new Date(to)) { toast.error("זמן ההתחלה חייב להיות מוקדם מזמן הסיום"); return; }
-    setLoading(true); setProgress(5);
-    const timer = window.setInterval(() => setProgress((value) => { const next = Math.min(100, value + 13); if (next >= 100) { window.clearInterval(timer); window.setTimeout(() => { setLoading(false); toast.success("הטווח נטען וחולק לאירועי קבוצתיות"); }, 180); } return next; }), 110);
+  const chooseEvent = (
+    eventId: string | null,
+    availableEvents: InvestigationEventIndex[] = events,
+    availableTemplates: InvestigationTemplate[] = coreTemplates,
+  ) => {
+    const nextId = eventId && availableEvents.some((event) => event.eventId === eventId) ? eventId : (availableEvents[0]?.eventId ?? null);
+    setSelectedEventId(nextId);
+    const existing = nextId ? investigationEdits[nextId] : undefined;
+    const existingIsActiveCoreTemplate = Boolean(existing?.templateId && availableTemplates.some((template) => template.id === existing.templateId));
+    setTemplateId(existingIsActiveCoreTemplate ? existing!.templateId : (availableTemplates[0]?.id ?? ""));
+    setNote(existing?.note ?? "");
+    setArena(existing?.arena && state.arenas.includes(existing.arena) ? existing.arena : "");
+    setRecompute({ kind: "idle" });
   };
-  const saveEdit = async () => {
-    const nextEdit = { note: draft.note.trim(), templateId: draft.templateId };
-    setDraftEdits((current) => ({ ...current, [selected.id]: nextEdit }));
-    await save({ ...state, investigationEdits: { ...state.investigationEdits, [selected.id]: nextEdit } }, "investigation", "event-edit", selected.id);
+
+  const loadEvents = async () => {
+    if ((from && !to) || (!from && to)) {
+      toast.error("כדי לסנן טווח יש להזין גם התחלה וגם סוף");
+      return;
+    }
+    let fromIso: string | undefined;
+    let toIso: string | undefined;
+    try {
+      fromIso = inputTimeToIso(from, "זמן התחלה");
+      toIso = inputTimeToIso(to, "זמן סוף");
+      if (fromIso && toIso && fromIso > toIso) throw new Error("זמן ההתחלה חייב להיות מוקדם מזמן הסיום");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "טווח הזמן אינו תקין");
+      return;
+    }
+    setEventsState({ kind: "loading", server });
+    try {
+      const loaded = await requestEvents(server, fromIso, toIso);
+      setEventsState({ kind: "ready", server, events: loaded.events, templates: loaded.templates });
+      chooseEvent(selectedEventId, loaded.events, loaded.templates);
+    } catch (error) {
+      setEventsState({ kind: "unavailable", server, detail: error instanceof Error ? error.message : "Investigation archive unavailable" });
+      chooseEvent(null, [], []);
+    }
   };
 
-  return <div className="investigation-workspace v04-investigation">
-    <section className="investigation-filter glass-panel"><div><p className="eyebrow">תחקור לאחור</p><h2>טווח, שרת וזירה</h2><p>אירוע מוגדר כרצף שבו קבוצה שומרת על הקבוצתיות שלה. התראות אינן אירועים.</p></div><div className="investigation-controls"><label><span>שרת</span><Select value={server} onValueChange={(value) => { onServerChange(value); setSelectedId(`${value}-group-event-02`); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.servers.filter((item) => item.enabled).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></label><label><span>זירה</span><Select value={arena} onValueChange={setArena}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.arenas.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></label><label><span>מתאריך</span><input type="datetime-local" value={from} onChange={(event) => setFrom(event.target.value)} /></label><label><span>עד תאריך</span><input type="datetime-local" value={to} onChange={(event) => setTo(event.target.value)} /></label><Button onClick={loadRange} disabled={loading}>{loading ? <LoaderCircle className="spin" /> : <Search />}{loading ? "טוען" : "טען"}</Button></div>{loading && <div className="range-progress"><Progress value={progress} /><span>{progress}% · {progress < 45 ? "מזהה קבוצתיות" : "מחשב ציונים ו-root causes"}</span></div>}</section>
+  useEffect(() => {
+    let cancelled = false;
+    const bootstrap = async () => {
+      try {
+        const loaded = await requestEvents(server);
+        if (cancelled) return;
+        setEventsState({ kind: "ready", server, events: loaded.events, templates: loaded.templates });
+        const nextId = loaded.events[0]?.eventId ?? null;
+        setSelectedEventId(nextId);
+        const existing = nextId ? investigationEdits[nextId] : undefined;
+        const existingIsActiveCoreTemplate = Boolean(existing?.templateId && loaded.templates.some((template) => template.id === existing.templateId));
+        setTemplateId(existingIsActiveCoreTemplate ? existing!.templateId : (loaded.templates[0]?.id ?? ""));
+        setNote(existing?.note ?? "");
+        setArena(existing?.arena && state.arenas.includes(existing.arena) ? existing.arena : "");
+        setRecompute({ kind: "idle" });
+      } catch (error) {
+        if (cancelled) return;
+        setEventsState({ kind: "unavailable", server, detail: error instanceof Error ? error.message : "Investigation archive unavailable" });
+        setSelectedEventId(null);
+        setArena("");
+        setRecompute({ kind: "idle" });
+      }
+    };
+    void bootstrap();
+    return () => { cancelled = true; };
+    // The server boundary controls archive retrieval. Workspace drafts are read after the async Core response arrives.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [server]);
 
-    <section className="v04-investigation-summary"><article className="glass-panel"><span>אירועי קבוצתיות</span><strong>{allEvents.length}</strong><small>{totalMinutes} דקות בקבוצות</small></article><article className="glass-panel"><span>ציון משוקלל בזמן</span><strong>{weightedScore}</strong><small>לפי משך כל אירוע</small></article><article className="glass-panel"><span>האירוע המוביל</span><strong>{best.group}</strong><small>{best.score} נק׳ · {best.durationMin} דק׳</small></article><article className="glass-panel"><span>root cause מוביל</span><strong>{selected.rootCauses[0]?.sharePct ?? 0}%</strong><small>{selected.rootCauses[0]?.label ?? "ללא"}</small></article></section>
+  const applyTemplate = async () => {
+    if (!selectedEvent || !templateId) return;
+    setRecompute({ kind: "running" });
+    try {
+      const response = await fetch("/api/investigation/recompute", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ eventId: selectedEvent.eventId, templateId, scenarioId: `investigation:${selectedEvent.eventId}` }),
+      });
+      const payload = await response.json() as unknown;
+      if (!response.ok) {
+        const detail = payload && typeof payload === "object" && "error" in payload ? String((payload as { error: unknown }).error) : `Recompute returned ${response.status}`;
+        setRecompute({ kind: "error", detail });
+        return;
+      }
+      const result = normalizeEventRecompute(payload);
+      const edit: InvestigationEdit = { note, templateId: result.templateId, ...(arena ? { arena } : {}) };
+      const next = { ...state, investigationEdits: { ...investigationEdits, [selectedEvent.eventId]: edit } };
+      const persisted = await save(next, "investigation", "recompute-template", `${result.eventId} · ${result.templateId} · ${result.runId}`);
+      setRecompute({ kind: "complete", result, persisted });
+      if (!persisted) toast.warning("החישוב הושלם ב-Core אך עריכת התחקור לא נשמרה ב-Workspace");
+    } catch (error) {
+      setRecompute({ kind: "error", detail: error instanceof Error ? error.message : "Core recomputation unavailable" });
+    }
+  };
 
-    <section className="v04-summary-map glass-panel"><div className="section-toolbar"><div><p className="eyebrow">מפה מסכמת</p><h2>כל האירועים בטווח · {arena}</h2></div><div className="toolbar-actions"><Button variant="outline" size="sm" onClick={() => downloadJson(`bluewolf-${server}-${arena}.json`, { server, arena, from, to, events: allEvents })}><Download />JSON</Button><Button size="sm" onClick={() => { toast.info("הדוח כולל סיכום, מפה, אירועים ו-root causes בלבד"); window.setTimeout(() => window.print(), 250); }}><FileDown />PDF</Button></div></div><EventOverviewMap eventLabels={allEvents.map((_, index) => `E${index + 1}`)} /></section>
+  const saveEventMetadata = async () => {
+    if (!selectedEvent) return;
+    const existing = investigationEdits[selectedEvent.eventId];
+    const edit: InvestigationEdit = { note, templateId: existing?.templateId ?? "", ...(arena ? { arena } : {}) };
+    const next = { ...state, investigationEdits: { ...investigationEdits, [selectedEvent.eventId]: edit } };
+    await save(next, "investigation", "save-event-metadata", `${selectedEvent.eventId} · ${arena || "arena-unassigned"}`);
+  };
 
-    <section className="investigation-timeline glass-panel"><div className="section-toolbar"><div><p className="eyebrow">ציר זמן</p><h2>ציונים בתוך אירועי הקבוצתיות</h2></div><div className="segmented-control"><button type="button" className={familyFilter === "all" ? "active" : ""} onClick={() => setFamilyFilter("all")}>הכול</button><button type="button" className={familyFilter === "si" ? "active" : ""} onClick={() => setFamilyFilter("si")}>SI</button><button type="button" className={familyFilter === "so" ? "active" : ""} onClick={() => setFamilyFilter("so")}>SO</button></div></div><TimelineChart serverId={server} selected={selected.family} layers={layers} cursor={cursor} onCursor={setCursor} fromLabel={from.replace("T", " ")} toLabel={to.replace("T", " ")} /><div className="timeline-footer"><span><CalendarRange />גבולות E1/E2/E3 הם גבולות קבוצתיות</span><span>אין רשימת התראות בדוח</span></div></section>
+  return <div className="investigation-page" dir="rtl" data-requirements="BW-SYNC-009 BW-SYNC-010 BW-SYNC-011 BW-UI-006 BW-REP-001 BW-REP-003 BW-REP-004 BW-REP-010 BW-QA-005">
+    <section className="glass-panel" style={{ padding: 18, marginBottom: 16 }}><header className="developer-section-header"><div><p className="eyebrow">Core Event Archive</p><h2>תחקור מבוסס נתוני מקור</h2><p>אירוע מוגדר כרצף שבו קבוצה שומרת על הקבוצתיות שלה. אירועים וציונים אינם נוצרים בדפדפן; שינוי תבנית מופעל רק דרך recomputation של Python Core על observations שנשמרו בזמן האירוע. נקודות שבהן evidence עדיין חסר נשמרות כ־missing ואינן נמחקות מהטווח.</p></div><div className="header-actions"><Select value={server} onValueChange={onServerChange}><SelectTrigger style={{ minWidth: 170 }}><SelectValue /></SelectTrigger><SelectContent>{state.servers.filter((item) => item.enabled).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></div></header><div style={{ display: "grid", gridTemplateColumns: "minmax(190px,1fr) minmax(190px,1fr) auto auto", gap: 10, alignItems: "end", marginTop: 14 }}><label style={{ display: "grid", gap: 5 }}><span>מתאריך ושעה</span><input type="datetime-local" value={from} onChange={(event) => setFrom(event.target.value)} /></label><label style={{ display: "grid", gap: 5 }}><span>עד תאריך ושעה</span><input type="datetime-local" value={to} onChange={(event) => setTo(event.target.value)} /></label><Button variant="outline" onClick={loadEvents}><RefreshCw />טען טווח מהארכיון</Button><Button variant="ghost" onClick={() => { setFrom(""); setTo(""); void requestEvents(server).then((loaded) => { setEventsState({ kind: "ready", server, events: loaded.events, templates: loaded.templates }); chooseEvent(null, loaded.events, loaded.templates); }).catch((error) => setEventsState({ kind: "unavailable", server, detail: error instanceof Error ? error.message : "Investigation archive unavailable" })); }}>כל הארכיון</Button></div><p className="card-hint">הסינון נעשה ב־SQLite לפי אירועים שחופפים לטווח. אירוע שנבחר נשאר באורך המלא שלו ואינו נחתך מלאכותית בגבול הטווח.</p></section>
 
-    <div className="investigation-main v04-investigation-main"><section className="event-list glass-panel"><div className="list-title"><div><p className="eyebrow">אירועים</p><h2>{events.length} רצפי קבוצתיות</h2></div><Filter /></div><div className="event-list-scroll">{events.map((event) => { const color = groupLineColor[event.family]; return <button type="button" className={`event-row ${selected.id === event.id ? "active" : ""}`} key={event.id} onClick={() => setSelectedId(event.id)}><EventMiniMap family={event.family} color={color} /><div><span>E{allEvents.indexOf(event) + 1} · {event.start}–{event.end}</span><strong>{event.group} · {quality(event.score)}</strong><p>{event.durationMin} דק׳ · {event.members.length} רכבים · {event.rootCauses.length} גורמי שורש</p></div><ScoreRing value={event.score} color={color} size="small" /></button>; })}</div></section>
-      <section className="event-detail glass-panel"><div className="section-toolbar"><div><p className="eyebrow">אירוע נבחר · {selected.start}–{selected.end}</p><h2>{selected.group} · {quality(selected.score)}</h2><p><UsersRound /> {selected.members.join(" · ")}</p></div><div className="event-score-summary"><span>סנכרון <b>{selected.sync}</b></span><span>נתיב <b>{selected.route}</b></span><ScoreRing value={selected.score} color={groupLineColor[selected.family]} /></div></div><div className="investigation-map-wrap"><LiveMap serverId={server} tick={cursor} selectedGroup={selected.family} selectedVehicle={null} showTrace={false} showRoutes showRelations showGrid vehicleTypes={state.vehicleTypes} animate={false} onSelectGroup={() => undefined} onSelectVehicle={() => undefined} />{loading && <MapLoadingOverlay progress={progress} label="מחשב את האירוע" />}</div>
-        <div className="v04-root-causes"><div className="panel-title"><div><p className="eyebrow">Root causes</p><h3>הסיבות שהורידו את הציון</h3></div><Badge variant="outline">מדורג לפי תרומה</Badge></div>{[...selected.rootCauses].sort((a, b) => b.contribution - a.contribution).map((cause, index) => <article key={cause.label}><span className="v04-cause-rank">#{index + 1}</span><div><strong>{cause.label}</strong><small>{cause.sharePct}% מזמן האירוע</small></div><span><TrendingDown />השפעה בעת הופעה <b>−{cause.impactPoints}</b></span><span>תרומה כוללת <b>−{cause.contribution}</b></span></article>)}</div>
-        <div className="event-editor v04-event-editor"><div><p className="eyebrow">תיקון תחקור</p><h3>תבנית והערת מפתח</h3></div><label><span>תבנית לחישוב האירוע</span><Select value={draft.templateId} onValueChange={(value) => updateDraft({ templateId: value })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{state.templates.filter((item) => item.family.toLowerCase() === selected.family).map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></label><Textarea value={draft.note} onChange={(event) => updateDraft({ note: event.target.value })} placeholder="הערת תחקור קצרה" /><Button onClick={saveEdit}><Save />שמור תיקון</Button></div>
-      </section></div>
+    {visibleState.kind === "loading" && <section className="glass-panel empty-state" style={{ padding: 32 }}><History /><strong>טוען event evidence…</strong><span>אין אחוז התקדמות ללא telemetry אמיתי.</span></section>}
+    {visibleState.kind === "unavailable" && <section className="glass-panel empty-state" style={{ padding: 32 }}><AlertTriangle /><strong>ארכיון התחקור לא זמין</strong><span>{visibleState.detail}</span></section>}
+    {visibleState.kind === "ready" && events.length === 0 && <section className="glass-panel empty-state" style={{ padding: 32 }}><ShieldCheck /><strong>אין אירועי SO שמורים בטווח</strong><span>לא מוצגים אירועי demo. שנה את הטווח או המתן ל־Core evidence אמיתי.</span></section>}
+    {visibleState.kind === "ready" && events.length > 0 && coreTemplates.length === 0 && <section className="glass-panel empty-state" style={{ padding: 24, marginBottom: 16 }}><AlertTriangle /><strong>בנק תבניות Core לא זמין לשרת</strong><span>ניתן לראות אירועים, אך recomputation מושבת עד שה־runtime יחזיר template bank פעיל.</span></section>}
 
-    <section className="v04-print-report"><header><WolfLogo /><div><h1>זאב כחול · דוח תחקור</h1><p>{server} · {arena} · {from.replace("T", " ")}–{to.replace("T", " ")}</p></div></header><div className="v04-print-kpis"><span>אירועים<b>{allEvents.length}</b></span><span>זמן בקבוצות<b>{totalMinutes} דק׳</b></span><span>ציון משוקלל<b>{weightedScore}</b></span></div><EventOverviewMap eventLabels={allEvents.map((_, index) => `E${index + 1}`)} />{allEvents.map((event, index) => <article className="v04-print-event" key={event.id}><header><h2>E{index + 1} · {event.group}</h2><span>{event.start}–{event.end} · {event.durationMin} דק׳</span></header><div className="v04-print-scores"><b>כולל {event.score}</b><span>סנכרון {event.sync}</span><span>נתיב {event.route}</span></div><table><thead><tr><th>Root cause</th><th>% זמן</th><th>השפעה</th><th>תרומה כוללת</th></tr></thead><tbody>{event.rootCauses.map((cause) => <tr key={cause.label}><td>{cause.label}</td><td>{cause.sharePct}%</td><td>−{cause.impactPoints}</td><td>−{cause.contribution}</td></tr>)}</tbody></table></article>)}</section>
+    {visibleState.kind === "ready" && events.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 340px) minmax(0, 1fr)", gap: 16 }}><aside className="glass-panel" style={{ padding: 14 }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}><strong>אירועים</strong><Badge variant="outline">{events.length}</Badge></div><div style={{ display: "grid", gap: 8 }}>{events.map((event) => <button key={event.eventId} type="button" onClick={() => chooseEvent(event.eventId)} className={`event-list-item ${event.eventId === selectedEventId ? "active" : ""}`} style={{ textAlign: "right", width: "100%" }}><strong>{event.groupId}</strong><span>{formatTime(event.startAt)}</span><small>{event.frameCount} Core frames</small></button>)}</div></aside><section className="glass-panel" style={{ padding: 18 }}>{selectedEvent ? <><div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}><div><p className="eyebrow">{selectedEvent.eventId}</p><h3>קבוצה {selectedEvent.groupId}</h3><p>{formatTime(selectedEvent.startAt)} — {formatTime(selectedEvent.endAt)} · {selectedEvent.frameCount} frames</p></div><Badge variant="outline"><FileChartColumn />SO evidence</Badge></div><div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(220px, 1fr))", gap: 14, marginTop: 16 }}><label style={{ display: "grid", gap: 6 }}><span>תבנית לחישוב מחדש</span><Select value={templateId} onValueChange={(value) => { setTemplateId(value); setRecompute({ kind: "idle" }); }} disabled={coreTemplates.length === 0}><SelectTrigger><SelectValue placeholder="בחר תבנית SO מה-Core" /></SelectTrigger><SelectContent>{coreTemplates.map((template) => <SelectItem key={template.id} value={template.id}>{template.name}</SelectItem>)}</SelectContent></Select><small>הרשימה מגיעה מבנק התבניות הפעיל של Python Core; הבחירה היא draft עד recomputation תקף.</small></label><label style={{ display: "grid", gap: 6 }}><span>Arena לאירוע</span><Select value={arena || "__none__"} onValueChange={(value) => setArena(value === "__none__" ? "" : value)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="__none__">ללא שיוך arena</SelectItem>{state.arenas.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select><small>ה־arena נשמר רק לאירוע הנבחר ואינו משנה server או navigation evidence.</small></label><label style={{ display: "grid", gap: 6 }}><span>הערת תחקור</span><Textarea value={note} onChange={(event) => setNote(event.target.value)} rows={4} placeholder="הערה ידנית נשמרת בנפרד מהציון" /></label></div><div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}><Button onClick={applyTemplate} disabled={!templateId || coreTemplates.length === 0 || recompute.kind === "running"}><Play />{recompute.kind === "running" ? "מחשב מחדש…" : "החל תבנית וחשב מחדש"}</Button><Button variant="outline" onClick={saveEventMetadata}>שמור arena והערה</Button></div>{recompute.kind === "idle" && <div className="empty-state" style={{ marginTop: 18 }}><History /><strong>recompute not run</strong><span>הציון לא משתנה עד להרצת Core אמיתית.</span></div>}{recompute.kind === "running" && <div className="empty-state" style={{ marginTop: 18 }}><ShieldCheck /><strong>Core recomputation running</strong><span>אין progress מומצא; ממתין לתוצאה מלאה.</span></div>}{recompute.kind === "error" && <div className="empty-state" style={{ marginTop: 18 }}><AlertTriangle /><strong>החישוב מחדש נכשל</strong><span>{recompute.detail}</span></div>}{recompute.kind === "complete" && <RecomputeResultView key={recompute.result.runId} state={recompute} arena={arena} />}</> : <div className="empty-state"><History /><strong>בחר אירוע</strong></div>}</section></div>}
   </div>;
+}
+
+function RecomputeResultView({ state, arena }: { state: Extract<RecomputeState, { kind: "complete" }>; arena: string }) {
+  const result = state.result;
+  const [cursor, setCursor] = useState(Math.max(0, result.points.length - 1));
+  const lastScored = [...result.points].reverse().find((point) => point.members.length > 0);
+  return <div style={{ marginTop: 18 }}><div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}><Badge variant={state.persisted ? "default" : "outline"}>{state.persisted ? <CheckCircle2 /> : <AlertTriangle />}{state.persisted ? "נשמר" : "לא נשמר ב-Workspace"}</Badge><Badge variant="outline">run {result.runId}</Badge><Badge variant="outline">template {result.templateId}</Badge><Badge variant="outline">tpl-ver {result.templateVersion.slice(0, 14)}</Badge><Badge variant="outline">code {result.codeVersion.slice(0, 10)}</Badge><Badge variant="outline">config {result.configVersion.slice(0, 10)}</Badge><Badge variant="outline">scored {result.scoredFrameCount}</Badge><Badge variant="outline">missing {result.missingFrameCount}</Badge><Badge variant="outline">arena {arena || "לא נבחר"}</Badge></div><div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0,1fr))", gap: 10, marginTop: 14 }}><div className="metric-card"><span>Sync ממוצע</span><strong>{scoreLabel(result.summary.sync)}</strong></div><div className="metric-card"><span>Route ממוצע</span><strong>{scoreLabel(result.summary.route)}</strong></div><div className="metric-card"><span>Total ממוצע</span><strong>{scoreLabel(result.summary.total)}</strong></div></div><ScoreTimeline result={result} cursor={cursor} onCursor={setCursor} /><NavigationEvidenceMap result={result} cursor={cursor} arena={arena} /><div style={{ display: "grid", gridTemplateColumns: "minmax(220px, .8fr) minmax(0, 1.2fr)", gap: 14, marginTop: 16 }}><div><strong>Root causes</strong><div style={{ display: "grid", gap: 6, marginTop: 8 }}>{result.rootCauses.length ? result.rootCauses.map((cause) => <div key={cause.reason} className="glass-panel" style={{ padding: 10, display: "flex", justifyContent: "space-between" }}><span>{cause.reason}</span><b>{cause.occurrences}</b></div>) : <span>אין primary reasons בריצה זו.</span>}</div></div><div><strong>מצב אחרון scoreable לפי רכב</strong><div style={{ display: "grid", gap: 6, marginTop: 8 }}>{lastScored?.members.map((member) => <div key={member.memberId} className="glass-panel" style={{ padding: 10, display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: 10 }}><span>{member.memberId} · {member.slotId}</span><b>S {scoreLabel(member.sync)}</b><b>R {scoreLabel(member.route)}</b><b>T {scoreLabel(member.total)}</b></div>) ?? <span>אין member frames scoreable.</span>}</div></div></div><div className="empty-state" style={{ marginTop: 16 }}><FileChartColumn /><strong>PDF truth-backed עדיין לא הופק</strong><span>הדוח לא יסומן מוכן עד ש־BW-REP/PDF יעבוד מאותם event frames ו־recompute results.</span></div></div>;
 }

@@ -4,8 +4,11 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { toast } from "sonner";
 
 import { DEFAULT_INFLUX_MAPPINGS, DEFAULT_WORKSPACE, type InfluxFieldMapping, type WorkspaceState } from "@/lib/bluewolf";
+import { ensureTelAvivDemoMapState } from "@/lib/default-map-profile";
+import { migrateUntouchedBuiltInSiTemplates } from "@/lib/si-builtin-template-migration";
 
 type StorageMode = "cloud" | "local";
+type RuntimeSyncStatus = { synced: boolean; restartRequired: boolean; reason?: string } | null;
 
 type WorkspaceContextValue = {
   state: WorkspaceState;
@@ -20,14 +23,20 @@ type WorkspaceContextValue = {
 
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
+function defaultWorkspace(): WorkspaceState {
+  const defaults = ensureTelAvivDemoMapState(structuredClone(DEFAULT_WORKSPACE)) as WorkspaceState;
+  return { ...defaults, templates: migrateUntouchedBuiltInSiTemplates(defaults.templates, defaults.vehicleTypes) };
+}
+
 function hydrateState(value: Partial<WorkspaceState> | null | undefined): WorkspaceState {
-  if (!value) return structuredClone(DEFAULT_WORKSPACE);
+  const defaults = defaultWorkspace();
+  if (!value) return defaults;
   const incomingMappings = value.influx?.mappings;
   const mappings: InfluxFieldMapping[] = Array.isArray(incomingMappings)
     ? DEFAULT_INFLUX_MAPPINGS.map((fallback) => ({ ...fallback, ...(incomingMappings.find((item) => item.systemKey === fallback.systemKey) ?? {}) }))
     : DEFAULT_INFLUX_MAPPINGS;
-  return {
-    ...structuredClone(DEFAULT_WORKSPACE),
+  const next: WorkspaceState = {
+    ...defaults,
     ...value,
     weights: {
       sync: { ...DEFAULT_WORKSPACE.weights.sync, ...value.weights?.sync },
@@ -35,32 +44,35 @@ function hydrateState(value: Partial<WorkspaceState> | null | undefined): Worksp
       total: { ...DEFAULT_WORKSPACE.weights.total, ...value.weights?.total },
     },
     thresholds: { ...DEFAULT_WORKSPACE.thresholds, ...value.thresholds },
-    influx: { ...DEFAULT_WORKSPACE.influx, ...value.influx, mappings },
-    mapServers: value.mapServers?.length ? value.mapServers : structuredClone(DEFAULT_WORKSPACE.mapServers),
+    influx: { ...DEFAULT_WORKSPACE.influx, ...value.influx, stream: { ...DEFAULT_WORKSPACE.influx.stream, ...value.influx?.stream }, mappings },
+    mapServers: value.mapServers?.length ? value.mapServers : structuredClone(defaults.mapServers),
     activeTemplateOverrides: { ...DEFAULT_WORKSPACE.activeTemplateOverrides, ...value.activeTemplateOverrides },
     templateApplications: { ...DEFAULT_WORKSPACE.templateApplications, ...value.templateApplications },
     servers: value.servers?.map((server, index) => ({ ...DEFAULT_WORKSPACE.servers[index % DEFAULT_WORKSPACE.servers.length], ...server })) ?? structuredClone(DEFAULT_WORKSPACE.servers),
     arenas: value.arenas?.length ? value.arenas : structuredClone(DEFAULT_WORKSPACE.arenas),
     vehicleTypes: value.vehicleTypes?.map((type, index) => ({ ...DEFAULT_WORKSPACE.vehicleTypes[index % DEFAULT_WORKSPACE.vehicleTypes.length], ...type })) ?? structuredClone(DEFAULT_WORKSPACE.vehicleTypes),
     routes: value.routes?.map((route, index) => ({ ...DEFAULT_WORKSPACE.routes[index % DEFAULT_WORKSPACE.routes.length], ...route })) ?? structuredClone(DEFAULT_WORKSPACE.routes),
-    templates: value.templates?.map((template) => ({ ...template })) ?? structuredClone(DEFAULT_WORKSPACE.templates),
+    templates: value.templates?.map((template) => ({ ...template })) ?? structuredClone(defaults.templates),
     gtSegments: value.gtSegments?.map((segment, index) => ({ ...DEFAULT_WORKSPACE.gtSegments[index % DEFAULT_WORKSPACE.gtSegments.length], ...segment })) ?? structuredClone(DEFAULT_WORKSPACE.gtSegments),
-    settings: { ...DEFAULT_WORKSPACE.settings, ...value.settings },
+    settings: { ...defaults.settings, ...value.settings },
     investigationEdits: { ...DEFAULT_WORKSPACE.investigationEdits, ...value.investigationEdits },
   };
+  return { ...next, templates: migrateUntouchedBuiltInSiTemplates(next.templates, next.vehicleTypes) };
 }
 
 function getWorkspaceId() {
   const key = "bluewolf-workspace-id";
   const existing = window.localStorage.getItem(key);
   if (existing) return existing;
-  const created = `bw-${crypto.randomUUID()}`;
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  const created = `bw-${Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("")}`;
   window.localStorage.setItem(key, created);
   return created;
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<WorkspaceState>(() => structuredClone(DEFAULT_WORKSPACE));
+  const [state, setState] = useState<WorkspaceState>(() => defaultWorkspace());
   const [ready, setReady] = useState(false);
   const [loadProgress, setLoadProgress] = useState(8);
   const [storageMode, setStorageMode] = useState<StorageMode>("local");
@@ -90,6 +102,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         if (cancelled) return;
         if (fallback) {
           try { setState(hydrateState(JSON.parse(fallback))); } catch { setState(hydrateState(null)); }
+        } else {
+          setState(hydrateState(null));
         }
         setStorageMode("local");
       } finally {
@@ -105,26 +119,49 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const save = useCallback(async (next: WorkspaceState, category: string, action: string, detail = "") => {
-    setState(next);
-    window.localStorage.setItem("bluewolf-workspace-state", JSON.stringify(next));
     if (!workspaceId) return false;
     const saveToast = toast.loading("שומר את הקונפיגורציה…");
     try {
       const response = await fetch("/api/workspace", {
         method: "PUT",
         headers: { "content-type": "application/json", "x-bluewolf-workspace": workspaceId },
-        body: JSON.stringify({ state: next, category, action, detail }),
+        body: JSON.stringify({ state: next, category, action, detail, expectedRevision: revision }),
       });
+      if (response.status === 409) { toast.error("הפריט השתנה במקביל. רענן לפני שמירה נוספת; השינויים לא הופעלו.", { id: saveToast }); return false; }
       if (!response.ok) throw new Error("save failed");
-      const payload = await response.json() as { revision?: number };
+      const payload = await response.json() as { revision?: number; runtimeSync?: RuntimeSyncStatus };
+      setState(next);
+      try {
+        window.localStorage.setItem("bluewolf-workspace-state", JSON.stringify({ ...next, influx: { ...next.influx, token: "" } }));
+      } catch {
+        toast.warning("נשמר בשרת; לא ניתן לעדכן את המטמון במכשיר");
+      }
       setRevision(payload.revision ?? revision + 1);
       setLastSavedAt(new Date().toISOString());
       setStorageMode("cloud");
-      toast.success("נשמר והפך לפעיל", { id: saveToast });
+      if (category === "influx") {
+        if (payload.runtimeSync?.synced) {
+          toast.success(payload.runtimeSync.restartRequired ? "מיפוי Influx נשמר לקונפיגורציית ה־Core; נדרשת הפעלה מחדש של שירות הליבה" : "מיפוי Influx נשמר והוחל", { id: saveToast });
+        } else {
+          toast.warning(`מיפוי Influx נשמר ב־Workspace אך לא הוחל על ה־Core${payload.runtimeSync?.reason ? `: ${payload.runtimeSync.reason}` : " בפריסה זו"}`, { id: saveToast });
+        }
+      } else if (category === "templates" || category === "vehicle-ranges") {
+        if (payload.runtimeSync?.synced) {
+          toast.success(payload.runtimeSync.restartRequired ? "התצורה נשמרה והועברה ל־Core; נדרשת הפעלה מחדש של שירות הליבה" : "התצורה נשמרה והוחלה", { id: saveToast });
+        } else if (payload.runtimeSync?.reason?.includes("BLUEWOLF_OPERATIONAL_CONFIG is not configured")) {
+          toast.success("התצורה נשמרה והפכה לפעילה ב־Workspace וב־SIM. אין Core תפעולי מחובר בפריסה זו, ולכן אין יעד Runtime נוסף לעדכן.", { id: saveToast });
+        } else if (payload.runtimeSync) {
+          toast.warning(`התצורה נשמרה ב־Workspace, אך סנכרון ה־Core נכשל: ${payload.runtimeSync.reason ?? "סיבה לא ידועה"}`, { id: saveToast });
+        } else {
+          toast.success("נשמר והפך לפעיל", { id: saveToast });
+        }
+      } else {
+        toast.success("נשמר והפך לפעיל", { id: saveToast });
+      }
       return true;
     } catch {
       setStorageMode("local");
-      toast.warning("נשמר במכשיר; האחסון המרכזי אינו זמין כרגע", { id: saveToast });
+      toast.error("השמירה נכשלה. השינוי לא הופעל; נסה שוב כשהשרת זמין", { id: saveToast });
       return false;
     }
   }, [revision, workspaceId]);

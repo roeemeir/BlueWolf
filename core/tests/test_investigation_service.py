@@ -1,0 +1,376 @@
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC, datetime, timedelta
+import json
+import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
+
+from bluewolf_core.event_recompute import SOEventNavigationPoint, SOEventObservationFrame
+from bluewolf_core.so_scoring import SOScoringObservation
+from bluewolf_core.so_template_bank import SOTemplateBank, SOTemplateBankEntry
+from bluewolf_core.so_templates import Quarter, SORouteInstance, SORouteKind, SOTemplate, SOVehicleSlot
+from bluewolf_runtime_adapter.event_observation_archive import SOEventObservationArchive
+import bluewolf_runtime_adapter.qa_service as qa_service
+from bluewolf_runtime_adapter.qa_service import QaEnabledASGI
+
+
+NOW = datetime(2026, 9, 15, 6, 0, tzinfo=UTC)
+EVENT_ID = "g1@2026-09-15T06:00:00Z"
+LATER_EVENT_ID = "g2@2026-09-15T07:00:00Z"
+
+
+def _template() -> SOTemplate:
+    return SOTemplate(
+        template_id="template-opposite",
+        name="Opposite",
+        route_instances=(
+            SORouteInstance(
+                route_instance_id="r1",
+                route_kind=SORouteKind.SINGLE,
+                vehicle_slots=(
+                    SOVehicleSlot("a", "A", Quarter.Q0),
+                    SOVehicleSlot("b", "A", Quarter.Q2),
+                ),
+            ),
+        ),
+    )
+
+
+def _observation(member: str, phase: float) -> SOScoringObservation:
+    return SOScoringObservation(
+        member_id=member,
+        vehicle_type="A",
+        route_instance_id="r1",
+        semantic_phase=phase,
+        period_error_ratio=0.0,
+        movement_error_ratio=0.0,
+        distance_error_b_ratio=0.0,
+        tangent_error_deg=0.0,
+        curvature_error_ratio=0.0,
+        reliability=1.0,
+        speed_fraction=1.0,
+        diagnostics={"source": "core"},
+    )
+
+
+def _navigation(offset: float = 0.0) -> tuple[SOEventNavigationPoint, ...]:
+    return (
+        SOEventNavigationPoint(
+            member_id="v1",
+            vehicle_identifier=101,
+            latitude_deg=32.0 + offset,
+            longitude_deg=34.8 + offset,
+            altitude_m=10.0,
+            velocity_north_mps=4.0,
+            velocity_east_mps=3.0,
+            active=True,
+            reliability=0.95,
+        ),
+        SOEventNavigationPoint(
+            member_id="v2",
+            vehicle_identifier=102,
+            latitude_deg=32.0005 + offset,
+            longitude_deg=34.8005 + offset,
+            altitude_m=11.0,
+            velocity_north_mps=0.0,
+            velocity_east_mps=5.0,
+            active=True,
+            reliability=0.9,
+        ),
+    )
+
+
+def _pending_frame() -> SOEventObservationFrame:
+    return SOEventObservationFrame(
+        event_id=EVENT_ID,
+        server_id=1,
+        group_id="g1",
+        sample_time_utc=NOW,
+        observations=(),
+        pending_reason="core_observations_incomplete",
+        navigation=_navigation(),
+    )
+
+
+def _frame() -> SOEventObservationFrame:
+    return SOEventObservationFrame(
+        event_id=EVENT_ID,
+        server_id=1,
+        group_id="g1",
+        sample_time_utc=NOW + timedelta(seconds=5),
+        observations=(_observation("v1", 0.0), _observation("v2", 0.5)),
+        navigation=_navigation(0.0001),
+    )
+
+
+def _later_frame() -> SOEventObservationFrame:
+    return SOEventObservationFrame(
+        event_id=LATER_EVENT_ID,
+        server_id=1,
+        group_id="g2",
+        sample_time_utc=NOW + timedelta(hours=1),
+        observations=(_observation("v1", 0.25), _observation("v2", 0.75)),
+        navigation=_navigation(0.01),
+    )
+
+
+async def _request(
+    app,
+    path: str,
+    *,
+    method: str = "GET",
+    query: str = "",
+    payload: dict | None = None,
+    token: str | None = None,
+):
+    messages = []
+    headers = [(b"host", b"test"), (b"content-type", b"application/json")]
+    if token is not None:
+        headers.append((b"authorization", f"Bearer {token}".encode("utf-8")))
+    body = json.dumps(payload or {}).encode("utf-8")
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("ascii"),
+        "query_string": query.encode("utf-8"),
+        "headers": headers,
+        "client": ("127.0.0.1", 12345),
+        "server": ("test", 80),
+    }
+    delivered = False
+
+    async def receive():
+        nonlocal delivered
+        if delivered:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        delivered = True
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    async def send(message):
+        messages.append(message)
+
+    await app(scope, receive, send)
+    start = next(message for message in messages if message["type"] == "http.response.start")
+    response_body = b"".join(
+        message.get("body", b"")
+        for message in messages
+        if message["type"] == "http.response.body"
+    )
+    return start["status"], json.loads(response_body.decode("utf-8"))
+
+
+async def _base(scope, receive, send):
+    del scope, receive
+    await send({"type": "http.response.start", "status": 404, "headers": []})
+    await send({"type": "http.response.body", "body": b"{}"})
+
+
+class InvestigationServiceTests(unittest.TestCase):
+    def test_event_list_and_recompute_use_archive_active_template_bank_and_navigation(self) -> None:
+        template = _template()
+        bank = SOTemplateBank((SOTemplateBankEntry(template, is_default=True),))
+        scorer = SimpleNamespace(scoring_config=None, minimum_valid_vehicles=2)
+        runtime = SimpleNamespace(bank=bank, scorer=scorer)
+        pipeline = SimpleNamespace(server_id=1, producer=SimpleNamespace(runtime=runtime))
+        host = SimpleNamespace(loop=SimpleNamespace(pipelines=(pipeline,), config_fingerprint="cfg-real"))
+
+        with TemporaryDirectory() as directory:
+            archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
+            archive.record_frame(_pending_frame())
+            archive.record_frame(_frame())
+            app = QaEnabledASGI(_base, token="secret")
+            with (
+                patch.object(qa_service, "event_archive", archive),
+                patch.object(qa_service.service, "operational_host", host),
+                patch.dict(os.environ, {"BLUEWOLF_CODE_SHA": "sha-real"}, clear=False),
+            ):
+                status, listing = asyncio.run(
+                    _request(
+                        app,
+                        "/v1/investigation/events",
+                        method="GET",
+                        query="serverId=1",
+                        token="secret",
+                    )
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(listing["schemaVersion"], "bluewolf.investigation-events.v1")
+                self.assertEqual(listing["templates"], [{"id": template.template_id, "name": template.name, "family": "SO"}])
+                self.assertEqual(listing["events"][0]["eventId"], EVENT_ID)
+                self.assertEqual(listing["events"][0]["frameCount"], 2)
+                self.assertEqual(listing["events"][0]["startAt"], "2026-09-15T06:00:00Z")
+                self.assertEqual(listing["events"][0]["endAt"], "2026-09-15T06:00:05Z")
+
+                status, result = asyncio.run(
+                    _request(
+                        app,
+                        "/v1/investigation/recompute",
+                        method="POST",
+                        payload={
+                            "eventId": EVENT_ID,
+                            "templateId": template.template_id,
+                            "scenarioId": "investigation-test",
+                        },
+                        token="secret",
+                    )
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(result["schemaVersion"], "bluewolf.event-recompute.v1")
+                self.assertEqual(result["eventId"], EVENT_ID)
+                self.assertEqual(result["scenarioId"], "investigation-test")
+                self.assertEqual(result["codeVersion"], "sha-real")
+                self.assertEqual(result["configVersion"], "cfg-real")
+                self.assertEqual(result["templateId"], template.template_id)
+                self.assertEqual(result["frameCount"], 2)
+                self.assertEqual(result["scoredFrameCount"], 1)
+                self.assertEqual(result["missingFrameCount"], 1)
+                self.assertEqual(result["points"][0]["pendingReason"], "core_observations_incomplete")
+                self.assertIsNone(result["points"][0]["group"]["total"])
+                self.assertEqual(result["points"][0]["navigation"][0]["vehicleIdentifier"], 101)
+                self.assertEqual(result["points"][0]["navigation"][0]["latitude"], 32.0)
+                self.assertAlmostEqual(result["points"][0]["navigation"][0]["headingDeg"], 36.86989764584402)
+                self.assertEqual(result["points"][1]["navigation"][1]["longitude"], 34.8006)
+                saved = archive.recomputations(EVENT_ID)
+                self.assertEqual(len(saved), 1)
+                self.assertEqual(saved[0]["runId"], result["runId"])
+                self.assertEqual(saved[0]["missingFrameCount"], 1)
+                self.assertEqual(saved[0]["points"][0]["navigation"][1]["vehicleIdentifier"], 102)
+
+                self.assertRegex(result["evidenceVersion"], r"^evidence-[0-9a-f]{64}$")
+                status, history = asyncio.run(
+                    _request(
+                        app,
+                        "/v1/investigation/recomputations",
+                        method="GET",
+                        query=f"eventId={EVENT_ID}&limit=10",
+                        token="secret",
+                    )
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(history["schemaVersion"], "bluewolf.event-recompute-history.v1")
+                self.assertEqual(history["eventId"], EVENT_ID)
+                self.assertEqual(len(history["runs"]), 1)
+                self.assertEqual(history["runs"][0]["runId"], result["runId"])
+                self.assertEqual(history["runs"][0]["evidenceVersion"], result["evidenceVersion"])
+                self.assertEqual(history["runs"][0]["templateId"], template.template_id)
+                self.assertEqual(history["runs"][0]["codeVersion"], "sha-real")
+                self.assertEqual(history["runs"][0]["configVersion"], "cfg-real")
+                self.assertEqual(history["runs"][0]["frameCount"], 2)
+                self.assertEqual(history["runs"][0]["summary"], result["summary"])
+                self.assertTrue(history["runs"][0]["createdAt"].endswith("Z"))
+
+    def test_event_list_range_is_applied_in_archive_and_does_not_clip_event(self) -> None:
+        with TemporaryDirectory() as directory:
+            archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
+            archive.record_frame(_pending_frame())
+            archive.record_frame(_frame())
+            archive.record_frame(_later_frame())
+            app = QaEnabledASGI(_base, token="secret")
+            with patch.object(qa_service, "event_archive", archive):
+                status, listing = asyncio.run(
+                    _request(
+                        app,
+                        "/v1/investigation/events",
+                        method="GET",
+                        query="serverId=1&from=2026-09-15T06:00:02Z&to=2026-09-15T06:00:03Z",
+                        token="secret",
+                    )
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual([item["eventId"] for item in listing["events"]], [EVENT_ID])
+                self.assertEqual(listing["events"][0]["startAt"], "2026-09-15T06:00:00Z")
+                self.assertEqual(listing["events"][0]["endAt"], "2026-09-15T06:00:05Z")
+                self.assertEqual(listing["events"][0]["frameCount"], 2)
+
+                status, later = asyncio.run(
+                    _request(
+                        app,
+                        "/v1/investigation/events",
+                        method="GET",
+                        query="serverId=1&from=2026-09-15T06:30:00Z&to=2026-09-15T08:00:00Z",
+                        token="secret",
+                    )
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual([item["eventId"] for item in later["events"]], [LATER_EVENT_ID])
+
+    def test_event_list_rejects_invalid_or_reversed_time_range(self) -> None:
+        with TemporaryDirectory() as directory:
+            archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
+            archive.record_frame(_frame())
+            app = QaEnabledASGI(_base, token="secret")
+            with patch.object(qa_service, "event_archive", archive):
+                for query in (
+                    "serverId=1&from=2026-09-15T08:00:00Z&to=2026-09-15T06:00:00Z",
+                    "serverId=1&from=2026-09-15T06:00:00&to=2026-09-15T07:00:00Z",
+                ):
+                    status, payload = asyncio.run(
+                        _request(
+                            app,
+                            "/v1/investigation/events",
+                            method="GET",
+                            query=query,
+                            token="secret",
+                        )
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertIn("error", payload)
+
+    def test_investigation_fails_closed_when_archive_or_event_is_missing(self) -> None:
+        app = QaEnabledASGI(_base, token="secret")
+        with patch.object(qa_service, "event_archive", None):
+            status, payload = asyncio.run(
+                _request(
+                    app,
+                    "/v1/investigation/events",
+                    method="GET",
+                    query="serverId=1",
+                    token="secret",
+                )
+            )
+        self.assertEqual(status, 503)
+        self.assertEqual(payload["status"], "unavailable")
+
+    def test_recompute_history_is_bounded_and_requires_existing_event(self) -> None:
+        with TemporaryDirectory() as directory:
+            archive = SOEventObservationArchive(Path(directory) / "events.sqlite")
+            archive.record_frame(_frame())
+            app = QaEnabledASGI(_base, token="secret")
+            with patch.object(qa_service, "event_archive", archive):
+                status, payload = asyncio.run(
+                    _request(app, "/v1/investigation/recomputations", method="GET", query=f"eventId={EVENT_ID}", token="secret")
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(payload["runs"], [])
+                for query in (f"eventId={EVENT_ID}&limit=0", f"eventId={EVENT_ID}&limit=201", "limit=5"):
+                    status, invalid = asyncio.run(
+                        _request(app, "/v1/investigation/recomputations", method="GET", query=query, token="secret")
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertIn("error", invalid)
+                status, missing = asyncio.run(
+                    _request(app, "/v1/investigation/recomputations", method="GET", query="eventId=missing-event", token="secret")
+                )
+                self.assertEqual(status, 404)
+                self.assertIn("error", missing)
+
+    def test_investigation_uses_same_auth_boundary_as_live_runtime(self) -> None:
+        app = QaEnabledASGI(_base, token="secret")
+        status, payload = asyncio.run(
+            _request(app, "/v1/investigation/events", method="GET", query="serverId=1")
+        )
+        self.assertEqual(status, 401)
+        self.assertEqual(payload["error"], "unauthorized")
+
+
+if __name__ == "__main__":
+    unittest.main()

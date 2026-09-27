@@ -1,0 +1,35 @@
+name: Blue Wolf UI/PDF Browser E2E
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: bluewolf-ui-e2e-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  ui-browser-e2e:
+    name: UI-01 + REP-01 — readability and offline Hebrew PDF canvas
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      BLUEWOLF_STORAGE: sqlite
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - run: npm run build:offline
+      - name: Install Chromium regression runner
+        run: |
+          python -m pip install 'playwright==1.55.0'
+          python -m playwright install --with-deps chromium
+      - name: Verify UI readability and offline Hebrew RTL PDF canvas primitives
+        run: python scripts/verify_ui_browser_e2e.py

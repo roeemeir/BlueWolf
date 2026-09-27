@@ -1,0 +1,738 @@
+"""Durable SQLite archive for SI/SO event scoring evidence and recomputations.
+
+The archive stores immutable Core evidence frames, including timestamps where
+scoring evidence was not yet sufficient. Investigation recomputation therefore
+reuses Core observations and preserves the complete observed event range rather
+than reconstructing phases or silently dropping missing points.
+
+Navigation samples captured from the same live inputs are stored inside each
+immutable frame payload. Older rows without navigation remain readable as an
+empty navigation tuple; no position is reconstructed from phase or geometry.
+Detected-route snapshots captured from the same live Core inputs are stored in
+the same payload. Older rows without route geometry remain readable with empty
+route evidence; reporting must not invent a route for them. The original active
+Core template id is stored in the same immutable payload so reports can
+reproduce the event without selecting an arbitrary template.
+
+A frame is immutable by ``(event_id, sample_time_utc)``. Re-recording the exact
+same frame is idempotent; conflicting evidence at the same key is rejected.
+Recomputation results are stored separately with code/config/template provenance.
+"""
+from __future__ import annotations
+
+from datetime import UTC, datetime
+import hashlib
+import json
+import math
+import re
+import os
+from pathlib import Path
+import sqlite3
+from typing import Any, Mapping
+
+from bluewolf_core.event_recompute import SIEventObservationFrame, SOEventNavigationPoint, SOEventObservationFrame
+from bluewolf_core.event_route_evidence import SOEventRouteEvidence, SOEventRoutePoint
+from bluewolf_core.models import PrimitiveMetrics, RouteFamily
+from bluewolf_core.si_scoring import SIScoringMemberInput
+from bluewolf_core.so_scoring import SOScoringObservation
+from bluewolf_core.templates import ObservedMember
+
+
+EVENT_ARCHIVE_SCHEMA_VERSION = 1
+
+
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        raise ValueError("event archive time must be timezone-aware")
+    return value.astimezone(UTC)
+
+
+def _iso(value: datetime) -> str:
+    return _utc(value).isoformat().replace("+00:00", "Z")
+
+
+def _parse_time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+
+
+def _observation_payload(item: SOScoringObservation) -> dict[str, Any]:
+    return {
+        "member_id": item.member_id,
+        "vehicle_type": item.vehicle_type,
+        "route_instance_id": item.route_instance_id,
+        "semantic_phase": item.semantic_phase,
+        "period_error_ratio": item.period_error_ratio,
+        "movement_error_ratio": item.movement_error_ratio,
+        "distance_error_b_ratio": item.distance_error_b_ratio,
+        "tangent_error_deg": item.tangent_error_deg,
+        "curvature_error_ratio": item.curvature_error_ratio,
+        "reliability": item.reliability,
+        "speed_fraction": item.speed_fraction,
+        "active": item.active,
+        "position_reason": item.position_reason,
+        "diagnostics": dict(item.diagnostics),
+    }
+
+
+def _observation_from_payload(value: Mapping[str, Any]) -> SOScoringObservation:
+    diagnostics = value.get("diagnostics", {})
+    if not isinstance(diagnostics, Mapping):
+        raise ValueError("archived observation diagnostics must be an object")
+    return SOScoringObservation(
+        member_id=str(value["member_id"]),
+        vehicle_type=str(value["vehicle_type"]),
+        route_instance_id=str(value["route_instance_id"]),
+        semantic_phase=float(value["semantic_phase"]),
+        period_error_ratio=float(value["period_error_ratio"]),
+        movement_error_ratio=float(value["movement_error_ratio"]),
+        distance_error_b_ratio=float(value["distance_error_b_ratio"]),
+        tangent_error_deg=(None if value.get("tangent_error_deg") is None else float(value["tangent_error_deg"])),
+        curvature_error_ratio=(None if value.get("curvature_error_ratio") is None else float(value["curvature_error_ratio"])),
+        reliability=float(value["reliability"]),
+        speed_fraction=float(value["speed_fraction"]),
+        active=value.get("active"),
+        position_reason=str(value.get("position_reason") or "so_template_phase"),
+        diagnostics={str(key): item for key, item in diagnostics.items()},
+    )
+
+
+def _si_observation_payload(item: SIScoringMemberInput) -> dict[str, Any]:
+    metrics = item.metrics
+    return {
+        "member": {
+            "member_id": item.member.member_id,
+            "vehicle_type": item.member.vehicle_type,
+            "phase": item.member.phase,
+            "route_role": item.member.route_role,
+        },
+        "metrics": {
+            "family": metrics.family.value,
+            "position_error": metrics.position_error,
+            "period_error_ratio": metrics.period_error_ratio,
+            "movement_error_ratio": metrics.movement_error_ratio,
+            "distance_error_b_ratio": metrics.distance_error_b_ratio,
+            "tangent_error_deg": metrics.tangent_error_deg,
+            "curvature_error_ratio": metrics.curvature_error_ratio,
+            "reliability": metrics.reliability,
+            "speed_fraction": metrics.speed_fraction,
+            "active": metrics.active,
+            "wrong_direction_seconds": metrics.wrong_direction_seconds,
+            "position_reason": metrics.position_reason,
+            "diagnostics": dict(metrics.diagnostics),
+        },
+    }
+
+
+def _si_observation_from_payload(value: Mapping[str, Any]) -> SIScoringMemberInput:
+    member_raw = value.get("member")
+    metrics_raw = value.get("metrics")
+    if not isinstance(member_raw, Mapping) or not isinstance(metrics_raw, Mapping):
+        raise ValueError("archived SI observation is malformed")
+    diagnostics = metrics_raw.get("diagnostics", {})
+    if not isinstance(diagnostics, Mapping):
+        raise ValueError("archived SI observation diagnostics must be an object")
+    family = RouteFamily(str(metrics_raw.get("family")))
+    if family is not RouteFamily.SI:
+        raise ValueError("archived SI observation metrics must use SI family")
+    active = metrics_raw.get("active")
+    if active is not None and not isinstance(active, bool):
+        raise ValueError("archived SI observation active must be boolean or null")
+    member = ObservedMember(
+        member_id=str(member_raw["member_id"]),
+        vehicle_type=str(member_raw["vehicle_type"]),
+        phase=float(member_raw["phase"]),
+        route_role=(None if member_raw.get("route_role") is None else str(member_raw["route_role"])),
+    )
+    metrics = PrimitiveMetrics(
+        family=family,
+        position_error=float(metrics_raw["position_error"]),
+        period_error_ratio=float(metrics_raw["period_error_ratio"]),
+        movement_error_ratio=float(metrics_raw["movement_error_ratio"]),
+        distance_error_b_ratio=float(metrics_raw["distance_error_b_ratio"]),
+        tangent_error_deg=(None if metrics_raw.get("tangent_error_deg") is None else float(metrics_raw["tangent_error_deg"])),
+        curvature_error_ratio=(None if metrics_raw.get("curvature_error_ratio") is None else float(metrics_raw["curvature_error_ratio"])),
+        reliability=float(metrics_raw["reliability"]),
+        speed_fraction=float(metrics_raw["speed_fraction"]),
+        active=active,
+        wrong_direction_seconds=float(metrics_raw.get("wrong_direction_seconds", 0.0)),
+        position_reason=str(metrics_raw.get("position_reason") or "si_template_position"),
+        diagnostics={str(key): item for key, item in diagnostics.items()},
+    )
+    return SIScoringMemberInput(member=member, metrics=metrics)
+
+
+def _navigation_payload(item: SOEventNavigationPoint) -> dict[str, Any]:
+    return {
+        "member_id": item.member_id,
+        "vehicle_identifier": item.vehicle_identifier,
+        "latitude_deg": item.latitude_deg,
+        "longitude_deg": item.longitude_deg,
+        "altitude_m": item.altitude_m,
+        "velocity_north_mps": item.velocity_north_mps,
+        "velocity_east_mps": item.velocity_east_mps,
+        "active": item.active,
+        "reliability": item.reliability,
+    }
+
+
+def _navigation_from_payload(value: Mapping[str, Any]) -> SOEventNavigationPoint:
+    latitude = value.get("latitude_deg")
+    longitude = value.get("longitude_deg")
+    altitude = value.get("altitude_m")
+    north = value.get("velocity_north_mps")
+    east = value.get("velocity_east_mps")
+    active = value.get("active")
+    if active is not None and not isinstance(active, bool):
+        raise ValueError("archived navigation active must be boolean or null")
+    return SOEventNavigationPoint(
+        member_id=str(value["member_id"]),
+        vehicle_identifier=int(value["vehicle_identifier"]),
+        latitude_deg=None if latitude is None else float(latitude),
+        longitude_deg=None if longitude is None else float(longitude),
+        altitude_m=None if altitude is None else float(altitude),
+        velocity_north_mps=None if north is None else float(north),
+        velocity_east_mps=None if east is None else float(east),
+        active=active,
+        reliability=float(value.get("reliability", 1.0)),
+    )
+
+
+def _route_payload(item: SOEventRouteEvidence) -> dict[str, Any]:
+    return {
+        "route_instance_id": item.route_instance_id,
+        "route_id": item.route_id,
+        "family": item.family,
+        "subtype": item.subtype,
+        "topology": item.topology,
+        "center_latitude_deg": item.center_latitude_deg,
+        "center_longitude_deg": item.center_longitude_deg,
+        "length_m": item.length_m,
+        "long_axis_a_m": item.long_axis_a_m,
+        "short_axis_b_m": item.short_axis_b_m,
+        "orientation_deg": item.orientation_deg,
+        "estimated_period_s": item.estimated_period_s,
+        "direction": item.direction,
+        "detection_quality": item.detection_quality,
+        "centerline_wgs84": [
+            {"latitude_deg": point.latitude_deg, "longitude_deg": point.longitude_deg}
+            for point in item.centerline_wgs84
+        ],
+    }
+
+
+def _route_from_payload(value: Mapping[str, Any]) -> SOEventRouteEvidence:
+    centerline_raw = value.get("centerline_wgs84", [])
+    if not isinstance(centerline_raw, list):
+        raise ValueError("archived route centerline must be an array")
+    centerline = tuple(
+        SOEventRoutePoint(
+            latitude_deg=float(point["latitude_deg"]),
+            longitude_deg=float(point["longitude_deg"]),
+        )
+        for point in centerline_raw
+        if isinstance(point, Mapping)
+    )
+    if len(centerline) != len(centerline_raw):
+        raise ValueError("archived route centerline row is malformed")
+    return SOEventRouteEvidence(
+        route_instance_id=str(value["route_instance_id"]),
+        route_id=str(value["route_id"]),
+        family=str(value["family"]),
+        subtype=str(value["subtype"]),
+        topology=str(value["topology"]),
+        center_latitude_deg=float(value["center_latitude_deg"]),
+        center_longitude_deg=float(value["center_longitude_deg"]),
+        length_m=float(value["length_m"]),
+        long_axis_a_m=float(value["long_axis_a_m"]),
+        short_axis_b_m=float(value["short_axis_b_m"]),
+        orientation_deg=float(value["orientation_deg"]),
+        estimated_period_s=float(value["estimated_period_s"]),
+        direction=str(value["direction"]),
+        detection_quality=float(value["detection_quality"]),
+        centerline_wgs84=centerline,
+    )
+
+
+def _frame_payload(frame: SOEventObservationFrame | SIEventObservationFrame) -> str:
+    is_si = isinstance(frame, SIEventObservationFrame)
+    payload: dict[str, Any] = {
+        "family": "SI" if is_si else "SO",
+        "server_id": frame.server_id,
+        "group_id": frame.group_id,
+        "active_template_id": frame.active_template_id,
+        "pending_reason": frame.pending_reason,
+        "observations": [
+            _si_observation_payload(item) if is_si else _observation_payload(item)
+            for item in frame.observations
+        ],
+        "navigation": [_navigation_payload(item) for item in frame.navigation],
+        "routes": [_route_payload(item) for item in frame.routes],
+    }
+    # Preserve the exact legacy operational payload shape and therefore its
+    # immutable hash. Provenance is additive only for explicit TEST navigation.
+    if frame.navigation_origin is not None:
+        payload["source"] = {
+            "kind": "python-core",
+            "navigationOrigin": frame.navigation_origin,
+            "syntheticNavigation": frame.synthetic_navigation,
+        }
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+def _hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _event_evidence_version(event_id: str, rows: list[sqlite3.Row] | tuple[sqlite3.Row, ...]) -> str:
+    """Hash the exact immutable frame set used by one recomputation snapshot."""
+
+    payload = event_id + "\n" + "".join(
+        f"{row['sample_time_utc']}\\0{row['payload_hash']}\n"
+        for row in rows
+    )
+    return "evidence-" + _hash(payload)
+
+
+class SOEventObservationArchive:
+    """SQLite-backed immutable SI/SO event evidence and recomputation archive.
+
+    Table names keep the historical SO prefix for backward-compatible on-disk
+    migration; payloads carry an explicit family from this version on.
+    """
+
+    def __init__(self, path: str | os.PathLike[str]) -> None:
+        self.path = Path(path).expanduser().resolve(strict=False)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._initialize()
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.path, timeout=10.0)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout = 10000")
+        return connection
+
+    def _initialize(self) -> None:
+        with self._connect() as connection:
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS so_event_archive_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
+            row = connection.execute(
+                "SELECT value FROM so_event_archive_metadata WHERE key='schema_version'"
+            ).fetchone()
+            if row is None:
+                connection.execute(
+                    "INSERT INTO so_event_archive_metadata(key,value) VALUES('schema_version',?)",
+                    (str(EVENT_ARCHIVE_SCHEMA_VERSION),),
+                )
+            elif int(row["value"]) != EVENT_ARCHIVE_SCHEMA_VERSION:
+                raise ValueError("unsupported SO event archive schema")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS so_event_observation_frames (
+                    event_id TEXT NOT NULL,
+                    server_id INTEGER NOT NULL,
+                    group_id TEXT NOT NULL,
+                    sample_time_utc TEXT NOT NULL,
+                    payload_hash TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    PRIMARY KEY(event_id, sample_time_utc)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS so_event_frames_server_time_idx
+                ON so_event_observation_frames(server_id, sample_time_utc, event_id)
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS so_event_recomputations (
+                    run_id TEXT PRIMARY KEY,
+                    event_id TEXT NOT NULL,
+                    scenario_id TEXT NOT NULL,
+                    template_id TEXT NOT NULL,
+                    template_version TEXT NOT NULL,
+                    code_version TEXT NOT NULL,
+                    config_version TEXT NOT NULL,
+                    created_at_utc TEXT NOT NULL,
+                    result_json TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS so_event_recompute_event_idx
+                ON so_event_recomputations(event_id, created_at_utc, run_id)
+                """
+            )
+
+    def record_frame(self, frame: SOEventObservationFrame | SIEventObservationFrame) -> bool:
+        payload = _frame_payload(frame)
+        payload_hash = _hash(payload)
+        timestamp = _iso(frame.sample_time_utc)
+        with self._connect() as connection:
+            existing = connection.execute(
+                "SELECT payload_hash FROM so_event_observation_frames WHERE event_id=? AND sample_time_utc=?",
+                (frame.event_id, timestamp),
+            ).fetchone()
+            if existing is not None:
+                if str(existing["payload_hash"]) != payload_hash:
+                    raise ValueError("conflicting immutable event evidence")
+                return False
+            connection.execute(
+                """
+                INSERT INTO so_event_observation_frames(
+                    event_id,server_id,group_id,sample_time_utc,payload_hash,payload_json
+                ) VALUES(?,?,?,?,?,?)
+                """,
+                (frame.event_id, frame.server_id, frame.group_id, timestamp, payload_hash, payload),
+            )
+        return True
+
+    def read_event_snapshot(
+        self,
+        event_id: str,
+    ) -> tuple[tuple[SOEventObservationFrame | SIEventObservationFrame, ...], str]:
+        """Read one immutable evidence snapshot and its deterministic version."""
+
+        if not event_id:
+            raise ValueError("event_id is required")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT server_id,group_id,sample_time_utc,payload_hash,payload_json
+                FROM so_event_observation_frames
+                WHERE event_id=? ORDER BY sample_time_utc ASC
+                """,
+                (event_id,),
+            ).fetchall()
+        frames: list[SOEventObservationFrame | SIEventObservationFrame] = []
+        for row in rows:
+            payload = json.loads(str(row["payload_json"]))
+            family = str(payload.get("family") or "SO").upper()
+            if family not in {"SI", "SO"}:
+                raise ValueError("archived event family is invalid")
+            observations_raw = payload.get("observations", [])
+            if not isinstance(observations_raw, list):
+                raise ValueError("archived event observations are malformed")
+            observations = tuple(
+                (_si_observation_from_payload(item) if family == "SI" else _observation_from_payload(item))
+                for item in observations_raw
+                if isinstance(item, Mapping)
+            )
+            if len(observations) != len(observations_raw):
+                raise ValueError("archived event observation row is malformed")
+            navigation_raw = payload.get("navigation", [])
+            if not isinstance(navigation_raw, list):
+                raise ValueError("archived SO event navigation is malformed")
+            navigation = tuple(
+                _navigation_from_payload(item)
+                for item in navigation_raw
+                if isinstance(item, Mapping)
+            )
+            if len(navigation) != len(navigation_raw):
+                raise ValueError("archived SO event navigation row is malformed")
+            routes_raw = payload.get("routes", [])
+            if not isinstance(routes_raw, list):
+                raise ValueError("archived SO event routes are malformed")
+            routes = tuple(
+                _route_from_payload(item)
+                for item in routes_raw
+                if isinstance(item, Mapping)
+            )
+            if len(routes) != len(routes_raw):
+                raise ValueError("archived SO event route row is malformed")
+            pending_raw = payload.get("pending_reason")
+            pending_reason = None if pending_raw is None else str(pending_raw)
+            active_template_raw = payload.get("active_template_id")
+            active_template_id = None if active_template_raw is None else str(active_template_raw)
+            source_raw = payload.get("source")
+            navigation_origin: str | None = None
+            synthetic_navigation: bool | None = None
+            if source_raw is not None:
+                if not isinstance(source_raw, Mapping):
+                    raise ValueError("archived event source provenance is malformed")
+                if source_raw.get("kind") != "python-core":
+                    raise ValueError("archived TEST navigation must come from python-core")
+                navigation_origin = None if source_raw.get("navigationOrigin") is None else str(source_raw.get("navigationOrigin"))
+                synthetic_navigation = source_raw.get("syntheticNavigation")
+                if synthetic_navigation is not None and not isinstance(synthetic_navigation, bool):
+                    raise ValueError("archived syntheticNavigation must be boolean")
+            frame_type = SIEventObservationFrame if family == "SI" else SOEventObservationFrame
+            frames.append(
+                frame_type(
+                    event_id=event_id,
+                    server_id=int(row["server_id"]),
+                    group_id=str(row["group_id"]),
+                    sample_time_utc=_parse_time(str(row["sample_time_utc"])),
+                    observations=observations,  # type: ignore[arg-type]
+                    active_template_id=active_template_id,
+                    pending_reason=pending_reason,
+                    navigation=navigation,
+                    routes=routes,
+                    navigation_origin=navigation_origin,
+                    synthetic_navigation=synthetic_navigation,
+                )
+            )
+        return tuple(frames), _event_evidence_version(event_id, rows)
+
+    def read_event(self, event_id: str) -> tuple[SOEventObservationFrame | SIEventObservationFrame, ...]:
+        """Backward-compatible frame-only view of the current event snapshot."""
+
+        frames, _version = self.read_event_snapshot(event_id)
+        return frames
+
+    def list_events(
+        self,
+        server_id: int,
+        *,
+        from_utc: datetime | None = None,
+        to_utc: datetime | None = None,
+        limit: int = 200,
+    ) -> tuple[dict[str, Any], ...]:
+        """List complete events that intersect an optional UTC investigation range.
+
+        The range filters event selection only. Returned start/end/frameCount are
+        the event's full archived bounds so selecting a range never clips event
+        identity or silently turns one event into a shorter synthetic event.
+        ``activeTemplateId`` is returned only when all archived frames that know
+        the original active template agree. Older events may return ``None`` and
+        must not receive an invented report template.
+        """
+
+        if isinstance(server_id, bool) or not isinstance(server_id, int) or server_id < 0:
+            raise ValueError("server_id must be a non-negative integer")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 2000:
+            raise ValueError("limit must be an integer in [1,2000]")
+        from_iso = None if from_utc is None else _iso(from_utc)
+        to_iso = None if to_utc is None else _iso(to_utc)
+        if from_utc is not None and to_utc is not None and _utc(from_utc) > _utc(to_utc):
+            raise ValueError("investigation range start must not be after end")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                WITH event_bounds AS (
+                    SELECT event_id,group_id,MIN(sample_time_utc) AS start_at,
+                           MAX(sample_time_utc) AS end_at,COUNT(*) AS frame_count
+                    FROM so_event_observation_frames
+                    WHERE server_id=?
+                    GROUP BY event_id,group_id
+                )
+                SELECT event_id,group_id,start_at,end_at,frame_count
+                FROM event_bounds
+                WHERE (? IS NULL OR end_at >= ?)
+                  AND (? IS NULL OR start_at <= ?)
+                ORDER BY start_at DESC LIMIT ?
+                """,
+                (server_id, from_iso, from_iso, to_iso, to_iso, limit),
+            ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            event_id = str(row["event_id"])
+            frames = self.read_event(event_id)
+            known_templates = {
+                frame.active_template_id
+                for frame in frames
+                if frame.active_template_id is not None
+            }
+            if len(known_templates) > 1:
+                raise ValueError("archived event contains multiple active templates")
+            families = {"SI" if isinstance(frame, SIEventObservationFrame) else "SO" for frame in frames}
+            if len(families) != 1:
+                raise ValueError("archived event contains multiple route families")
+            results.append(
+                {
+                    "eventId": event_id,
+                    "serverId": server_id,
+                    "groupId": str(row["group_id"]),
+                    "family": next(iter(families)),
+                    "startAt": str(row["start_at"]),
+                    "endAt": str(row["end_at"]),
+                    "frameCount": int(row["frame_count"]),
+                    "activeTemplateId": (next(iter(known_templates)) if known_templates else None),
+                }
+            )
+        return tuple(results)
+
+    def record_recompute(
+        self,
+        result: Mapping[str, Any],
+        *,
+        created_at_utc: datetime,
+        expected_evidence_version: str | None = None,
+    ) -> None:
+        required = (
+            "runId",
+            "eventId",
+            "scenarioId",
+            "templateId",
+            "templateVersion",
+            "codeVersion",
+            "configVersion",
+        )
+        values = {key: str(result.get(key) or "").strip() for key in required}
+        missing = [key for key, value in values.items() if not value]
+        if missing:
+            raise ValueError(f"recompute result is missing provenance: {', '.join(missing)}")
+        expected_version = None
+        if expected_evidence_version is not None:
+            expected_version = str(expected_evidence_version).strip()
+            if not expected_version:
+                raise ValueError("expected evidence version must be non-empty")
+            if str(result.get("evidenceVersion") or "").strip() != expected_version:
+                raise ValueError("recompute result evidenceVersion mismatch")
+        result_json = json.dumps(
+            dict(result),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        with self._connect() as connection:
+            if expected_version is not None:
+                # Lock writers between the evidence-version check and result
+                # insertion so a late frame cannot race into the same event.
+                connection.execute("BEGIN IMMEDIATE")
+                rows = connection.execute(
+                    """
+                    SELECT sample_time_utc,payload_hash
+                    FROM so_event_observation_frames
+                    WHERE event_id=? ORDER BY sample_time_utc ASC
+                    """,
+                    (values["eventId"],),
+                ).fetchall()
+                current_version = _event_evidence_version(values["eventId"], rows)
+                if current_version != expected_version:
+                    raise ValueError("event evidence changed during recomputation")
+            connection.execute(
+                """
+                INSERT INTO so_event_recomputations(
+                    run_id,event_id,scenario_id,template_id,template_version,
+                    code_version,config_version,created_at_utc,result_json
+                ) VALUES(?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    values["runId"],
+                    values["eventId"],
+                    values["scenarioId"],
+                    values["templateId"],
+                    values["templateVersion"],
+                    values["codeVersion"],
+                    values["configVersion"],
+                    _iso(created_at_utc),
+                    result_json,
+                ),
+            )
+
+    def recomputation_history(self, event_id: str, *, limit: int = 50) -> tuple[dict[str, Any], ...]:
+        """Return bounded newest-first recomputation metadata without replay payloads."""
+
+        if not event_id:
+            raise ValueError("event_id is required")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise ValueError("recompute history limit must be an integer in [1,200]")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT created_at_utc,result_json
+                FROM so_event_recomputations
+                WHERE event_id=?
+                ORDER BY created_at_utc DESC, run_id DESC
+                LIMIT ?
+                """,
+                (event_id, limit),
+            ).fetchall()
+
+        output: list[dict[str, Any]] = []
+        for row in rows:
+            result = json.loads(str(row["result_json"]))
+            if not isinstance(result, Mapping):
+                raise ValueError("archived recomputation result must be an object")
+
+            def required_text(name: str) -> str:
+                value = result.get(name)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"archived recomputation {name} is missing")
+                return value.strip()
+
+            family = str(result.get("family") or "SO").upper()
+            if family not in {"SI", "SO"}:
+                raise ValueError("archived recomputation family is invalid")
+            frame_count = result.get("frameCount")
+            scored_count = result.get("scoredFrameCount")
+            missing_count = result.get("missingFrameCount")
+            for name, value in (
+                ("frameCount", frame_count),
+                ("scoredFrameCount", scored_count),
+                ("missingFrameCount", missing_count),
+            ):
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    raise ValueError(f"archived recomputation {name} is invalid")
+            if scored_count + missing_count != frame_count:
+                raise ValueError("archived recomputation frame counts are inconsistent")
+            summary = result.get("summary")
+            if not isinstance(summary, Mapping):
+                raise ValueError("archived recomputation summary is malformed")
+            normalized_summary: dict[str, float | None] = {}
+            for name in ("sync", "route", "total"):
+                value = summary.get(name)
+                if value is None:
+                    normalized_summary[name] = None
+                    continue
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or not 0.0 <= float(value) <= 100.0:
+                    raise ValueError(f"archived recomputation summary {name} is invalid")
+                normalized_summary[name] = float(value)
+            evidence_version = result.get("evidenceVersion")
+            if evidence_version is not None:
+                if not isinstance(evidence_version, str) or not re.fullmatch(r"evidence-[0-9a-f]{64}", evidence_version):
+                    raise ValueError("archived recomputation evidenceVersion is invalid")
+            source = result.get("source")
+            if source is not None and not isinstance(source, Mapping):
+                raise ValueError("archived recomputation source is malformed")
+            item: dict[str, Any] = {
+                "runId": required_text("runId"),
+                "scenarioId": required_text("scenarioId"),
+                "family": family,
+                "templateId": required_text("templateId"),
+                "templateVersion": required_text("templateVersion"),
+                "codeVersion": required_text("codeVersion"),
+                "configVersion": required_text("configVersion"),
+                "evidenceVersion": evidence_version,
+                "createdAt": str(row["created_at_utc"]),
+                "frameCount": frame_count,
+                "scoredFrameCount": scored_count,
+                "missingFrameCount": missing_count,
+                "summary": normalized_summary,
+            }
+            if source is not None:
+                item["source"] = dict(source)
+            output.append(item)
+        return tuple(output)
+
+    def recomputations(self, event_id: str) -> tuple[dict[str, Any], ...]:
+        if not event_id:
+            raise ValueError("event_id is required")
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT result_json FROM so_event_recomputations WHERE event_id=? ORDER BY created_at_utc ASC, run_id ASC",
+                (event_id,),
+            ).fetchall()
+        return tuple(json.loads(str(row["result_json"])) for row in rows)
+
+
+EventObservationArchive = SOEventObservationArchive
+
+__all__ = ["EVENT_ARCHIVE_SCHEMA_VERSION", "EventObservationArchive", "SOEventObservationArchive"]

@@ -1,0 +1,67 @@
+name: Blue Wolf BW-OFF-009 Workday Endurance
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: bluewolf-off09-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  workday-endurance:
+    name: BW-OFF-009 — 8h active-poll soak and bounded archive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python core/runtime
+        working-directory: core
+        run: python -m pip install -e .
+      - name: Run accelerated full-workday soak and deployment archive tests
+        working-directory: core/tests
+        run: python -m unittest -v test_offline_workday_soak test_offline_archive_deployment
+      - name: Validate deployment retention wiring
+        run: |
+          python -m pip install 'PyYAML>=6,<7'
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          docker = Path('deploy/runtime/Dockerfile').read_text(encoding='utf-8')
+          for expected in (
+              'BLUEWOLF_SAMPLE_ARCHIVE_PATH=/var/lib/bluewolf/joined-samples.sqlite3',
+              'BLUEWOLF_ARCHIVE_RETENTION_DAYS=30',
+              'BLUEWOLF_ARCHIVE_PRUNE_INTERVAL_SECONDS=3600',
+          ):
+              assert expected in docker, expected
+
+          windows = Path('deploy/windows/run-runtime.ps1').read_text(encoding='utf-8')
+          for expected in (
+              '$env:BLUEWOLF_SAMPLE_ARCHIVE_PATH = $ResolvedArchive',
+              '$env:BLUEWOLF_ARCHIVE_RETENTION_DAYS = [string]$ArchiveRetentionDays',
+              '$env:BLUEWOLF_ARCHIVE_PRUNE_INTERVAL_SECONDS = [string]$ArchivePruneIntervalSeconds',
+          ):
+              assert expected in windows, expected
+
+          documents = list(yaml.safe_load_all(Path('deploy/openshift/runtime.yaml').read_text(encoding='utf-8')))
+          container = documents[0]['spec']['template']['spec']['containers'][0]
+          env = {item['name']: item.get('value') for item in container['env'] if 'value' in item}
+          assert env['BLUEWOLF_SAMPLE_ARCHIVE_PATH'] == '/var/lib/bluewolf/joined-samples.sqlite3'
+          assert env['BLUEWOLF_ARCHIVE_RETENTION_DAYS'] == '30'
+          assert env['BLUEWOLF_ARCHIVE_PRUNE_INTERVAL_SECONDS'] == '3600'
+          mounts = {item['mountPath'] for item in container['volumeMounts']}
+          assert '/var/lib/bluewolf' in mounts
+          PY
+      - name: Validate Windows PowerShell syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile('deploy/windows/run-runtime.ps1', [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }

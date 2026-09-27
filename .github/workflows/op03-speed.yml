@@ -1,0 +1,32 @@
+name: Blue Wolf OP-03 Speed Units
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: bluewolf-op03-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  speed-units:
+    name: OP-03 — observed speed to knots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: npm ci
+      - name: Test exact knot conversion and operator UI contract
+        run: node --test tests/speed-units.test.mjs tests/operator-speed-ui.test.mjs tests/live-runtime-contract.test.mjs
+      - name: Install Python core
+        working-directory: core
+        run: python -m pip install -e .
+      - name: Verify same-timestamp observed speed evidence
+        working-directory: core/tests
+        run: python -m unittest -v test_position_enrichment

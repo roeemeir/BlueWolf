@@ -1,0 +1,115 @@
+param(
+    [string]$VenvPath = ".bluewolf-runtime-venv",
+    [string]$OperationalConfig = "",
+    [string]$StatePath = "",
+    [string]$ArchivePath = ".bluewolf-runtime-data\joined-samples.sqlite3",
+    [int]$Port = 8080,
+    [int]$StaleSeconds = 15,
+    [int]$ExpireSeconds = 60,
+    [int]$ArchiveRetentionDays = 30,
+    [int]$ArchivePruneIntervalSeconds = 3600
+)
+
+$ErrorActionPreference = "Stop"
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot = Resolve-Path (Join-Path $ScriptDir "..\..")
+$ResolvedVenv = Join-Path $RepoRoot $VenvPath
+$RuntimeExe = Join-Path $ResolvedVenv "Scripts\bluewolf-runtime.exe"
+$BuildProvenancePath = Join-Path $ResolvedVenv "bluewolf-build-provenance.json"
+
+if (-not (Test-Path $RuntimeExe)) {
+    throw "Blue Wolf runtime is not installed. Run deploy\windows\install-runtime.ps1 first."
+}
+if (-not (Test-Path $BuildProvenancePath -PathType Leaf)) {
+    throw "Blue Wolf build provenance is missing. Reinstall the runtime with deploy\windows\install-runtime.ps1."
+}
+try {
+    $BuildProvenance = Get-Content -Raw -Path $BuildProvenancePath | ConvertFrom-Json
+}
+catch {
+    throw "Blue Wolf build provenance is unreadable. Reinstall the runtime."
+}
+$InstalledCodeSha = [string]$BuildProvenance.codeSha
+if ([string]::IsNullOrWhiteSpace($InstalledCodeSha) -or $InstalledCodeSha -eq "unknown" -or $InstalledCodeSha -notmatch '^[0-9a-fA-F]{7,64}$') {
+    throw "Blue Wolf build provenance does not contain a valid code SHA. Reinstall the runtime."
+}
+if ([string]::IsNullOrWhiteSpace($env:BLUEWOLF_CORE_API_TOKEN)) {
+    throw "BLUEWOLF_CORE_API_TOKEN must be supplied through the Windows service/environment configuration."
+}
+if ($Port -lt 1 -or $Port -gt 65535) {
+    throw "Port must be in the range 1..65535."
+}
+if ($StaleSeconds -le 0 -or $ExpireSeconds -le $StaleSeconds) {
+    throw "ExpireSeconds must be greater than StaleSeconds and both must be positive."
+}
+if ($ArchiveRetentionDays -lt 1) {
+    throw "ArchiveRetentionDays must be at least 1 day."
+}
+if ($ArchivePruneIntervalSeconds -lt 60) {
+    throw "ArchivePruneIntervalSeconds must be at least 60 seconds."
+}
+if ([string]::IsNullOrWhiteSpace($ArchivePath)) {
+    throw "ArchivePath is required for operational sample persistence."
+}
+if (-not [string]::IsNullOrWhiteSpace($StatePath) -and [string]::IsNullOrWhiteSpace($OperationalConfig)) {
+    throw "StatePath requires OperationalConfig so checkpoint compatibility can be verified."
+}
+
+$env:BLUEWOLF_CODE_SHA = $InstalledCodeSha
+$env:BLUEWOLF_RUNTIME_HOST = "0.0.0.0"
+$env:BLUEWOLF_RUNTIME_PORT = [string]$Port
+$env:BLUEWOLF_RUNTIME_STALE_SECONDS = [string]$StaleSeconds
+$env:BLUEWOLF_RUNTIME_EXPIRE_SECONDS = [string]$ExpireSeconds
+$env:BLUEWOLF_ARCHIVE_RETENTION_DAYS = [string]$ArchiveRetentionDays
+$env:BLUEWOLF_ARCHIVE_PRUNE_INTERVAL_SECONDS = [string]$ArchivePruneIntervalSeconds
+
+if ([System.IO.Path]::IsPathRooted($ArchivePath)) {
+    $ResolvedArchive = [System.IO.Path]::GetFullPath($ArchivePath)
+}
+else {
+    $ResolvedArchive = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $ArchivePath))
+}
+$ArchiveDirectory = Split-Path -Parent $ResolvedArchive
+if (-not [string]::IsNullOrWhiteSpace($ArchiveDirectory)) {
+    New-Item -ItemType Directory -Force -Path $ArchiveDirectory | Out-Null
+}
+$env:BLUEWOLF_SAMPLE_ARCHIVE_PATH = $ResolvedArchive
+
+if (-not [string]::IsNullOrWhiteSpace($OperationalConfig)) {
+    $ResolvedConfig = Resolve-Path $OperationalConfig -ErrorAction Stop
+    $env:BLUEWOLF_OPERATIONAL_CONFIG = [string]$ResolvedConfig
+    Remove-Item Env:BLUEWOLF_CONFIG_VERSION -ErrorAction SilentlyContinue
+    Write-Host "Operational polling enabled with config $ResolvedConfig"
+    Write-Host "Runtime config provenance will be the fingerprint of this exact file."
+}
+else {
+    Remove-Item Env:BLUEWOLF_OPERATIONAL_CONFIG -ErrorAction SilentlyContinue
+    Remove-Item Env:BLUEWOLF_OPERATIONAL_STATE_PATH -ErrorAction SilentlyContinue
+    Remove-Item Env:BLUEWOLF_CONFIG_VERSION -ErrorAction SilentlyContinue
+    Write-Host "No operational config supplied; runtime will start in transport-only mode and QA/report provenance remains unavailable."
+}
+
+if (-not [string]::IsNullOrWhiteSpace($StatePath)) {
+    if ([System.IO.Path]::IsPathRooted($StatePath)) {
+        $ResolvedState = [System.IO.Path]::GetFullPath($StatePath)
+    }
+    else {
+        $ResolvedState = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $StatePath))
+    }
+    $StateDirectory = Split-Path -Parent $ResolvedState
+    if (-not [string]::IsNullOrWhiteSpace($StateDirectory)) {
+        New-Item -ItemType Directory -Force -Path $StateDirectory | Out-Null
+    }
+    $env:BLUEWOLF_OPERATIONAL_STATE_PATH = $ResolvedState
+    Write-Host "Operational restart state will be stored at $ResolvedState"
+}
+elseif (-not [string]::IsNullOrWhiteSpace($OperationalConfig)) {
+    Remove-Item Env:BLUEWOLF_OPERATIONAL_STATE_PATH -ErrorAction SilentlyContinue
+    Write-Host "No StatePath supplied; persistence may still be enabled by persistence.path in runtime.json."
+}
+
+Write-Host "Joined sample archive: $ResolvedArchive"
+Write-Host "Sample archive retention: $ArchiveRetentionDays days; prune interval: $ArchivePruneIntervalSeconds seconds."
+Write-Host "Starting Blue Wolf runtime on port $Port (single process) · code $($InstalledCodeSha.Substring(0, [Math]::Min(12, $InstalledCodeSha.Length)))."
+& $RuntimeExe
+exit $LASTEXITCODE

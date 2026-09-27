@@ -1,4 +1,4 @@
-"""Robust closed-route detection for SI/SO vehicle trajectories."""
+"""Robust, evidence-driven closed-route detection for SI/SO trajectories."""
 
 from __future__ import annotations
 
@@ -34,19 +34,20 @@ _MIN_SAMPLES = 12
 
 @dataclass(frozen=True, slots=True)
 class RouteDetection:
-    """A confirmed route with both raw and robust geometry representations."""
+    """A route hypothesis with raw and robust geometry plus evidence metrics."""
 
     observed: ClosedRoute
     effective: ClosedRoute
     fit_fraction: float
     inlier_fraction: float
+    coverage_fraction: float
     completed_cycles: float
     outlier_count: int
     diagnostics: Mapping[str, float | int | str | bool]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "diagnostics", MappingProxyType(dict(self.diagnostics)))
-        for name in ("fit_fraction", "inlier_fraction"):
+        for name in ("fit_fraction", "inlier_fraction", "coverage_fraction"):
             value = float(getattr(self, name))
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must be in [0, 1]")
@@ -78,15 +79,20 @@ class _Shape:
 def detect_closed_route(
     samples: Iterable[VehicleSample],
     config: DetectionConfig | None = None,
+    *,
+    require_confirmation: bool = True,
 ) -> RouteDetection | None:
-    """Detect a confirmed simple SI/SO route from one vehicle stream.
+    """Detect a simple SI/SO route using geometric evidence, not elapsed time.
 
-    Confirmation intentionally obeys the V1 new-route lifecycle: enough usable
-    samples, the full observation window, one completed cycle, geometric
-    closure and the configured fit fraction are all required. ``observed``
-    follows the raw trace while ``effective`` is fitted after rejecting
-    transient single-sample bumps, so a bump stays visible without bending the
-    geometry used later for phase/grouping/scoring.
+    ``require_confirmation=True`` applies the strict confirmation gates: route
+    coverage, closure, fit and approximately one completed cycle. With
+    ``require_confirmation=False`` the function returns an earlier candidate
+    once enough of the fitted path has been observed. No fixed observation
+    duration is used in either mode; time is only used to estimate period.
+
+    ``observed`` follows the raw trace while ``effective`` is fitted after
+    rejecting transient single-sample bumps, so an outlier remains visible
+    without bending the geometry used later for phase/grouping/scoring.
     """
 
     detection = config or DetectionConfig()
@@ -115,8 +121,6 @@ def detect_closed_route(
     observation_seconds = (
         ordered[-1].sample_time_utc - ordered[0].sample_time_utc
     ).total_seconds()
-    if observation_seconds + _EPSILON < detection.new_route_observation_seconds:
-        return None
 
     origin_lat = statistics.median(float(sample.latitude_deg) for sample in ordered)
     origin_lon = statistics.median(float(sample.longitude_deg) for sample in ordered)
@@ -156,8 +160,14 @@ def detect_closed_route(
         effective_shape.canonical_points,
         fit_tolerance_m,
     )
+    coverage_fraction = _phase_coverage_fraction(
+        effective_points,
+        effective_shape.canonical_points,
+        detection.phase_coverage_bins,
+        detection.coverage_interpolation_max_phase_gap,
+    )
     travelled_distance = _travelled_distance(effective_points)
-    completed_cycles = travelled_distance / effective_shape.length_m
+    completed_cycles = travelled_distance / max(effective_shape.length_m, _EPSILON)
     closure_ok = _has_closed_cycle(
         effective_points,
         route_length_m=effective_shape.length_m,
@@ -165,13 +175,22 @@ def detect_closed_route(
         config=detection,
     )
 
-    if completed_cycles + _EPSILON < detection.closure_minimum_phase:
+    candidate_ready = (
+        fit_fraction + _EPSILON >= detection.candidate_fit_fraction
+        and coverage_fraction + _EPSILON >= detection.candidate_coverage_fraction
+        and completed_cycles + _EPSILON >= detection.candidate_travel_fraction
+    )
+    confirmation_ready = (
+        fit_fraction + _EPSILON >= detection.required_fit_fraction
+        and coverage_fraction + _EPSILON >= detection.confirmation_coverage_fraction
+        and completed_cycles + _EPSILON >= detection.required_completed_cycles
+        and completed_cycles + _EPSILON >= detection.closure_minimum_phase
+        and closure_ok
+    )
+
+    if require_confirmation and not confirmation_ready:
         return None
-    if not closure_ok:
-        return None
-    if fit_fraction + _EPSILON < detection.required_fit_fraction:
-        return None
-    if completed_cycles + _EPSILON < detection.required_completed_cycles:
+    if not require_confirmation and not candidate_ready:
         return None
 
     direction = _direction(effective_points, effective_shape.center)
@@ -186,7 +205,7 @@ def detect_closed_route(
 
     raw_geometry = tuple(item.point for item in raw_points)
     observed_cycles = max(
-        _travelled_distance(raw_geometry) / observed_shape.length_m,
+        _travelled_distance(raw_geometry) / max(observed_shape.length_m, _EPSILON),
         _EPSILON,
     )
     observed_period_s = _estimate_period_seconds(
@@ -203,8 +222,9 @@ def detect_closed_route(
         0.0,
         min(
             1.0,
-            0.55 * fit_fraction
-            + 0.30 * inlier_fraction
+            0.40 * fit_fraction
+            + 0.20 * inlier_fraction
+            + 0.25 * coverage_fraction
             + 0.15 * min(1.0, completed_cycles),
         ),
     )
@@ -235,9 +255,12 @@ def detect_closed_route(
         effective=effective_route,
         fit_fraction=fit_fraction,
         inlier_fraction=inlier_fraction,
+        coverage_fraction=coverage_fraction,
         completed_cycles=completed_cycles,
         outlier_count=len(inlier_mask) - sum(inlier_mask),
         diagnostics={
+            "candidate_ready": candidate_ready,
+            "confirmation_ready": confirmation_ready,
             "closure_ok": closure_ok,
             "sample_count": len(ordered),
             "effective_sample_count": sum(inlier_mask),
@@ -245,6 +268,7 @@ def detect_closed_route(
             "axis_ratio": effective_shape.long_axis_m / effective_shape.short_axis_m,
             "fit_tolerance_m": fit_tolerance_m,
             "travelled_distance_m": travelled_distance,
+            "coverage_fraction": coverage_fraction,
         },
     )
 
@@ -255,14 +279,21 @@ def _fit_shape(
     *,
     robust: bool,
 ) -> _Shape:
-    center = CanonicalPoint(
-        statistics.median(point.x_m for point in points)
-        if robust
-        else statistics.fmean(point.x_m for point in points),
-        statistics.median(point.y_m for point in points)
-        if robust
-        else statistics.fmean(point.y_m for point in points),
-    )
+    if robust:
+        # A coordinate median follows sample density. A suffix containing a
+        # non-integer number of cycles therefore moves the fitted center toward
+        # the over-sampled phase even when the physical route did not move.
+        # Closed SI/SO shapes are centrally symmetric, so the midpoint of their
+        # robust spatial extents estimates center from geometry instead.
+        center = CanonicalPoint(
+            _extent_midpoint(tuple(point.x_m for point in points)),
+            _extent_midpoint(tuple(point.y_m for point in points)),
+        )
+    else:
+        center = CanonicalPoint(
+            statistics.fmean(point.x_m for point in points),
+            statistics.fmean(point.y_m for point in points),
+        )
 
     xx = statistics.fmean((point.x_m - center.x_m) ** 2 for point in points)
     yy = statistics.fmean((point.y_m - center.y_m) ** 2 for point in points)
@@ -430,12 +461,19 @@ def _to_closed_route(
         origin_latitude_deg,
         origin_longitude_deg,
     )
+    canonical_points = tuple(
+        CanonicalPoint(
+            point.x_m - shape.center.x_m,
+            point.y_m - shape.center.y_m,
+        )
+        for point in shape.canonical_points
+    )
     return ClosedRoute(
         route_id=route_id,
         family=shape.family,
         subtype=shape.subtype,
         topology=shape.topology,
-        canonical_points=shape.canonical_points,
+        canonical_points=canonical_points,
         center_latitude_deg=center_latitude,
         center_longitude_deg=center_longitude,
         length_m=shape.length_m,
@@ -487,6 +525,50 @@ def _fit_fraction(
         for point in points
     )
     return fitted / len(points)
+
+
+def _phase_coverage_fraction(
+    points: Sequence[CanonicalPoint],
+    canonical: Sequence[CanonicalPoint],
+    bins: int,
+    max_interpolated_phase_gap: float,
+) -> float:
+    """Measure observed route arcs rather than merely counting sample bins.
+
+    Consecutive navigation samples imply traversal of the short phase arc
+    between them. We fill that arc only when the phase gap is reasonably small;
+    larger gaps are treated as missing evidence rather than hallucinated path.
+    This keeps observability stable across 1-5 second sampling while preserving
+    a penalty for genuine data holes.
+    """
+    if not points or bins <= 0:
+        return 0.0
+
+    phases = tuple(project_onto_closed_polyline(canonical, point).phase for point in points)
+    visited: set[int] = set()
+
+    def mark(phase: float) -> None:
+        visited.add(min(int((phase % 1.0) * bins), bins - 1))
+
+    for phase in phases:
+        mark(phase)
+
+    for first, second in zip(phases, phases[1:]):
+        forward = (second - first) % 1.0
+        backward = (first - second) % 1.0
+        if forward <= backward:
+            signed_delta = forward
+        else:
+            signed_delta = -backward
+        gap = abs(signed_delta)
+        if gap <= _EPSILON or gap > max_interpolated_phase_gap:
+            continue
+
+        steps = max(1, int(math.ceil(gap * bins * 2.0)))
+        for index in range(1, steps):
+            mark(first + signed_delta * index / steps)
+
+    return len(visited) / bins
 
 
 def _has_closed_cycle(
@@ -620,6 +702,11 @@ def _travelled_distance(points: Sequence[CanonicalPoint]) -> float:
 
 def _distance(first: CanonicalPoint, second: CanonicalPoint) -> float:
     return math.hypot(second.x_m - first.x_m, second.y_m - first.y_m)
+
+
+def _extent_midpoint(values: Sequence[float]) -> float:
+    """Center a closed symmetric extent without weighting repeated phases."""
+    return (_quantile(values, 0.01) + _quantile(values, 0.99)) / 2.0
 
 
 def _quantile(values: Sequence[float], fraction: float) -> float:
