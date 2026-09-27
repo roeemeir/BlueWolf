@@ -3,7 +3,9 @@ import type { EventRecomputeResult, RecomputedRoute } from "@/lib/investigation-
 export type LiveMapTemplateAssignment = {
   vehicleIdentifier: number;
   memberId: string;
-  routeInstanceId: string;
+  // SI recompute members have no SO route-instance binding; preserve that
+  // truth as null instead of dropping the map/template assignment.
+  routeInstanceId: string | null;
   slotId: string;
   expectedPhase: number;
 };
