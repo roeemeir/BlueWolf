@@ -247,8 +247,3 @@ jobs:
       - run: npm run build:offline
       - run: node scripts/verify-offline-http.mjs
 
-  full-e2e-preview:
-    name: Full E2E authenticated QA preview
-    if: github.event_name == 'push' && github.actor == 'roeemeir' && github.ref == 'refs/heads/work/requirements-governance-2026-09-15'
-    uses: ./.github/workflows/qa-quick-tunnel.yml
-
