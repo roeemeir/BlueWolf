@@ -268,3 +268,15 @@ checkpoint חדש שומר compact points. Restore תומך גם ב־V1 ישן �
 - the temporary QA URL is allowed only after the full evidence chain and governance gate, behind generated Basic Auth credentials.
 - production/main release remains blocked without explicit user approval.
 - Blue Wolf CI #2975 is pre-sync and failed on stale governance/QA contract tests; post-sync CI is required before this section can be marked verified.
+
+
+## Investigation SI/SO recompute + live-map contract refresh — 27/09/2026
+
+- implementation baseline: `a7518ff851b8b5bff3c2a848c95767d46141ee70`.
+- BW-GOV-010 fingerprint: `e26f60f930fc5d73` / 272 implementation files.
+- Full E2E TEST Influx כבר עבר real InfluxDB2, temporal join, operational Python Core ו־three-server Web parity לפני שחשף את פער archive/recompute.
+- `lib/investigation-contract.ts` הוא family-aware: SI member רשאי לשאת `routeInstanceId=null`; SO member חייב routeInstanceId לא־ריק ונכשל סגור אחרת.
+- `lib/live-map-evidence.ts` שומר את אותו SI-null במקום למחוק map/template assignment.
+- Master v2.8 ו־Core Research v1.2 עודכנו, רונדרו ונקראו חזרה מה־Drive עם ה־HEAD וה־fingerprint הנוכחיים.
+- verification נשאר `pending-post-sync` עד CI ו־Full E2E Preview חדשים על commit הסנכרון.
+- production/main release נשארים חסומים ללא implementationApproval מפורש.

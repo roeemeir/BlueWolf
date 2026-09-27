@@ -471,3 +471,12 @@ At that milestone the validated head was `3c76d8bda4526ec7e36d7cbb3d3d4737ec6628
 workflow ה־QA המלא מזרים raw TEST navigation ל־Influx, מפעיל temporal join ו־Python Core אמיתיים, דורש SI+SO בשלושה שרתים, בודק Web/SQLite, archive/recompute/history, Data/PDF, desktop+iPhone Chromium, restart persistence ורק לאחר BW-GOV-010 מפעיל Basic-Auth proxy ו־temporary tunnel. Preview כזה הוא ראיית QA זמנית בלבד ולא production או implementationApproval.
 
 Blue Wolf CI #2975 קדם לסנכרון הזה ונכשל בגלל fingerprint ישן ובדיקות contract שהמשיכו לאסור Preview. לכן `verificationStatus` במניפסט נשאר `pending-post-sync` עד ריצת CI חדשה על commit הסנכרון.
+
+
+## Family-aware recompute and live-map route binding — 27/09/2026
+
+ה־implementation baseline המסונכרן הוא `a7518ff851b8b5bff3c2a848c95767d46141ee70`; BW-GOV-010 fingerprint הוא `e26f60f930fc5d73` על 272 קבצי implementation. ה־Master v2.8 וה־Core Research v1.2 המקוריים ב־Drive עודכנו ונקראו חזרה עם אותם מזהים לפני refresh זה.
+
+ריצת Full E2E TEST Influx עברה InfluxDB2 אמיתי → temporal join → operational Python Core → three-server Web parity, ואז חשפה אי־התאמה בגבול archive/recompute: scorer של SI מחזיר במכוון `routeInstanceId=null`, בעוד חוזה TypeScript דרש string לכל משפחה. Route Instance הוא שיוך SO; ב־SI ה־slot/phase/scoring evidence אינם דורשים Route Instance.
+
+החוזה עודכן family-aware: SI מקבל null, SO עדיין דורש routeInstanceId לא־ריק ונכשל סגור אם הוא חסר. גם `LiveMapTemplateAssignment` שומר SI-null במקום להשמיט את member/slot/phase assignment. נוספה regression שמוכיחה SI-null ו־SO-null fail-closed. אין שינוי ב־recurrence, route classification, grouping, template selection, PrimitiveMetrics, משקלי Sync/Route/Total או EventAlert.
