@@ -59,6 +59,31 @@ const getJson = async (base, path, headers = {}) => {
  * response or another transport-only readiness tick. Bound the wait and fail
  * closed if the feed stays static. Injectable read/sleep keep this testable.
  */
+export async function awaitInitialCoreEvidence({
+  serverId,
+  read,
+  sleep = ms => new Promise(done => setTimeout(done, ms)),
+  maxWaitMs = 120_000,
+  stepMs = 2_000,
+}) {
+  assert.ok(Number.isFinite(maxWaitMs) && maxWaitMs >= 1_000, 'initial evidence wait must be bounded');
+  assert.ok(Number.isFinite(stepMs) && stepMs >= 250, 'initial evidence poll step is invalid');
+  const attempts = Math.ceil(maxWaitMs / stepMs);
+  let lastError = 'no snapshot returned';
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const candidate = await read();
+      const observedMs = assertObservedCoreSnapshot(candidate, serverId);
+      assertCoherentLiveGroupEvidence(candidate, serverId);
+      return { snapshot: candidate, observedMs };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await sleep(stepMs);
+  }
+  throw new Error(`Core evidence for server ${serverId} did not become score-ready within ${maxWaitMs}ms; last check: ${lastError}`);
+}
+
 export async function awaitNewCoreObservation({
   firstObservedMs, serverId, read, sleep = ms => new Promise(done => setTimeout(done, ms)),
   pollSeconds = 5, maxWaitMs = 30_000,
@@ -127,9 +152,11 @@ export async function runE2EPreflight(env = process.env) {
   assert.equal(persisted.state?.mapProfile, profile, 'SQLite read after write does not match');
   for (const id of serverIds) {
     const path = `/v1/live-runtime?serverId=${encodeURIComponent(id)}`;
-    const first = await getJson(coreUrl, path, coreHeaders);
-    const old = assertObservedCoreSnapshot(first, id);
-    assertCoherentLiveGroupEvidence(first, id);
+    const { observedMs: old } = await awaitInitialCoreEvidence({
+      serverId: id,
+      read: () => getJson(coreUrl, path, coreHeaders),
+      maxWaitMs: 120_000,
+    });
     const fromWeb = await verifyCoreProxyParity({
       serverId: id,
       readCore: () => getJson(coreUrl, path, coreHeaders),
