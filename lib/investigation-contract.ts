@@ -44,7 +44,7 @@ export type InvestigationEventList = {
 
 export type RecomputedMember = {
   memberId: string;
-  routeInstanceId: string;
+  routeInstanceId: string | null;
   slotId: string;
   expectedPhase: number;
   positionErrorCycle: number;
@@ -279,6 +279,8 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
   const missingFrameCount = integer(row.missingFrameCount, "missingFrameCount");
   if (scoredFrameCount + missingFrameCount !== frameCount) throw new Error("scoredFrameCount + missingFrameCount must equal frameCount");
   if (row.points.length !== frameCount) throw new Error("points length must equal frameCount");
+  const family = (row.family === undefined ? "SO" : text(row.family, "recompute family")) as "SI" | "SO";
+  if (family !== "SI" && family !== "SO") throw new Error("recompute family must be SI or SO");
   const rootCauses = row.rootCauses.map((item, index) => {
     const cause = object(item, `rootCause ${index + 1}`);
     return { reason: text(cause.reason, "root cause reason"), occurrences: integer(cause.occurrences, "root cause occurrences") };
@@ -323,8 +325,10 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
     const members = point.members.map((raw, memberIndex) => {
       const member = object(raw, `member ${memberIndex + 1}`);
       if (typeof member.valid !== "boolean") throw new Error("member valid must be boolean");
+      const routeInstanceId = optionalText(member.routeInstanceId, "routeInstanceId");
+      if (family === "SO" && routeInstanceId === null) throw new Error("SO member routeInstanceId is missing");
       return {
-        memberId: text(member.memberId, "memberId"), routeInstanceId: text(member.routeInstanceId, "routeInstanceId"), slotId: text(member.slotId, "slotId"),
+        memberId: text(member.memberId, "memberId"), routeInstanceId, slotId: text(member.slotId, "slotId"),
         expectedPhase: finite(member.expectedPhase, "expectedPhase"), positionErrorCycle: finite(member.positionErrorCycle, "positionErrorCycle"), valid: member.valid,
         sync: score(member.sync, "member sync"), route: score(member.route, "member route"), total: score(member.total, "member total"),
         primaryReason: member.primaryReason === null ? null : text(member.primaryReason, "primaryReason"),
@@ -366,8 +370,6 @@ export function normalizeEventRecompute(value: unknown): EventRecomputeResult {
   });
   const observedMissing = points.filter((point) => point.pendingReason !== null).length;
   if (observedMissing !== missingFrameCount) throw new Error("missingFrameCount does not match pending points");
-  const family = (row.family === undefined ? "SO" : text(row.family, "recompute family")) as "SI" | "SO";
-  if (family !== "SI" && family !== "SO") throw new Error("recompute family must be SI or SO");
   const sourceProvenance = row.source === undefined ? undefined : normalizeTestNavigationProvenance(row.source);
   if (row.source !== undefined && !sourceProvenance) throw new Error("recompute source may be supplied only for explicit TEST navigation");
   return {

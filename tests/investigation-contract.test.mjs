@@ -152,3 +152,27 @@ test('recompute history contract preserves bounded version metadata and rejects 
   assert.throws(() => contract.normalizeEventRecomputeHistory({ ...history, runs: [{ ...history.runs[0], evidenceVersion: 'bad' }] }), /evidenceVersion/);
   assert.throws(() => contract.normalizeEventRecomputeHistory({ ...history, runs: [history.runs[0], history.runs[0]] }), /runIds must be unique/);
 });
+
+test('SI recompute permits null routeInstanceId while SO keeps routeInstanceId fail-closed', () => {
+  const base = {
+    schemaVersion: 'bluewolf.event-recompute.v1',
+    runId: 'run-family', scenarioId: 'scenario-family', eventId: 'event-family', serverId: 1, groupId: 'g1',
+    templateId: 'template-a', templateVersion: 'tpl-a', codeVersion: 'sha-a', configVersion: 'cfg-a',
+    startAt: '2026-09-27T05:00:00Z', endAt: '2026-09-27T05:00:00Z',
+    frameCount: 1, scoredFrameCount: 1, missingFrameCount: 0,
+    summary: { sync: 90, route: 80, total: 88 }, rootCauses: [], routes: [],
+    points: [{
+      observedAt: '2026-09-27T05:00:00Z', pendingReason: null,
+      group: { valid: true, sync: 90, route: 80, total: 88, rawTotal: 88 },
+      members: [{
+        memberId: 'v1', routeInstanceId: null, slotId: 'slot-1', expectedPhase: 0,
+        positionErrorCycle: 0.01, valid: true, sync: 90, route: 80, total: 88, primaryReason: null,
+      }],
+      navigation: [],
+    }],
+  };
+  const si = contract.normalizeEventRecompute({ ...base, family: 'SI' });
+  assert.equal(si.points[0].members[0].routeInstanceId, null);
+  assert.throws(() => contract.normalizeEventRecompute({ ...base, family: 'SO' }), /SO member routeInstanceId is missing/);
+});
+
