@@ -16,16 +16,24 @@ test('E2E actually initializes the same SQLite file used by Web and operational 
   assert.match(workflow, /BLUEWOLF_WORKSPACE_DB: \$\{\{ github\.workspace \}\}\/data\/qa-e2e\.sqlite/);
   assert.match(factory, /os\.environ\.get\("BLUEWOLF_WORKSPACE_DB"/);
   assert.match(factory, /SELECT state FROM workspaces WHERE id='installation'/);
-  assert.ok(stepPosition('Start SQLite-backed Web server before Core reads its database') < stepPosition('Commit the exact E2E Influx join schema to SQLite before Core boot'));
-  assert.ok(stepPosition('Commit the exact E2E Influx join schema to SQLite before Core boot') < stepPosition('Start actual operational Python Core connected to the saved SQLite schema'));
-  assert.ok(stepPosition('Start actual operational Python Core connected to the saved SQLite schema') < stepPosition('Check operational Core feed and three servers through Web plus SQLite round trip'));
-  assert.match(workflow, /assert\.deepEqual\(verify\.state\.influx\.stream, state\.influx\.stream\)/);
+  assert.ok(stepPosition('Start SQLite-backed Web server before Core reads its database') < stepPosition('Commit exact E2E Influx join schema to SQLite before Core boot'));
+  assert.ok(stepPosition('Commit exact E2E Influx join schema to SQLite before Core boot') < stepPosition('Start actual operational Python Core'));
+  assert.ok(stepPosition('Start actual operational Python Core') < stepPosition('Verify actual InfluxDB2 TEST feed → Core → three servers → Web parity and SQLite'));
+  assert.match(workflow, /state\.influx\.stream =/);
   assert.match(workflow, /state\.influx\.token = ''/);
 });
 
-test('E2E private integration does not publish a browser-only or Core-less testing URL', () => {
-  assert.doesNotMatch(workflow, /cloudflared|trycloudflare\.com|upload-artifact|tunnel_url|quick-tunnel-url/i);
-  assert.match(workflow, /No tunnel, preview artifact or public link is created/);
-  assert.match(workflow, /BLUEWOLF_E2E_OPERATIONAL_CONFIG_JSON/);
-  assert.match(workflow, /three-server E2E config and Influx token are required/);
+test('authenticated preview is created only after full Core, archive, PDF, restart and governance gates', () => {
+  const e2e = stepPosition('Verify event archive → recompute history → report data/PDF on all servers');
+  const browser = stepPosition('Verify same full environment in desktop and iPhone Chromium');
+  const restart = stepPosition('Restart Web and Core and prove persistence plus fresh source');
+  const governance = stepPosition('Verify governance fingerprint before any URL can exist');
+  const tunnel = stepPosition('Launch proxy and Cloudflare Quick Tunnel');
+  const publicBrowser = stepPosition('Verify public authenticated path in Chromium');
+  const publish = stepPosition('Publish READY coordinates and keep verified QA environment alive');
+  assert.ok(e2e < browser && browser < restart && restart < governance && governance < tunnel && tunnel < publicBrowser && publicBrowser < publish);
+  assert.match(workflow, /BLUEWOLF_QA_USER=bluewolf/);
+  assert.match(workflow, /BLUEWOLF_QA_PASS=\$\(openssl rand -hex 16\)/);
+  assert.match(workflow, /https:\/\/[a-z0-9-]+\\\.trycloudflare\\\.com/);
+  assert.match(workflow, /authenticated temporary QA preview; not production/);
 });

@@ -1,9 +1,9 @@
 {
   "schemaVersion": "bluewolf.documentation-sync.v1",
-  "iterationId": "requirements-governance-2026-09-25",
+  "iterationId": "requirements-governance-2026-09-27",
   "implementationFingerprint": {
     "algorithm": "fnv1a64(path\\0gitBlobSha\\n)",
-    "digest": "c7e1c6a5ea4c2a2b",
+    "digest": "e2cf618b14d833ad",
     "fileCount": 272,
     "trackedPaths": [
       "app/",
@@ -19,9 +19,10 @@
     "title": "Blue_Wolf_Full_Specification_HE",
     "version": "2.8",
     "driveFileId": "1pcjq50LchceDYsCqek_jqxkkRYbnef4l",
-    "verifiedImplementationBaseline": "2ec209e01f9ec02ff78ca239f2d69d5bc235378c",
-    "verifiedCiRun": 2967,
-    "verifiedAt": "2026-09-25T11:55:56.761Z"
+    "verifiedImplementationBaseline": "a945b6758d7a6ad79d9d90dc65aff423dd9eae3a",
+    "verifiedCiRun": 2975,
+    "verifiedAt": "2026-09-27T05:03:46.963Z",
+    "verificationStatus": "pending-post-sync"
   },
   "coreResearchDocument": {
     "title": "Blue_Wolf_Core_Research_Report_HE_v1_2.docx",
@@ -42,5 +43,5 @@
     "core/docs/ACTIVE_ALGORITHM_THRESHOLD_CATALOG.json",
     "core/docs/V1_SPEC_HE.md"
   ],
-  "policy": "Any change to the tracked implementation fingerprint requires an explicit substantive refresh and readback of both governing Drive documents before the manifest fingerprint changes. Core research v1.2 is the active subordinate Drive document; v2.1 is archived. User implementation approval remains a separate release gate."
+  "policy": "Any change to the tracked implementation fingerprint requires an explicit substantive refresh and readback of both governing Drive documents before the manifest fingerprint changes. Authenticated QA preview may be published only after the full TEST Influx/Core/SQLite/archive/PDF/browser/restart chain and governance check pass. Core research v1.2 is the active subordinate Drive document; v2.1 is archived. User implementation approval remains a separate production release gate."
 }

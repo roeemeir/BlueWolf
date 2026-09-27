@@ -49,13 +49,18 @@ test('QA-E2E refuses simulated, stale, scoreless and route-less snapshots', () =
   ]) assert.throws(() => assertObservedCoreSnapshot(broken, '1'));
 });
 
-test('QA-E2E the former quick tunnel no longer emits any public URL or HTTP-only preview', async () => {
+test('QA-E2E publishes only an authenticated full-stack preview after governance', async () => {
   const workflow = await readFile('.github/workflows/qa-quick-tunnel.yml', 'utf8');
   assert.match(workflow, /BLUEWOLF_OPERATIONAL_CONFIG:/);
-  assert.match(workflow, /BLUEWOLF_INFLUX_TOKEN:/);
+  assert.match(workflow, /BLUEWOLF_INFLUX_TOKEN=\$test_token/);
   assert.match(workflow, /verify-e2e-preflight\.mjs/);
+  assert.match(workflow, /verify-full-environment-e2e\.mjs/);
+  assert.match(workflow, /verify_full_environment_browser\.py/);
   assert.match(workflow, /\/readyz/);
-  assert.doesNotMatch(workflow, /\bcloudflared\b|trycloudflare\.com|actions\/upload-artifact|Publish QA URL artifact|Open QA Quick Tunnel/i);
-  assert.doesNotMatch(workflow, /\bbluewolf-qa-url\b/);
-  assert.match(workflow, /No tunnel, preview artifact or public link/);
+  assert.match(workflow, /Verify governance fingerprint before any URL can exist/);
+  assert.match(workflow, /qa-basic-auth-proxy\.mjs/);
+  assert.match(workflow, /cloudflared tunnel --no-autoupdate/);
+  assert.match(workflow, /-u "\$BLUEWOLF_QA_USER:\$BLUEWOLF_QA_PASS"/);
+  assert.match(workflow, /READY_URL=/);
+  assert.match(workflow, /not production and not a main-branch release/);
 });

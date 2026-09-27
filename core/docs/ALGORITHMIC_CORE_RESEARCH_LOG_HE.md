@@ -460,3 +460,14 @@ At that milestone the validated head was `3c76d8bda4526ec7e36d7cbb3d3d4737ec6628
 ### Post-sync CI evidence — 25/09/2026
 
 לאחר readback של ה־Master v2.8 ושל Core Research v1.2, `Blue Wolf CI #2967` עבר SUCCESS מלא (30/30 jobs) על commit `e1f874756d1862be3c0677b1f6f2d7604f028fc1`. ה־baseline המחייב נשאר `2ec209e01f9ec02ff78ca239f2d69d5bc235378c` וה־fingerprint `c7e1c6a5ea4c2a2b` על 272 קבצים. Scoped evidence באותו commit: `BW-SYNC-013 #31`, `Navigation #168`, `UI/PDF #1733`, `Operator #1486`, `Public Civilian InfluxDB2 #95` — כולם SUCCESS. אין בכך claim ל־customer Influx E2E או production approval.
+
+
+## Full-stack TEST Influx QA and authenticated preview — 27/09/2026
+
+ה־implementation baseline המתועד הוא `a945b6758d7a6ad79d9d90dc65aff423dd9eae3a`, עם BW-GOV-010 fingerprint `e2cf618b14d833ad` על 272 קבצי implementation. ה־Master v2.8 ו־Core Research v1.2 המקוריים ב־Drive עודכנו עם QA-E2E-20260927 ונקראו חזרה לפני שינוי ה־manifest.
+
+הרחבות `event_archive_binding.py`, `family_environment_factory.py` ו־`navigation_input_factory.py` מאפשרות לסביבת TEST מבודדת להשתמש ב־InfluxDB2 2.7 אמיתי ובאותו SQLite של Web/Core בלי להפוך TEST ל־operational evidence. `simulation/syntheticNavigation=true` נשמר לאורך runtime, archive, recompute ו־report.
+
+workflow ה־QA המלא מזרים raw TEST navigation ל־Influx, מפעיל temporal join ו־Python Core אמיתיים, דורש SI+SO בשלושה שרתים, בודק Web/SQLite, archive/recompute/history, Data/PDF, desktop+iPhone Chromium, restart persistence ורק לאחר BW-GOV-010 מפעיל Basic-Auth proxy ו־temporary tunnel. Preview כזה הוא ראיית QA זמנית בלבד ולא production או implementationApproval.
+
+Blue Wolf CI #2975 קדם לסנכרון הזה ונכשל בגלל fingerprint ישן ובדיקות contract שהמשיכו לאסור Preview. לכן `verificationStatus` במניפסט נשאר `pending-post-sync` עד ריצת CI חדשה על commit הסנכרון.

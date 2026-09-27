@@ -257,3 +257,14 @@ checkpoint חדש שומר compact points. Restore תומך גם ב־V1 ישן �
 ### Post-sync validation result — 25/09/2026
 
 `Blue Wolf CI #2967` עבר SUCCESS מלא (30/30 jobs) על commit `e1f874756d1862be3c0677b1f6f2d7604f028fc1`. זהו post-sync run לאחר עדכון ה־Drive, manifest ו־Core docs. ה־verified implementation baseline נשאר `2ec209e01f9ec02ff78ca239f2d69d5bc235378c`, וה־fingerprint נשאר `c7e1c6a5ea4c2a2b` על 272 קבצי implementation. `BW-SYNC-013 #31`, `Navigation Input Integration #168`, `UI/PDF Browser E2E #1733`, `Operator Acceptance #1486` ו־`Public Civilian InfluxDB2 Adapter #95` עברו גם הם SUCCESS. Release/production נשארים חסומים עד implementationApproval מפורש ו־customer Influx E2E.
+
+
+## QA-E2E authenticated preview refresh — 27/09/2026
+
+- implementation baseline: `a945b6758d7a6ad79d9d90dc65aff423dd9eae3a`.
+- BW-GOV-010 fingerprint: `e2cf618b14d833ad` / 272 implementation files.
+- TEST QA now uses disposable real InfluxDB2, real temporal join, operational Python Core, three servers, shared SQLite/Web, archive/recompute/history, Data/PDF, desktop+iPhone Chromium and restart persistence.
+- TEST provenance remains explicit end-to-end; transport through Influx does not convert it into customer/production evidence.
+- the temporary QA URL is allowed only after the full evidence chain and governance gate, behind generated Basic Auth credentials.
+- production/main release remains blocked without explicit user approval.
+- Blue Wolf CI #2975 is pre-sync and failed on stale governance/QA contract tests; post-sync CI is required before this section can be marked verified.
