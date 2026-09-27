@@ -33,10 +33,16 @@ test('authenticated preview is created only after full Core, archive, PDF, resta
   const governance = stepPosition('Verify governance fingerprint before any URL can exist');
   const tunnel = stepPosition('Launch proxy and Cloudflare Quick Tunnel');
   const publicBrowser = stepPosition('Verify public authenticated path in Chromium');
+  const accessArtifact = stepPosition('Upload private QA access artifact');
   const publish = stepPosition('Publish READY coordinates and keep verified QA environment alive');
-  assert.ok(e2e < browser && browser < restart && restart < governance && governance < tunnel && tunnel < publicBrowser && publicBrowser < publish);
+  assert.ok(e2e < browser && browser < restart && restart < governance && governance < tunnel && tunnel < publicBrowser && publicBrowser < accessArtifact && accessArtifact < publish);
   assert.match(workflow, /BLUEWOLF_QA_USER=bluewolf/);
   assert.match(workflow, /BLUEWOLF_QA_PASS=\$\(openssl rand -hex 16\)/);
   assert.match(workflow, /grep -oE .*trycloudflare.*cloudflared\.log/);
+  assert.match(workflow, /public_ready=0/);
+  assert.match(workflow, /unauth_code=.*http_code/);
+  assert.match(workflow, /actions\/upload-artifact@v4/);
+  assert.match(workflow, /retention-days: 1/);
+  assert.doesNotMatch(workflow, /echo "QA_PASSWORD=\$BLUEWOLF_QA_PASS"/);
   assert.match(workflow, /authenticated temporary QA preview; not production/);
 });

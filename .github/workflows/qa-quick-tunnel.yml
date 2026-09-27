@@ -259,8 +259,10 @@ jobs:
 
       - name: Prepare authenticated QA credentials
         run: |
+          qa_pass="$(openssl rand -hex 16)"
+          echo "::add-mask::$qa_pass"
           echo "BLUEWOLF_QA_USER=bluewolf" >> "$GITHUB_ENV"
-          echo "BLUEWOLF_QA_PASS=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+          echo "BLUEWOLF_QA_PASS=$qa_pass" >> "$GITHUB_ENV"
 
       - name: Launch proxy and Cloudflare Quick Tunnel
         run: |
@@ -287,26 +289,62 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$url" > /tmp/bluewolf-qa-url
-          curl --fail --silent --show-error -u "$BLUEWOLF_QA_USER:$BLUEWOLF_QA_PASS" "$url/api/workspace" >/tmp/public-workspace.json
-          node --input-type=module -e 'import {readFileSync} from "node:fs"; const p=JSON.parse(readFileSync("/tmp/public-workspace.json","utf8")); if(p.storage!=="sqlite") process.exit(1);'
+          public_ready=0
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --show-error --max-time 10 \
+              -u "$BLUEWOLF_QA_USER:$BLUEWOLF_QA_PASS" \
+              "$url/api/workspace" > /tmp/public-workspace.json 2>/tmp/public-workspace.err; then
+              if node --input-type=module -e 'import {readFileSync} from "node:fs"; const p=JSON.parse(readFileSync("/tmp/public-workspace.json","utf8")); if(p.storage!=="sqlite") process.exit(1);'; then
+                public_ready=1
+                break
+              fi
+            fi
+            kill -0 "$(cat /tmp/cloudflared.pid)" 2>/dev/null || break
+            sleep 2
+          done
+          if [ "$public_ready" != "1" ]; then
+            echo 'BLOCKED: Quick Tunnel hostname/route did not become reachable.'
+            cat /tmp/public-workspace.err || true
+            cat /tmp/cloudflared.log || true
+            exit 1
+          fi
+          unauth_code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 "$url/" || true)"
+          if [ "$unauth_code" != "401" ]; then
+            echo "BLOCKED: unauthenticated QA request returned HTTP $unauth_code instead of 401."
+            exit 1
+          fi
           echo "BLUEWOLF_QA_URL=$url" >> "$GITHUB_ENV"
 
       - name: Verify public authenticated path in Chromium
-        env:
-          BLUEWOLF_BROWSER_ORIGIN: ${{ env.BLUEWOLF_QA_URL }}
-        run: python scripts/verify_full_environment_browser.py
+        run: BLUEWOLF_BROWSER_ORIGIN="$BLUEWOLF_QA_URL" python scripts/verify_full_environment_browser.py
+
+      - name: Write private QA access artifact
+        run: |
+          umask 077
+          {
+            printf 'URL=%s\n' "$BLUEWOLF_QA_URL"
+            printf 'USERNAME=%s\n' "$BLUEWOLF_QA_USER"
+            printf 'PASSWORD=%s\n' "$BLUEWOLF_QA_PASS"
+          } > /tmp/bluewolf-qa-access.txt
+
+      - name: Upload private QA access artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bluewolf-qa-access-${{ github.run_id }}
+          path: /tmp/bluewolf-qa-access.txt
+          retention-days: 1
+          if-no-files-found: error
 
       - name: Publish READY coordinates and keep verified QA environment alive
         run: |
           echo "READY_URL=$BLUEWOLF_QA_URL"
           echo "QA_USERNAME=$BLUEWOLF_QA_USER"
-          echo "QA_PASSWORD=$BLUEWOLF_QA_PASS"
           {
             echo '## Blue Wolf Full E2E QA — READY'
             echo "- Commit: $GITHUB_SHA"
             echo "- URL: $BLUEWOLF_QA_URL"
             echo "- Username: $BLUEWOLF_QA_USER"
-            echo "- Password: $BLUEWOLF_QA_PASS"
+            echo '- Password is stored only in the one-day private Actions artifact for this run.'
             echo '- Evidence: disposable actual InfluxDB2 with TEST raw navigation → Python Core → 3 servers → SQLite/Web → archive/recompute/history → PDF → restart → desktop/iPhone Chromium.'
             echo '- Target: authenticated temporary QA preview; not production and not a main-branch release.'
           } >> "$GITHUB_STEP_SUMMARY"
