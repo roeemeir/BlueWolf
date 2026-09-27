@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import time
 from urllib.parse import quote
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from bluewolf_ingest.navigation_simulation import SyntheticNavigationVehicle
@@ -169,7 +170,7 @@ def line_rows(at: datetime, fleet: tuple[SyntheticNavigationVehicle, ...]) -> li
         frame = vehicle.navigation_at(elapsed)
         tags = f"server=server-{vehicle.server_id},vehicle={vehicle.vehicle_number}"
         rows.extend([
-            f"vehicle_id,{tags} value={vehicle.vehicle_identifier}i {timestamp_ns}",
+            f"vehicle_id,{tags} value={int(frame['vehicle_identifier'])}i {timestamp_ns}",
             f'active,{tags} value="green" {timestamp_ns}',
             f"latitude,{tags} value={frame['latitude_deg']:.10f} {timestamp_ns}",
             f"longitude,{tags} value={frame['longitude_deg']:.10f} {timestamp_ns}",
@@ -187,9 +188,13 @@ def write_lines(lines: list[str]) -> None:
         headers={"Authorization": "Token " + TOKEN, "Content-Type": "text/plain; charset=utf-8"},
         method="POST",
     )
-    with urlopen(request, timeout=30) as reply:
-        if reply.status != 204:
-            raise RuntimeError(f"InfluxDB2 write failed: HTTP {reply.status}")
+    try:
+        with urlopen(request, timeout=30) as reply:
+            if reply.status != 204:
+                raise RuntimeError(f"InfluxDB2 write failed: HTTP {reply.status}")
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"InfluxDB2 write failed: HTTP {exc.code}: {detail}") from exc
 
 
 def seed_history(fleet: tuple[SyntheticNavigationVehicle, ...]) -> None:
