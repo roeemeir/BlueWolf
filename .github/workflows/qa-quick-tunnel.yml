@@ -1,4 +1,5 @@
 name: Blue Wolf Full E2E QA — Authenticated Preview
+# QA-E2E-20260927: push-triggered verified TEST preview; never production.
 
 on:
   workflow_dispatch:
