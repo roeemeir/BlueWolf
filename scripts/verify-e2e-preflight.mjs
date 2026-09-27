@@ -49,7 +49,13 @@ export function assertOperationalConfig(config, tokenAvailable) {
 }
 
 const getJson = async (base, path, headers = {}) => {
-  const response = await fetch(`${base}${path}`, { cache: 'no-store', signal: AbortSignal.timeout(7_000), headers });
+  let response;
+  try {
+    response = await fetch(`${base}${path}`, { cache: 'no-store', signal: AbortSignal.timeout(7_000), headers });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${base}${path} fetch failed: ${detail}`);
+  }
   if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}`);
   return response.json();
 };

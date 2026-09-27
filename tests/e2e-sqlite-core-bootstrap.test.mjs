@@ -21,6 +21,9 @@ test('E2E actually initializes the same SQLite file used by Web and operational 
   assert.ok(stepPosition('Start actual operational Python Core') < stepPosition('Verify actual InfluxDB2 TEST feed → Core → three servers → Web parity and SQLite'));
   assert.match(workflow, /state\.influx\.stream =/);
   assert.match(workflow, /state\.influx\.token = ''/);
+  assert.match(workflow, /nohup setsid npm run start:offline/);
+  assert.match(workflow, /nohup setsid bluewolf-runtime/);
+  assert.match(workflow, /old Web\/Core listeners did not stop cleanly/);
 });
 
 test('authenticated preview is created only after full Core, archive, PDF, restart and governance gates', () => {

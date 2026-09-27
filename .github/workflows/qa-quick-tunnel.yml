@@ -113,7 +113,7 @@ jobs:
 
       - name: Start SQLite-backed Web server before Core reads its database
         run: |
-          nohup npm run start:offline > /tmp/bluewolf-web-e2e.log 2>&1 &
+          nohup setsid npm run start:offline > /tmp/bluewolf-web-e2e.log 2>&1 &
           echo $! > /tmp/bluewolf-web-e2e.pid
           for attempt in $(seq 1 60); do
             curl --fail --silent --max-time 3 http://127.0.0.1:3000/api/workspace >/dev/null 2>&1 && exit 0
@@ -152,7 +152,7 @@ jobs:
       - name: Start actual operational Python Core
         run: |
           test -s "$BLUEWOLF_WORKSPACE_DB"
-          nohup bluewolf-runtime > /tmp/bluewolf-core-e2e.log 2>&1 &
+          nohup setsid bluewolf-runtime > /tmp/bluewolf-core-e2e.log 2>&1 &
           echo $! > /tmp/bluewolf-core-e2e.pid
           for attempt in $(seq 1 60); do
             if curl --fail --silent --max-time 3 http://127.0.0.1:8090/readyz > /tmp/bluewolf-core-ready.json 2>/dev/null && \
@@ -192,27 +192,65 @@ jobs:
 
       - name: Restart Web and Core and prove persistence plus fresh source
         run: |
-          kill "$(cat /tmp/bluewolf-core-e2e.pid)" "$(cat /tmp/bluewolf-web-e2e.pid)"
-          wait "$(cat /tmp/bluewolf-core-e2e.pid)" 2>/dev/null || true
-          wait "$(cat /tmp/bluewolf-web-e2e.pid)" 2>/dev/null || true
-          nohup npm run start:offline > /tmp/bluewolf-web-e2e-restart.log 2>&1 &
-          echo $! > /tmp/bluewolf-web-e2e.pid
-          for attempt in $(seq 1 60); do
-            curl --fail --silent --max-time 3 http://127.0.0.1:3000/api/workspace >/dev/null 2>&1 && break
-            sleep 2
+          set -euo pipefail
+          core_pid="$(cat /tmp/bluewolf-core-e2e.pid)"
+          web_pid="$(cat /tmp/bluewolf-web-e2e.pid)"
+          kill -TERM -- "-$core_pid" 2>/dev/null || kill -TERM "$core_pid" 2>/dev/null || true
+          kill -TERM -- "-$web_pid" 2>/dev/null || kill -TERM "$web_pid" 2>/dev/null || true
+
+          stopped=0
+          for attempt in $(seq 1 40); do
+            web_open=0
+            core_open=0
+            curl --silent --max-time 1 http://127.0.0.1:3000/api/workspace >/dev/null 2>&1 && web_open=1 || true
+            curl --silent --max-time 1 http://127.0.0.1:8090/healthz >/dev/null 2>&1 && core_open=1 || true
+            if [ "$web_open" = "0" ] && [ "$core_open" = "0" ]; then
+              stopped=1
+              break
+            fi
+            sleep 0.5
           done
-          nohup bluewolf-runtime > /tmp/bluewolf-core-e2e-restart.log 2>&1 &
+          if [ "$stopped" != "1" ]; then
+            echo 'BLOCKED: old Web/Core listeners did not stop cleanly before restart.'
+            ps -ef | grep -E 'next-server|start-offline|bluewolf-runtime' | grep -v grep || true
+            exit 1
+          fi
+
+          nohup setsid npm run start:offline > /tmp/bluewolf-web-e2e-restart.log 2>&1 &
+          echo $! > /tmp/bluewolf-web-e2e.pid
+          web_ready=0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --max-time 3 http://127.0.0.1:3000/api/workspace >/dev/null 2>&1; then
+              web_ready=1
+              break
+            fi
+            kill -0 "$(cat /tmp/bluewolf-web-e2e.pid)" 2>/dev/null || break
+            sleep 1
+          done
+          if [ "$web_ready" != "1" ]; then
+            echo 'BLOCKED: restarted SQLite Web did not become available.'
+            cat /tmp/bluewolf-web-e2e-restart.log || true
+            exit 1
+          fi
+
+          nohup setsid bluewolf-runtime > /tmp/bluewolf-core-e2e-restart.log 2>&1 &
           echo $! > /tmp/bluewolf-core-e2e.pid
-          ready=0
+          core_ready=0
           for attempt in $(seq 1 60); do
             if curl --fail --silent --max-time 3 http://127.0.0.1:8090/readyz > /tmp/bluewolf-core-ready-restart.json 2>/dev/null && \
               node --input-type=module -e 'import {readFileSync} from "node:fs"; const p=JSON.parse(readFileSync("/tmp/bluewolf-core-ready-restart.json","utf8")); if(p.ok===true&&p.mode==="operational"&&p.running===true&&p.tickCount>=2&&Array.isArray(p.serverErrors)&&p.serverErrors.length===0) process.exit(0); process.exit(1);'; then
-              ready=1
+              core_ready=1
               break
             fi
-            sleep 2
+            kill -0 "$(cat /tmp/bluewolf-core-e2e.pid)" 2>/dev/null || break
+            sleep 1
           done
-          test "$ready" = "1"
+          if [ "$core_ready" != "1" ]; then
+            echo 'BLOCKED: restarted operational Core did not become ready.'
+            cat /tmp/bluewolf-core-e2e-restart.log || true
+            exit 1
+          fi
+
           BLUEWOLF_E2E_SCOPE_SUFFIX=restart node scripts/verify-e2e-preflight.mjs
           BLUEWOLF_E2E_VERIFY_PERSISTED=1 node scripts/verify-full-environment-e2e.mjs
 
