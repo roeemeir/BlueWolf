@@ -119,8 +119,8 @@ def build_config() -> dict[str, object]:
         },
         "polling": {
             "logicalGridSeconds": 1,
-            "activePollSeconds": 5,
-            "idleProbeSeconds": 5,
+            "activePollSeconds": 2,
+            "idleProbeSeconds": 2,
             "joinToleranceSeconds": 5,
             "bootstrapHistorySeconds": 360,
         },

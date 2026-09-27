@@ -34,6 +34,6 @@ test('authenticated preview is created only after full Core, archive, PDF, resta
   assert.ok(e2e < browser && browser < restart && restart < governance && governance < tunnel && tunnel < publicBrowser && publicBrowser < publish);
   assert.match(workflow, /BLUEWOLF_QA_USER=bluewolf/);
   assert.match(workflow, /BLUEWOLF_QA_PASS=\$\(openssl rand -hex 16\)/);
-  assert.match(workflow, /https:\/\/[a-z0-9-]+\\\.trycloudflare\\\.com/);
+  assert.match(workflow, /grep -oE .*trycloudflare.*cloudflared\.log/);
   assert.match(workflow, /authenticated temporary QA preview; not production/);
 });

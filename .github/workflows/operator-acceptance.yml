@@ -32,7 +32,7 @@ jobs:
           test_live_runtime_contract.LiveRuntimeContractTests.test_bw_ui_008_context_change_opens_event_then_low_score_alert_reaches_runtime_contract
       - name: Run operator acceptance regressions
         run: |
-          node --test \
+          node --test --test-concurrency=1 \
             tests/op01-arena-presentation.test.mjs \
             tests/op02-map-layers.test.mjs \
             tests/operator-speed-ui.test.mjs \
